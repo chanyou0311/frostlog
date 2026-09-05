@@ -1,0 +1,11 @@
+[Unit]
+Description=frostlog: upload every 30 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=30min
+RandomizedDelaySec=2min
+Unit=frostlog-upload.service
+
+[Install]
+WantedBy=timers.target

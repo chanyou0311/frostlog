@@ -1,0 +1,13 @@
+[Unit]
+Description=frostlog: receive what the cooler sends over Bluetooth
+
+[Service]
+Type=simple
+EnvironmentFile=-%E/frostlog/env
+StateDirectory=frostlog
+ExecStart=%h/frostlog/.venv/bin/frostlog read cooler --output %S/frostlog
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
