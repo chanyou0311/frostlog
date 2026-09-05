@@ -10,6 +10,7 @@ Parameter: ``<key 1B> <length 1B> [<type 1B>] <value>``; the type byte is presen
            when length > 1. Payloads may start with a lone ``00`` prefix byte.
 """
 
+import functools
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -89,29 +90,53 @@ def parse_fragment(payload: bytes) -> Fragment:
     return Fragment(index=payload[0] >> 4, total=payload[0] & 0x0F, data=payload[1:])
 
 
+class FragmentError(ProtocolError):
+    """A fragment that does not continue its message; ``notifications`` are the ones collected."""
+
+    def __init__(self, message: str, notifications: list[bytes]) -> None:
+        super().__init__(message)
+        self.notifications = notifications
+
+
 class Reassembler:
-    """Collect the fragments of a message, per (pattern, cmd), until it is complete."""
+    """Collect the fragments of a message, per (pattern, cmd), until it is complete.
+
+    The notifications the fragments arrived in are kept alongside, so that the
+    record of a joined message can carry the exact bytes it was made from.
+    """
 
     def __init__(self) -> None:
-        self._pending: dict[bytes, list[Fragment]] = {}
+        self._pending: dict[bytes, list[tuple[bytes, bytes]]] = {}  # (data, notification)
 
     def is_fragment(self, frame: Frame, notification_length: int, mtu: int) -> bool:
         """A notification that fills the MTU starts a fragmented message; later
         notifications with the same pattern and cmd continue it."""
         return notification_length == mtu or frame.key in self._pending
 
-    def add(self, frame: Frame) -> bytes | None:
-        """Add one fragment; the full payload once all fragments are in, else ``None``."""
-        fragment = parse_fragment(frame.payload)
-        fragments = self._pending.setdefault(frame.key, [])
-        fragments.append(fragment)
-        if fragment.index != len(fragments):
+    def add(self, frame: Frame, notification: bytes) -> tuple[bytes, list[bytes]] | None:
+        """Add one fragment (``notification`` is the whole notification it came in).
+
+        Returns the full payload and the notifications it was joined from once all
+        fragments are in, else ``None``. A fragment that cannot continue the message
+        raises :class:`FragmentError` and forgets the message.
+        """
+        collected = self._pending.setdefault(frame.key, [])
+        try:
+            fragment = parse_fragment(frame.payload)
+            if fragment.index != len(collected) + 1:
+                raise ProtocolError(f"fragment {fragment.index}/{fragment.total} out of order")
+        except ProtocolError as exc:
             del self._pending[frame.key]
-            raise ProtocolError(f"fragment {fragment.index}/{fragment.total} out of order")
+            raise FragmentError(str(exc), [n for _, n in collected] + [notification]) from None
+        collected.append((fragment.data, notification))
         if fragment.index != fragment.total:
             return None
         del self._pending[frame.key]
-        return b"".join(f.data for f in fragments)
+        return b"".join(d for d, _ in collected), [n for _, n in collected]
+
+    def pending(self) -> dict[bytes, list[bytes]]:
+        """The notifications of messages that are still incomplete, per (pattern, cmd)."""
+        return {key: [n for _, n in collected] for key, collected in self._pending.items()}
 
 
 # --- parameters (TLV) -------------------------------------------------------------
@@ -161,17 +186,21 @@ def build_parameters(parameters: Iterable[Parameter], prefix: bool = False) -> b
 # --- keys and ciphers -------------------------------------------------------------
 
 
+@functools.cache
+def _private_key(scalar: bytes) -> ec.EllipticCurvePrivateKey:
+    return ec.derive_private_key(int.from_bytes(scalar, "big"), ec.SECP256R1())
+
+
 def public_key_xy(private_key: bytes) -> bytes:
     """The uncompressed P-256 public point (x || y, 64 bytes) of a private scalar."""
-    key = ec.derive_private_key(int.from_bytes(private_key, "big"), ec.SECP256R1())
-    return key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)[1:]
+    public = _private_key(private_key).public_key()
+    return public.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)[1:]
 
 
 def shared_secret(private_key: bytes, peer_public_xy: bytes) -> bytes:
     """ECDH on P-256 between our private scalar and the peer's x || y point."""
-    key = ec.derive_private_key(int.from_bytes(private_key, "big"), ec.SECP256R1())
     peer = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), b"\x04" + peer_public_xy)
-    return key.exchange(ec.ECDH(), peer)
+    return _private_key(private_key).exchange(ec.ECDH(), peer)
 
 
 class CbcCipher:

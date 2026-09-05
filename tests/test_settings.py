@@ -1,10 +1,12 @@
+import os
+
 import pytest
 
 from frostlog.settings import Settings
 
 
 def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in list(__import__("os").environ):
+    for name in list(os.environ):
         if name.startswith("FROSTLOG_"):
             monkeypatch.delenv(name)
     settings = Settings()

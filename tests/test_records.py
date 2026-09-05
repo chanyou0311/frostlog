@@ -15,7 +15,8 @@ def test_ambient_round_trip() -> None:
 def test_cooler_payload_is_kept_verbatim() -> None:
     payload = {"pattern": "03010f", "cmd": "c405", "data": "ff09", "plain": "00a1"}
     record = records.cooler("everfrost", payload)
-    assert records.from_json(records.to_json(record)).payload == payload
+    parsed = records.from_json(records.to_json(record))
+    assert isinstance(parsed, records.Cooler) and parsed.payload == payload
 
 
 def test_event_keeps_extra_fields() -> None:

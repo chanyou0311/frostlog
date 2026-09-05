@@ -13,18 +13,15 @@ class SMBus2Bus:
     """A :class:`Bus` on ``/dev/i2c-<number>`` via smbus2 (imported lazily; Linux only)."""
 
     def __init__(self, number: int) -> None:
-        from smbus2 import SMBus
+        from smbus2 import SMBus, i2c_msg
 
         self._bus = SMBus(number)
+        self._msg = i2c_msg
 
     def write(self, address: int, data: bytes) -> None:
-        from smbus2 import i2c_msg
-
-        self._bus.i2c_rdwr(i2c_msg.write(address, list(data)))
+        self._bus.i2c_rdwr(self._msg.write(address, list(data)))
 
     def read(self, address: int, length: int) -> bytes:
-        from smbus2 import i2c_msg
-
-        message = i2c_msg.read(address, length)
+        message = self._msg.read(address, length)
         self._bus.i2c_rdwr(message)
         return bytes(message)

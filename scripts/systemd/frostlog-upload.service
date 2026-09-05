@@ -1,0 +1,8 @@
+[Unit]
+Description=frostlog: upload record files to the bucket
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%E/frostlog/env
+StateDirectory=frostlog
+ExecStart=%h/frostlog/.venv/bin/frostlog upload %S/frostlog

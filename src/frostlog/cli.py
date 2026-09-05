@@ -10,11 +10,13 @@ import logging
 import signal
 import sys
 import threading
+from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, get_args, get_type_hints
 
 import typer
+from pydantic import ValidationError
 
 from frostlog import records
 from frostlog.settings import Settings
@@ -55,12 +57,11 @@ class Output:
     def __init__(self, directory: Path | None) -> None:
         self._store = Store(directory) if directory is not None else None
 
-    def write(self, record: records.Ambient | records.Cooler | records.Event) -> None:
+    def write(self, record: records.Record) -> None:
         if self._store is not None:
             self._store.append(record)
         else:
-            sys.stdout.write(records.to_json(record))
-            sys.stdout.write("\n")
+            sys.stdout.write(records.line(record))
             sys.stdout.flush()
 
     def close(self) -> None:
@@ -87,6 +88,14 @@ def fail(message: str) -> typer.Exit:
     return typer.Exit(1)
 
 
+def load_settings() -> Settings:
+    try:
+        return Settings()
+    except ValidationError as exc:
+        problems = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())
+        raise fail(f"bad FROSTLOG_* setting: {problems}") from None
+
+
 @read_app.command("ambient")
 def read_ambient(
     interval: Annotated[float, typer.Option(help="Seconds between reads.")] = 10.0,
@@ -98,7 +107,7 @@ def read_ambient(
     from frostlog.ambient.i2c import SMBus2Bus
     from frostlog.ambient.reader import read_loop
 
-    settings = Settings()
+    settings = load_settings()
     try:
         bus = SMBus2Bus(settings.i2c_bus)
         sensor = registry.create(settings.ambient_sensor, bus, settings.ambient_address)
@@ -116,7 +125,7 @@ def read_ambient(
 def read_cooler(
     address: Annotated[
         str | None,
-        typer.Option(help="Bluetooth address; default FROSTLOG_COOLER_ADDRESS, else scan."),
+        typer.Option(help="Bluetooth address of the cooler; default FROSTLOG_COOLER_ADDRESS."),
     ] = None,
     duration: Annotated[float | None, typer.Option(help="Stop after this many seconds.")] = None,
     output: OutputOption = None,
@@ -124,21 +133,31 @@ def read_cooler(
         bool, typer.Option("--scan", help="List nearby Bluetooth devices and exit.")
     ] = False,
 ) -> None:
-    """Receive what the cooler sends over Bluetooth (FROSTLOG_COOLER_MODEL)."""
+    """Receive what the cooler sends over Bluetooth (FROSTLOG_COOLER_MODEL).
+
+    The address is required: without one the receiver would latch onto whatever
+    Anker device is nearby and negotiate with it. Use --scan to find the cooler.
+    """
     from frostlog.cooler import registry
 
-    settings = Settings()
+    settings = load_settings()
     try:
-        if scan:
-            for found in asyncio.run(registry.scanner(settings.cooler_model)(10.0)):
-                print(json.dumps(asdict(found)), flush=True)
-            return
-        out = Output(output)
-        receiver = registry.create_receiver(
-            settings.cooler_model, out.write, address or settings.cooler_address, duration
-        )
+        scanner = registry.scanner(settings.cooler_model)
     except ValueError as exc:
         raise fail(str(exc)) from None
+    if scan:
+        try:
+            found = asyncio.run(scanner(10.0))
+        except Exception as exc:  # Bluetooth stack errors are library-specific
+            raise fail(f"scan failed: {exc}") from None
+        for device in found:
+            print(json.dumps(asdict(device)), flush=True)
+        return
+    address = address or settings.cooler_address
+    if address is None:
+        raise fail("set FROSTLOG_COOLER_ADDRESS or pass --address (--scan lists devices)")
+    out = Output(output)
+    receiver = registry.create_receiver(settings.cooler_model, out.write, address, duration)
 
     async def run() -> None:
         stop = asyncio.Event()
@@ -154,8 +173,6 @@ def read_cooler(
 @app.command("decode")
 def decode() -> None:
     """Read cooler records on stdin and write them back with a "decoded" field (for development)."""
-    from pydantic import ValidationError
-
     from frostlog.cooler import base, registry
 
     decoders: dict[str, base.Decoder] = {}
@@ -191,9 +208,9 @@ def upload(
 ) -> None:
     """Upload record files to the S3-compatible bucket (FROSTLOG_S3_*); re-running is a no-op."""
     from frostlog.upload.s3 import S3ObjectStore
-    from frostlog.upload.sync import sync
+    from frostlog.upload.sync import Action, sync
 
-    settings = Settings()
+    settings = load_settings()
     if not (settings.s3_endpoint and settings.s3_access_key_id and settings.s3_secret_access_key):
         raise fail(
             "FROSTLOG_S3_ENDPOINT, FROSTLOG_S3_ACCESS_KEY_ID and "
@@ -207,11 +224,12 @@ def upload(
         settings.s3_access_key_id,
         settings.s3_secret_access_key,
     )
-    counts = {"upload": 0, "skip": 0, "failed": 0}
+    counts: Counter[str] = Counter()
     for action in sync(directory, store, dry_run=dry_run):
         counts[action.action] += 1
         if action.action != "skip" or log.isEnabledFor(logging.DEBUG):
             print(json.dumps(asdict(action) | {"dry_run": dry_run}), flush=True)
-    log.info("uploaded %(upload)d, unchanged %(skip)d, failed %(failed)d", counts)
+    outcomes = get_args(get_type_hints(Action)["action"])
+    log.info("%s", ", ".join(f"{name} {counts[name]}" for name in outcomes))
     if counts["failed"]:
         raise typer.Exit(1)

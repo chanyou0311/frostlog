@@ -16,5 +16,4 @@ def test_jump_detector() -> None:
     assert detector.check(base, 100.0) is None
     assert detector.check(base.replace(second=10), 110.5) is None
     jump = detector.check(base.replace(minute=5), 120.0)
-    assert jump is not None
-    assert jump.delta == pytest.approx(280.5)
+    assert jump == pytest.approx(280.5)
