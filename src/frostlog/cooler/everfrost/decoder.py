@@ -49,7 +49,7 @@ class EverfrostDecoder:
     def decode(self, payload: dict[str, Any]) -> dict[str, Any]:
         # A plaintext whose tag did not verify is most likely the wrong key's output
         # (the Prime fallback decrypts everything with a static key): use the raw bytes.
-        verified = payload.get("plain_verified", True)
+        verified = bool(payload.get("plain_verified"))
         source = "plain" if payload.get("plain") and verified else "payload"
         hex_payload = payload.get(source)
         if not hex_payload:

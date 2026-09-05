@@ -114,11 +114,10 @@ class EverfrostReceiver:
             # The handshake is open and the device has said nothing for a while. A
             # device that keeps sending other messages is left alone: they are
             # recorded whether or not the negotiation ever completes.
-            if state.negotiation_seen or state.variant_switched:
+            # An unanswered negotiation is tried again with the next variant (Prime).
+            if state.negotiation_seen or not state.try_next_variant():
                 self._event("ble_negotiation_timeout", variant=state.handshake.variant)
                 break  # disconnect; the next connection starts the negotiation afresh
-            # No answer to the Solix negotiation: try the Prime variant once.
-            state.switch(handshake.PrimeHandshake())
             self._event("ble_handshake_retry", variant=state.handshake.variant)
             for frame in state.handshake.start():
                 await session.write(frame)
@@ -162,9 +161,7 @@ class EverfrostReceiver:
             except (ProtocolError, ValueError):
                 pass
             else:
-                info["plain"] = plain.hex()
-                if not verified:
-                    info["plain_verified"] = False
+                info["plain"], info["plain_verified"] = plain.hex(), verified
         self._message(info)
         if frame.pattern == PATTERN_NEGOTIATION:
             await self._negotiate(frame, session, state)
@@ -205,10 +202,15 @@ class _SessionState:
         self.handshake = negotiation
         self.reassembler = Reassembler()
         self.negotiation_seen = False
-        self.variant_switched = False
+        self._untried: list[type[handshake.SolixHandshake | handshake.PrimeHandshake]] = [
+            handshake.PrimeHandshake
+        ]
 
-    def switch(self, negotiation: handshake.SolixHandshake | handshake.PrimeHandshake) -> None:
-        """Continue the session with another negotiation variant; fragments in flight are kept."""
-        self.handshake = negotiation
+    def try_next_variant(self) -> bool:
+        """Continue the session with the next negotiation variant, if one is left;
+        fragments in flight are kept."""
+        if not self._untried:
+            return False
+        self.handshake = self._untried.pop(0)()
         self.negotiation_seen = False
-        self.variant_switched = True
+        return True

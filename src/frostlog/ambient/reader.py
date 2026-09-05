@@ -18,8 +18,8 @@ def read_loop(
 ) -> Iterator[records.Ambient | records.Event]:
     """Yield one ``ambient`` record per read, plus ``event`` records for failures and clock jumps.
 
-    Reads are scheduled on a fixed grid (start + n * interval) so that a slow
-    read does not shift the following ones. Ends after ``count`` reads, or never.
+    Reads are scheduled on a fixed grid so that a slow read does not shift the
+    following ones. Ends after ``count`` reads, or never.
     """
     if interval < sensor.min_interval:
         log.warning(
@@ -29,18 +29,12 @@ def read_loop(
             sensor.min_interval,
         )
     jumps = clock.JumpDetector()
-    start = clock.uptime()
+    next_at = clock.uptime()
     done = 0
     while count is None or done < count:
-        if done:
-            next_at = start + done * interval
-            now = clock.uptime()
-            if now - next_at > interval:
-                # Fell behind by more than one period (the Pi stalled): continue on a
-                # fresh grid from now rather than firing the missed reads back to back.
-                start = now - done * interval
-                next_at = now
-            sleep(max(0.0, next_at - now))
+        now = clock.uptime()
+        if now < next_at:
+            sleep(next_at - now)
         try:
             reading = sensor.read()
         except SensorError as exc:
@@ -53,3 +47,6 @@ def read_loop(
                 yield records.event("clock_jump", delta_s=jump)
             yield record
         done += 1
+        # Keep the grid when slightly late; after a stall of more than a period
+        # (the Pi was busy) continue from now instead of firing the missed reads.
+        next_at = max(next_at + interval, clock.uptime())

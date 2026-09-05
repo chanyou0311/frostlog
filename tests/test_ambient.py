@@ -131,4 +131,4 @@ def test_read_loop_reanchors_after_a_stall(monkeypatch: pytest.MonkeyPatch) -> N
     assert len([r for r in out if r.type == "ambient"]) == 4
     # 10 s to the second read; the stall is not "caught up" with back-to-back reads:
     # the grid restarts from the moment the loop woke up.
-    assert [round(s) for s in slept] == [10, 0, 10]
+    assert [round(s) for s in slept] == [10, 10]

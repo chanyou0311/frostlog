@@ -16,7 +16,9 @@ def test_decode_device_info_payload() -> None:
 
 
 def test_decode_prefers_plain_and_reports_errors() -> None:
-    decoded = EverfrostDecoder().decode({"payload": "ff", "plain": "a10105"})
+    decoded = EverfrostDecoder().decode(
+        {"payload": "ff", "plain": "a10105", "plain_verified": True}
+    )
     assert decoded["source"] == "plain" and decoded["params"]["a1"]["uint_le"] == 5
     assert "error" in EverfrostDecoder().decode({"payload": "a105aa"})
     assert "error" in EverfrostDecoder().decode({})
@@ -30,7 +32,7 @@ def test_unverified_plain_is_not_trusted() -> None:
 
 
 def test_typed_readings() -> None:
-    decoded = EverfrostDecoder().decode({"plain": "a1050500002041"})
+    decoded = EverfrostDecoder().decode({"plain": "a1050500002041", "plain_verified": True})
     assert decoded["params"]["a1"]["f32le"] == 10.0
 
 

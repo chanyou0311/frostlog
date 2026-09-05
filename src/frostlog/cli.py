@@ -10,9 +10,10 @@ import logging
 import signal
 import sys
 import threading
+from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, get_args, get_type_hints
 
 import typer
 from pydantic import ValidationError
@@ -207,7 +208,7 @@ def upload(
 ) -> None:
     """Upload record files to the S3-compatible bucket (FROSTLOG_S3_*); re-running is a no-op."""
     from frostlog.upload.s3 import S3ObjectStore
-    from frostlog.upload.sync import sync
+    from frostlog.upload.sync import Action, sync
 
     settings = load_settings()
     if not (settings.s3_endpoint and settings.s3_access_key_id and settings.s3_secret_access_key):
@@ -223,13 +224,12 @@ def upload(
         settings.s3_access_key_id,
         settings.s3_secret_access_key,
     )
-    counts = {"upload": 0, "skip": 0, "conflict": 0, "failed": 0}
+    counts: Counter[str] = Counter()
     for action in sync(directory, store, dry_run=dry_run):
         counts[action.action] += 1
         if action.action != "skip" or log.isEnabledFor(logging.DEBUG):
             print(json.dumps(asdict(action) | {"dry_run": dry_run}), flush=True)
-    log.info(
-        "uploaded %(upload)d, unchanged %(skip)d, conflicts %(conflict)d, failed %(failed)d", counts
-    )
+    outcomes = get_args(get_type_hints(Action)["action"])
+    log.info("%s", ", ".join(f"{name} {counts[name]}" for name in outcomes))
     if counts["failed"]:
         raise typer.Exit(1)

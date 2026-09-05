@@ -71,16 +71,11 @@ class Store:
 def _open_for_append(path: Path) -> IO[str]:
     """Open ``path`` for appending, starting on a fresh line if the last one was torn."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    file = path.open("a", encoding="utf-8")
-    if os.fstat(file.fileno()).st_size and not _ends_with_newline(path):
+    file = path.open("a+", encoding="utf-8")
+    size = os.fstat(file.fileno()).st_size
+    if size and os.pread(file.fileno(), 1, size - 1) != b"\n":
         file.write("\n")
     return file
-
-
-def _ends_with_newline(path: Path) -> bool:
-    with path.open("rb") as file:
-        file.seek(-1, os.SEEK_END)
-        return file.read(1) == b"\n"
 
 
 def _fsync(files: Iterable[IO[str]]) -> None:
