@@ -4,10 +4,13 @@ Data goes to stdout as JSON lines (or to files with ``--output``), logs go to
 stderr. Exit status 0 on success, 1 when the run failed, 2 for bad arguments.
 """
 
+import asyncio
+import json
 import logging
 import signal
 import sys
 import threading
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
 
@@ -107,3 +110,71 @@ def read_ambient(
             out.write(record)
             if stop.is_set():
                 break
+
+
+@read_app.command("cooler")
+def read_cooler(
+    address: Annotated[
+        str | None,
+        typer.Option(help="Bluetooth address; default FROSTLOG_COOLER_ADDRESS, else scan."),
+    ] = None,
+    duration: Annotated[float | None, typer.Option(help="Stop after this many seconds.")] = None,
+    output: OutputOption = None,
+    scan: Annotated[
+        bool, typer.Option("--scan", help="List nearby Bluetooth devices and exit.")
+    ] = False,
+) -> None:
+    """Receive what the cooler sends over Bluetooth (FROSTLOG_COOLER_MODEL)."""
+    from frostlog.cooler import registry
+
+    settings = Settings()
+    try:
+        if scan:
+            for found in asyncio.run(registry.scanner(settings.cooler_model)(10.0)):
+                print(json.dumps(asdict(found)), flush=True)
+            return
+        out = Output(output)
+        receiver = registry.create_receiver(
+            settings.cooler_model, out.write, address or settings.cooler_address, duration
+        )
+    except ValueError as exc:
+        raise fail(str(exc)) from None
+
+    async def run() -> None:
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(signum, stop.set)
+        await receiver.run(stop)
+
+    with out:
+        asyncio.run(run())
+
+
+@app.command("decode")
+def decode() -> None:
+    """Read cooler records on stdin and write them back with a "decoded" field (for development)."""
+    from pydantic import ValidationError
+
+    from frostlog.cooler import base, registry
+
+    decoders: dict[str, base.Decoder] = {}
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = records.from_json(line)
+        except ValidationError as exc:
+            log.warning("skipping a line that is not a record: %s", exc.errors()[0]["msg"])
+            continue
+        out = record.model_dump(mode="json")
+        if isinstance(record, records.Cooler):
+            if record.model not in decoders:
+                try:
+                    decoders[record.model] = registry.create_decoder(record.model)
+                except ValueError as exc:
+                    log.warning("%s", exc)
+                    continue
+            out["decoded"] = decoders[record.model].decode(record.payload)
+        print(json.dumps(out), flush=True)
