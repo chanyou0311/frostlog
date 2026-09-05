@@ -1,1 +1,1 @@
-# everfrost-telemetry
+# frostlog
