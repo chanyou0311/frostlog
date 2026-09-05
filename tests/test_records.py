@@ -1,0 +1,39 @@
+import json
+from datetime import UTC, datetime
+
+from frostlog import records
+
+
+def test_ambient_round_trip() -> None:
+    record = records.ambient("dht20", 31.2, 58.4)
+    line = records.to_json(record)
+    parsed = records.from_json(line)
+    assert parsed == record
+    assert json.loads(line)["type"] == "ambient"
+
+
+def test_cooler_payload_is_kept_verbatim() -> None:
+    payload = {"pattern": "03010f", "cmd": "c405", "data": "ff09", "plain": "00a1"}
+    record = records.cooler("everfrost", payload)
+    assert records.from_json(records.to_json(record)).payload == payload
+
+
+def test_event_keeps_extra_fields() -> None:
+    record = records.event("ble_connected", address="AA:BB")
+    parsed = records.from_json(records.to_json(record))
+    assert isinstance(parsed, records.Event)
+    assert parsed.kind == "ble_connected"
+    assert json.loads(records.to_json(parsed))["address"] == "AA:BB"
+
+
+def test_common_fields_present() -> None:
+    record = records.event("x")
+    assert record.ts.tzinfo is UTC or record.ts.utcoffset() == datetime.now(UTC).utcoffset()
+    assert record.uptime > 0
+    assert record.boot_id
+
+
+def test_stream_dirs() -> None:
+    assert records.stream_dir(records.event("x")) == "events"
+    assert records.stream_dir(records.ambient("s", 1.0, 2.0)) == "ambient"
+    assert records.stream_dir(records.cooler("m", {})) == "cooler"
