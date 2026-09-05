@@ -33,7 +33,14 @@ def read_loop(
     done = 0
     while count is None or done < count:
         if done:
-            sleep(max(0.0, start + done * interval - clock.uptime()))
+            next_at = start + done * interval
+            now = clock.uptime()
+            if now - next_at > interval:
+                # Fell behind by more than one period (the Pi stalled): continue on a
+                # fresh grid from now rather than firing the missed reads back to back.
+                start = now - done * interval
+                next_at = now
+            sleep(max(0.0, next_at - now))
         try:
             reading = sensor.read()
         except SensorError as exc:

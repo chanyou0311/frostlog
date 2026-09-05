@@ -225,11 +225,13 @@ def upload(
         settings.s3_access_key_id,
         settings.s3_secret_access_key,
     )
-    counts = {"upload": 0, "skip": 0, "failed": 0}
+    counts = {"upload": 0, "skip": 0, "conflict": 0, "failed": 0}
     for action in sync(directory, store, dry_run=dry_run):
         counts[action.action] += 1
         if action.action != "skip" or log.isEnabledFor(logging.DEBUG):
             print(json.dumps(asdict(action) | {"dry_run": dry_run}), flush=True)
-    log.info("uploaded %(upload)d, unchanged %(skip)d, failed %(failed)d", counts)
+    log.info(
+        "uploaded %(upload)d, unchanged %(skip)d, conflicts %(conflict)d, failed %(failed)d", counts
+    )
     if counts["failed"]:
         raise typer.Exit(1)

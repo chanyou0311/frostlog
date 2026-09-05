@@ -7,7 +7,9 @@ that fail are reported and left for the next run; nothing is deleted.
 
 Today's files are still being appended to while they are uploaded: what is
 hashed and what is sent is the same prefix of the file, taken when it is
-opened, and whatever arrives after that waits for the next run.
+opened, and whatever arrives after that waits for the next run. A local file
+that is shorter than its uploaded copy (a torn tail after a power cut) is
+reported as a conflict and not overwritten until it has grown past it.
 """
 
 import hashlib
@@ -28,7 +30,7 @@ log = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class Action:
     key: str
-    action: Literal["upload", "skip", "failed"]
+    action: Literal["upload", "skip", "conflict", "failed"]
     size: int
     error: str | None = None
 
@@ -74,6 +76,15 @@ def sync(root: Path, store: ObjectStore, dry_run: bool = False) -> Iterator[Acti
                 remote = store.head(key)
                 if remote is not None and remote.size == size and remote.sha256 == digest:
                     yield Action(key, "skip", size)
+                    continue
+                if remote is not None and remote.size > size:
+                    # A torn tail after a power cut must not shrink what is already safe.
+                    log.warning(
+                        "%s: local %d bytes < uploaded %d bytes; left alone", key, size, remote.size
+                    )
+                    yield Action(
+                        key, "conflict", size, error=f"uploaded copy has {remote.size} bytes"
+                    )
                     continue
                 if not dry_run:
                     body.seek(0)

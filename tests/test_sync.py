@@ -102,3 +102,13 @@ def test_file_prefix_is_a_seekable_stream_of_the_first_bytes(tmp_path: Path) -> 
         prefix.seek(1)
         assert prefix.read() == b"bc"
         assert prefix.read() == b""
+
+
+def test_shorter_local_file_does_not_shrink_the_uploaded_copy(tmp_path: Path) -> None:
+    _populate(tmp_path)
+    store = FakeStore()
+    list(sync(tmp_path, store))
+    (tmp_path / "ambient/2026-09-06.jsonl").write_text('{"a"')  # torn after a power cut
+    actions = {a.key: a.action for a in sync(tmp_path, store)}
+    assert actions["ambient/2026-09-06.jsonl"] == "conflict"
+    assert [key for key, _ in store.puts].count("ambient/2026-09-06.jsonl") == 1

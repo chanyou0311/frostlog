@@ -77,13 +77,16 @@ class EverfrostReceiver:
                 continue
             reported_missing = False
             backoff = self._reconnect_delay
+            connected = False
             try:
                 async with ble.Session(device) as session:
+                    connected = True
                     self._event("ble_connected", address=session.address, name=session.name)
                     await self._session(session, stop, deadline)
             except (ble.BleakError, OSError, TimeoutError) as exc:
                 self._event("ble_error", address=device.address, error=str(exc))
-            self._event("ble_disconnected", address=device.address)
+            if connected:
+                self._event("ble_disconnected", address=device.address)
             await self._pause(stop, self._reconnect_delay, deadline)
 
     async def _pause(self, stop: asyncio.Event, seconds: float, deadline: float | None) -> None:
