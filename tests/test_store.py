@@ -28,10 +28,9 @@ def test_append_writes_per_stream_and_day(tmp_path: Path) -> None:
     assert records.from_json(lines[0]).type == "ambient"
 
 
-def test_flush_makes_data_visible(tmp_path: Path) -> None:
-    store = Store(tmp_path, flush_interval=3600)
+def test_lines_are_visible_before_sync(tmp_path: Path) -> None:
+    store = Store(tmp_path, sync_interval=3600)
     store.append(_ambient_at(datetime(2026, 9, 6, tzinfo=UTC)))
-    store.flush()
     assert len(list(read_lines(tmp_path / "ambient/2026-09-06.jsonl"))) == 1
     store.close()
 

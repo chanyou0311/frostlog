@@ -1,8 +1,9 @@
 """Append records to ``<root>/<stream>/<YYYY-MM-DD>.jsonl``.
 
-Writes are buffered and flushed to disk every few seconds so that a power cut
-loses at most the last few seconds, and only the final line can be torn.
-Readers must skip a broken last line (see :func:`read_lines`).
+Every line is handed to the kernel as soon as it is written, so readers (and
+``tail -f``) see it at once; files are fsynced every few seconds so that a
+power cut loses at most the last few seconds, and only the final line can be
+torn. Readers must skip a broken last line (see :func:`read_lines`).
 """
 
 import os
@@ -15,12 +16,12 @@ from frostlog.records import Ambient, Cooler, Event
 
 
 class Store:
-    def __init__(self, root: Path, flush_interval: float = 5.0) -> None:
+    def __init__(self, root: Path, sync_interval: float = 5.0) -> None:
         self.root = root
-        self._flush_interval = flush_interval
+        self._sync_interval = sync_interval
         self._files: dict[Path, IO[str]] = {}
         self._dirty = False
-        self._last_flush = clock.uptime()
+        self._last_sync = clock.uptime()
 
     def path_for(self, record: Ambient | Cooler | Event) -> Path:
         day = record.ts.strftime("%Y-%m-%d")
@@ -35,20 +36,21 @@ class Store:
             file = self._files[path] = path.open("a", encoding="utf-8")
         file.write(records.to_json(record))
         file.write("\n")
+        file.flush()
         self._dirty = True
-        if clock.uptime() - self._last_flush >= self._flush_interval:
-            self.flush()
+        if clock.uptime() - self._last_sync >= self._sync_interval:
+            self.sync()
 
-    def flush(self) -> None:
+    def sync(self) -> None:
+        """Force what has been written onto the disk."""
         if self._dirty:
             for file in self._files.values():
-                file.flush()
                 os.fsync(file.fileno())
             self._dirty = False
-        self._last_flush = clock.uptime()
+        self._last_sync = clock.uptime()
 
     def close(self) -> None:
-        self.flush()
+        self.sync()
         for file in self._files.values():
             file.close()
         self._files.clear()

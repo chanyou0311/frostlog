@@ -28,6 +28,15 @@ mkdir -p "$config_dir/systemd/user"
 install -m 644 scripts/systemd/* "$config_dir/systemd/user/"
 systemctl --user daemon-reload
 loginctl enable-linger "$USER"
-systemctl --user enable --now frostlog-ambient.service frostlog-cooler.service frostlog-upload.timer
-systemctl --user restart frostlog-ambient.service frostlog-cooler.service
+systemctl --user enable --now frostlog-ambient.service frostlog-upload.timer
+systemctl --user restart frostlog-ambient.service
+# Without a pinned address the receiver would latch onto any nearby Anker device,
+# so the cooler service only runs once FROSTLOG_COOLER_ADDRESS is set.
+if grep -q '^FROSTLOG_COOLER_ADDRESS=.' "$config_dir/frostlog/env"; then
+  systemctl --user enable --now frostlog-cooler.service
+  systemctl --user restart frostlog-cooler.service
+else
+  systemctl --user disable --now frostlog-cooler.service 2>/dev/null || true
+  echo "frostlog-cooler stays off until FROSTLOG_COOLER_ADDRESS is set in $config_dir/frostlog/env"
+fi
 systemctl --user --no-pager --no-legend list-units 'frostlog-*'

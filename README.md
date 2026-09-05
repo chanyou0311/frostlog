@@ -21,6 +21,7 @@ uv run frostlog read cooler --duration 60 | uv run frostlog decode
 設定は環境変数 `FROSTLOG_*`（`scripts/env.example`）。
 
 Pi には Mac から `scripts/deploy.sh` で配る。Pi 上ではユーザー単位の systemd が
-`frostlog-ambient` / `frostlog-cooler` を常駐させ、`frostlog-upload.timer` が 30 分おきに送る。
+`frostlog-ambient` を常駐させ、`frostlog-upload.timer` が 30 分おきに送る。`frostlog-cooler` は
+`FROSTLOG_COOLER_ADDRESS` を設定すると常駐する（未設定だと近くの Anker 機器を何でも掴んでしまうため）。
 データは `~/.local/state/frostlog`、設定は `~/.config/frostlog/env`、ログは
-`journalctl --user -u frostlog-ambient` で見る。
+`journalctl --user-unit frostlog-ambient` で見る。
