@@ -50,6 +50,6 @@ def read_loop(
             record = records.ambient(sensor.name, reading.temp_c, reading.humidity_pct)
             jump = jumps.check(record.ts, record.uptime)
             if jump is not None:
-                yield records.event("clock_jump", delta_s=jump.delta)
+                yield records.event("clock_jump", delta_s=jump)
             yield record
         done += 1

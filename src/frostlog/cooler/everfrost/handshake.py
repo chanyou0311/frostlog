@@ -119,6 +119,20 @@ class _Base:
         if 0xA2 in parameters:
             self.mtu = int.from_bytes(parameters[0xA2].raw, "little")
 
+    def _read_device(self, parameters: dict[int, Parameter]) -> None:
+        self.device = DeviceInfo(
+            chip=_text(parameters, 0xA2),
+            firmware=_text(parameters, 0xA3),
+            serial=_text(parameters, 0xA4),
+        )
+
+    def _derive_secret(self, parameters: dict[int, Parameter], private_key: bytes) -> bytes:
+        peer = _require(parameters, 0xA1, "stage 5").raw
+        if len(peer) != 64:
+            raise HandshakeError(f"stage 5: expected a 64-byte public key, got {len(peer)}")
+        self.secret = shared_secret(private_key, peer)
+        return self.secret
+
 
 class SolixHandshake(_Base):
     variant = "solix"
@@ -140,27 +154,15 @@ class SolixHandshake(_Base):
                 self._set_mtu(parameters)
                 return [self._send("0029", self._ident())]
             case "0829":
-                self.device = DeviceInfo(
-                    chip=_text(parameters, 0xA2),
-                    firmware=_text(parameters, 0xA3),
-                    serial=_text(parameters, 0xA4),
-                )
-                extra = [
-                    Parameter(0xA3, None, b"\x20"),
-                    Parameter(0xA4, None, b"\x00\xf0"),
-                    Parameter(0xA5, None, b"\x40"),
-                ]
+                self._read_device(parameters)
+                extra = [*_MTU_REQUEST, Parameter(0xA5, None, b"\x40")]
                 return [self._send("0005", self._ident() + extra)]
             case "0805":
                 return [
                     self._send("0021", [Parameter(0xA1, None, public_key_xy(SOLIX_PRIVATE_KEY))])
                 ]
             case "0821":
-                peer = _require(parameters, 0xA1, "stage 5").raw
-                if len(peer) != 64:
-                    raise HandshakeError(f"stage 5: expected a 64-byte public key, got {len(peer)}")
-                self.secret = shared_secret(SOLIX_PRIVATE_KEY, peer)
-                self.cipher = CbcCipher(self.secret)
+                self.cipher = CbcCipher(self._derive_secret(parameters, SOLIX_PRIVATE_KEY))
                 self.done = True
                 extra = [
                     Parameter(0xA3, None, b"\x20"),
@@ -193,11 +195,7 @@ class PrimeHandshake(_Base):
                 self._set_mtu(parameters)
                 return [self._send("4029", [self._ts()])]
             case "4829":
-                self.device = DeviceInfo(
-                    chip=_text(parameters, 0xA2),
-                    firmware=_text(parameters, 0xA3),
-                    serial=_text(parameters, 0xA4),
-                )
+                self._read_device(parameters)
                 extra = [
                     Parameter(0xA3, None, b"\x20"),
                     Parameter(0xA4, None, b"\x29\x01"),
@@ -210,11 +208,8 @@ class PrimeHandshake(_Base):
                     self._send("4021", [Parameter(0xA1, None, public_key_xy(PRIME_PRIVATE_KEY))])
                 ]
             case "4821":
-                peer = _require(parameters, 0xA1, "stage 5").raw
-                if len(peer) != 64:
-                    raise HandshakeError(f"stage 5: expected a 64-byte public key, got {len(peer)}")
-                self.secret = shared_secret(PRIME_PRIVATE_KEY, peer)
-                self.cipher = GcmCipher.from_secret(self.secret, PRIME_AAD)
+                secret = self._derive_secret(parameters, PRIME_PRIVATE_KEY)
+                self.cipher = GcmCipher.from_secret(secret, PRIME_AAD)
                 extra = [
                     Parameter(0xA3, None, b"\x00\x00\x00\x00"),
                     Parameter(0xA5, None, self._tz.encode()),

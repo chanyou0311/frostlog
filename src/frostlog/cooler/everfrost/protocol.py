@@ -10,6 +10,7 @@ Parameter: ``<key 1B> <length 1B> [<type 1B>] <value>``; the type byte is presen
            when length > 1. Payloads may start with a lone ``00`` prefix byte.
 """
 
+import functools
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -105,7 +106,7 @@ class Reassembler:
     """
 
     def __init__(self) -> None:
-        self._pending: dict[bytes, list[tuple[Fragment, bytes]]] = {}
+        self._pending: dict[bytes, list[tuple[bytes, bytes]]] = {}  # (data, notification)
 
     def is_fragment(self, frame: Frame, notification_length: int, mtu: int) -> bool:
         """A notification that fills the MTU starts a fragmented message; later
@@ -120,19 +121,18 @@ class Reassembler:
         raises :class:`FragmentError` and forgets the message.
         """
         collected = self._pending.setdefault(frame.key, [])
-        notifications = [n for _, n in collected] + [notification]
         try:
             fragment = parse_fragment(frame.payload)
-            if fragment.index != len(notifications):
+            if fragment.index != len(collected) + 1:
                 raise ProtocolError(f"fragment {fragment.index}/{fragment.total} out of order")
         except ProtocolError as exc:
             del self._pending[frame.key]
-            raise FragmentError(str(exc), notifications) from None
-        collected.append((fragment, notification))
+            raise FragmentError(str(exc), [n for _, n in collected] + [notification]) from None
+        collected.append((fragment.data, notification))
         if fragment.index != fragment.total:
             return None
         del self._pending[frame.key]
-        return b"".join(f.data for f, _ in collected), notifications
+        return b"".join(d for d, _ in collected), [n for _, n in collected]
 
     def pending(self) -> dict[bytes, list[bytes]]:
         """The notifications of messages that are still incomplete, per (pattern, cmd)."""
@@ -186,6 +186,7 @@ def build_parameters(parameters: Iterable[Parameter], prefix: bool = False) -> b
 # --- keys and ciphers -------------------------------------------------------------
 
 
+@functools.cache
 def _private_key(scalar: bytes) -> ec.EllipticCurvePrivateKey:
     return ec.derive_private_key(int.from_bytes(scalar, "big"), ec.SECP256R1())
 

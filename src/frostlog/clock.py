@@ -10,7 +10,6 @@ clock jumps, the reader emits an event so the offset can be reconstructed later.
 import functools
 import time
 import uuid
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -35,18 +34,6 @@ def boot_id() -> str:
         return str(uuid.uuid4())
 
 
-@dataclass(frozen=True)
-class ClockJump:
-    """The wall clock moved relative to uptime by ``delta`` seconds."""
-
-    before: float
-    after: float
-
-    @property
-    def delta(self) -> float:
-        return self.after - self.before
-
-
 class JumpDetector:
     """Notice when wall time minus uptime changes by more than ``threshold`` seconds."""
 
@@ -54,9 +41,10 @@ class JumpDetector:
         self._threshold = threshold
         self._offset: float | None = None
 
-    def check(self, wall: datetime, up: float) -> ClockJump | None:
+    def check(self, wall: datetime, up: float) -> float | None:
+        """The seconds the wall clock jumped since the previous check, if it did."""
         offset = wall.timestamp() - up
         previous, self._offset = self._offset, offset
         if previous is None or abs(offset - previous) < self._threshold:
             return None
-        return ClockJump(before=previous, after=offset)
+        return offset - previous

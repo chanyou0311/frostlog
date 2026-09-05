@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import IO
 
 from frostlog import clock, records
-from frostlog.records import Ambient, Cooler, Event
+from frostlog.records import Record
 
 
 class Store:
@@ -25,11 +25,11 @@ class Store:
         self._dirty = False
         self._last_sync = clock.uptime()
 
-    def path_for(self, record: Ambient | Cooler | Event) -> Path:
+    def path_for(self, record: Record) -> Path:
         day = record.ts.strftime("%Y-%m-%d")
         return self.root / records.stream_dir(record) / f"{day}.jsonl"
 
-    def append(self, record: Ambient | Cooler | Event) -> None:
+    def append(self, record: Record) -> None:
         path = self.path_for(record)
         file = self._files.get(path)
         if file is None:

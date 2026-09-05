@@ -8,9 +8,8 @@ import math
 import struct
 from typing import Any
 
+from frostlog.cooler.everfrost import MODEL
 from frostlog.cooler.everfrost.protocol import Parameter, ProtocolError, parse_parameters
-
-MODEL = "everfrost"
 
 # Type bytes seen in Anker payloads and the reading they suggest.
 _TYPED = {0x00: "str", 0x01: "u8", 0x02: "i16le", 0x04: "bytes", 0x05: "f32le"}

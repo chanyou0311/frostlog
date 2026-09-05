@@ -56,7 +56,7 @@ class Output:
     def __init__(self, directory: Path | None) -> None:
         self._store = Store(directory) if directory is not None else None
 
-    def write(self, record: records.Ambient | records.Cooler | records.Event) -> None:
+    def write(self, record: records.Record) -> None:
         if self._store is not None:
             self._store.append(record)
         else:
@@ -142,21 +142,21 @@ def read_cooler(
     settings = load_settings()
     try:
         scanner = registry.scanner(settings.cooler_model)
-        if scan:
-            try:
-                found = asyncio.run(scanner(10.0))
-            except Exception as exc:  # Bluetooth stack errors are library-specific
-                raise fail(f"scan failed: {exc}") from None
-            for device in found:
-                print(json.dumps(asdict(device)), flush=True)
-            return
-        address = address or settings.cooler_address
-        if address is None:
-            raise fail("set FROSTLOG_COOLER_ADDRESS or pass --address (--scan lists devices)")
-        out = Output(output)
-        receiver = registry.create_receiver(settings.cooler_model, out.write, address, duration)
     except ValueError as exc:
         raise fail(str(exc)) from None
+    if scan:
+        try:
+            found = asyncio.run(scanner(10.0))
+        except Exception as exc:  # Bluetooth stack errors are library-specific
+            raise fail(f"scan failed: {exc}") from None
+        for device in found:
+            print(json.dumps(asdict(device)), flush=True)
+        return
+    address = address or settings.cooler_address
+    if address is None:
+        raise fail("set FROSTLOG_COOLER_ADDRESS or pass --address (--scan lists devices)")
+    out = Output(output)
+    receiver = registry.create_receiver(settings.cooler_model, out.write, address, duration)
 
     async def run() -> None:
         stop = asyncio.Event()
@@ -172,8 +172,6 @@ def read_cooler(
 @app.command("decode")
 def decode() -> None:
     """Read cooler records on stdin and write them back with a "decoded" field (for development)."""
-    from pydantic import ValidationError
-
     from frostlog.cooler import base, registry
 
     decoders: dict[str, base.Decoder] = {}

@@ -14,7 +14,7 @@ from typing import Any
 
 from frostlog import clock, records
 from frostlog.cooler.base import Sink
-from frostlog.cooler.everfrost import ble, handshake
+from frostlog.cooler.everfrost import MODEL, ble, handshake
 from frostlog.cooler.everfrost.protocol import (
     PATTERN_NEGOTIATION,
     FragmentError,
@@ -25,8 +25,6 @@ from frostlog.cooler.everfrost.protocol import (
 )
 
 log = logging.getLogger(__name__)
-
-MODEL = "everfrost"
 
 
 async def _wait(stop: asyncio.Event, seconds: float) -> None:

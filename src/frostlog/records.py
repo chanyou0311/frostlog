@@ -44,7 +44,7 @@ Record = Annotated[Ambient | Cooler | Event, Field(discriminator="type")]
 
 STREAM_DIRS: dict[str, str] = {"ambient": "ambient", "cooler": "cooler", "event": "events"}
 
-_adapter: TypeAdapter[Ambient | Cooler | Event] = TypeAdapter(Record)
+_adapter: TypeAdapter[Record] = TypeAdapter(Record)
 
 
 def stamp() -> dict[str, Any]:
@@ -64,18 +64,18 @@ def event(kind: str, **fields: Any) -> Event:
     return Event(kind=kind, **fields, **stamp())
 
 
-def to_json(record: Ambient | Cooler | Event) -> str:
+def to_json(record: Record) -> str:
     return record.model_dump_json()
 
 
-def line(record: Ambient | Cooler | Event) -> str:
+def line(record: Record) -> str:
     """One record as one line of a JSONL file."""
     return to_json(record) + "\n"
 
 
-def from_json(line: str | bytes) -> Ambient | Cooler | Event:
+def from_json(line: str | bytes) -> Record:
     return _adapter.validate_json(line)
 
 
-def stream_dir(record: Ambient | Cooler | Event) -> str:
+def stream_dir(record: Record) -> str:
     return STREAM_DIRS[record.type]

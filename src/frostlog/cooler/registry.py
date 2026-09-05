@@ -4,9 +4,10 @@ Implementations are imported lazily so that ``decode`` does not load Bluetooth
 libraries and ``read cooler`` does not load anything it does not use.
 """
 
+from frostlog.cooler import everfrost
 from frostlog.cooler.base import Decoder, Receiver, Scanner, Sink
 
-MODELS = ("everfrost",)
+MODELS = (everfrost.MODEL,)
 
 
 def _check(model: str) -> None:
