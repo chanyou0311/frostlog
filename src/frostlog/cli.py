@@ -178,3 +178,40 @@ def decode() -> None:
                     continue
             out["decoded"] = decoders[record.model].decode(record.payload)
         print(json.dumps(out), flush=True)
+
+
+@app.command("upload")
+def upload(
+    directory: Annotated[
+        Path, typer.Argument(help="Root of the record files (what --output wrote).")
+    ],
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Only print what would be uploaded.")
+    ] = False,
+) -> None:
+    """Upload record files to the S3-compatible bucket (FROSTLOG_S3_*); re-running is a no-op."""
+    from frostlog.upload.s3 import S3ObjectStore
+    from frostlog.upload.sync import sync
+
+    settings = Settings()
+    if not (settings.s3_endpoint and settings.s3_access_key_id and settings.s3_secret_access_key):
+        raise fail(
+            "FROSTLOG_S3_ENDPOINT, FROSTLOG_S3_ACCESS_KEY_ID and "
+            "FROSTLOG_S3_SECRET_ACCESS_KEY must be set"
+        )
+    if not directory.is_dir():
+        raise fail(f"{directory} is not a directory")
+    store = S3ObjectStore(
+        settings.s3_endpoint,
+        settings.s3_bucket,
+        settings.s3_access_key_id,
+        settings.s3_secret_access_key,
+    )
+    counts = {"upload": 0, "skip": 0, "failed": 0}
+    for action in sync(directory, store, dry_run=dry_run):
+        counts[action.action] += 1
+        if action.action != "skip" or log.isEnabledFor(logging.DEBUG):
+            print(json.dumps(asdict(action) | {"dry_run": dry_run}), flush=True)
+    log.info("uploaded %(upload)d, unchanged %(skip)d, failed %(failed)d", counts)
+    if counts["failed"]:
+        raise typer.Exit(1)
