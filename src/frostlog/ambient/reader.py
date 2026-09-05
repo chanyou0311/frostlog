@@ -32,6 +32,8 @@ def read_loop(
     start = clock.uptime()
     done = 0
     while count is None or done < count:
+        if done:
+            sleep(max(0.0, start + done * interval - clock.uptime()))
         try:
             reading = sensor.read()
         except SensorError as exc:
@@ -44,7 +46,3 @@ def read_loop(
                 yield records.event("clock_jump", delta_s=jump.delta)
             yield record
         done += 1
-        if count is not None and done >= count:
-            return
-        next_at = start + done * interval
-        sleep(max(0.0, next_at - clock.uptime()))

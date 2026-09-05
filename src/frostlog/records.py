@@ -68,6 +68,11 @@ def to_json(record: Ambient | Cooler | Event) -> str:
     return record.model_dump_json()
 
 
+def line(record: Ambient | Cooler | Event) -> str:
+    """One record as one line of a JSONL file."""
+    return to_json(record) + "\n"
+
+
 def from_json(line: str | bytes) -> Ambient | Cooler | Event:
     return _adapter.validate_json(line)
 

@@ -29,13 +29,8 @@ async def scan(timeout: float = 10.0) -> list[Found]:
     return sorted(found, key=lambda f: (not f.cooler, -f.rssi))
 
 
-async def find_device(address: str | None, timeout: float) -> BLEDevice | None:
-    if address:
-        return await BleakScanner.find_device_by_address(address, timeout=timeout)
-    return await BleakScanner.find_device_by_filter(
-        lambda _device, advertisement: SERVICE_UUID in advertisement.service_uuids,
-        timeout=timeout,
-    )
+async def find_device(address: str, timeout: float) -> BLEDevice | None:
+    return await BleakScanner.find_device_by_address(address, timeout=timeout)
 
 
 class Session:
@@ -54,7 +49,12 @@ class Session:
 
     async def __aenter__(self) -> "Session":
         await self._client.connect()
-        await self._client.start_notify(NOTIFY_CHAR_UUID, self._on_notify)
+        try:
+            await self._client.start_notify(NOTIFY_CHAR_UUID, self._on_notify)
+        except BaseException:
+            # ``async with`` only runs __aexit__ once __aenter__ has returned.
+            await self.__aexit__()
+            raise
         return self
 
     async def __aexit__(self, *exc: object) -> None:

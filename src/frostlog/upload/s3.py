@@ -1,7 +1,7 @@
 """The two S3 operations the uploader needs: HEAD and PUT of one object."""
 
+import io
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Protocol
 
 SHA256_METADATA_KEY = "sha256"
@@ -16,7 +16,7 @@ class RemoteObject:
 class ObjectStore(Protocol):
     def head(self, key: str) -> RemoteObject | None: ...
 
-    def put(self, key: str, path: Path, sha256: str) -> None: ...
+    def put(self, key: str, body: io.RawIOBase, size: int, sha256: str) -> None: ...
 
 
 class S3ObjectStore:
@@ -52,12 +52,12 @@ class S3ObjectStore:
             sha256=response.get("Metadata", {}).get(SHA256_METADATA_KEY),
         )
 
-    def put(self, key: str, path: Path, sha256: str) -> None:
-        with path.open("rb") as body:
-            self._client.put_object(
-                Bucket=self._bucket,
-                Key=key,
-                Body=body,
-                ContentType="application/x-ndjson",
-                Metadata={SHA256_METADATA_KEY: sha256},
-            )
+    def put(self, key: str, body: io.RawIOBase, size: int, sha256: str) -> None:
+        self._client.put_object(
+            Bucket=self._bucket,
+            Key=key,
+            Body=body,
+            ContentLength=size,
+            ContentType="application/x-ndjson",
+            Metadata={SHA256_METADATA_KEY: sha256},
+        )

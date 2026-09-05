@@ -1,5 +1,6 @@
 import pytest
 
+from frostlog import records
 from frostlog.ambient import am2320, dht20, registry
 from frostlog.ambient.base import SensorError
 from frostlog.ambient.reader import read_loop
@@ -107,6 +108,6 @@ def test_read_loop_emits_records_and_failures(monkeypatch: pytest.MonkeyPatch) -
     slept: list[float] = []
     out = list(read_loop(sensor, interval=10, count=3, sleep=slept.append))
     assert [r.type for r in out] == ["ambient", "event", "ambient"]
-    assert out[1].kind == "ambient_read_failed"
+    assert isinstance(out[1], records.Event) and out[1].kind == "ambient_read_failed"
     # sleep is a no-op here, so the grid keeps stretching: ~10 s, then ~20 s.
     assert [round(s) for s in slept] == [10, 20]

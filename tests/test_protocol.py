@@ -126,15 +126,28 @@ def test_fragment_reassembly() -> None:
         p.Frame(h("03010f"), h("c405"), h("23") + b"def"),
         p.Frame(h("03010f"), h("c405"), h("33") + b"g"),
     ]
+    raw = [b"n1", b"n2", b"n3"]
     assert reassembler.is_fragment(frames[0], notification_length=253, mtu=253)
-    assert reassembler.add(frames[0]) is None
+    assert reassembler.add(frames[0], raw[0]) is None
     assert reassembler.is_fragment(frames[1], notification_length=100, mtu=253)
-    assert reassembler.add(frames[1]) is None
-    assert reassembler.add(frames[2]) == b"abcdefg"
+    assert reassembler.add(frames[1], raw[1]) is None
+    assert reassembler.pending() == {frames[0].key: raw[:2]}
+    assert reassembler.add(frames[2], raw[2]) == (b"abcdefg", raw)
     assert not reassembler.is_fragment(frames[1], notification_length=100, mtu=253)
-    reassembler.add(frames[0])
-    with pytest.raises(p.ProtocolError, match="out of order"):
-        reassembler.add(frames[2])
+    assert reassembler.pending() == {}
+
+    reassembler.add(frames[0], raw[0])
+    with pytest.raises(p.FragmentError, match="out of order") as info:
+        reassembler.add(frames[2], raw[2])
+    assert info.value.notifications == [raw[0], raw[2]]
+    assert reassembler.pending() == {}
+
+    # A frame that is no fragment at all also ends the message, keeping what was collected.
+    reassembler.add(frames[0], raw[0])
+    with pytest.raises(p.FragmentError, match="empty") as info:
+        reassembler.add(p.Frame(h("03010f"), h("c405"), b""), b"n0")
+    assert info.value.notifications == [raw[0], b"n0"]
+    assert reassembler.pending() == {}
 
 
 # --- keys -------------------------------------------------------------------------

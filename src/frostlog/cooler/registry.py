@@ -14,9 +14,7 @@ def _check(model: str) -> None:
         raise ValueError(f"unknown cooler model {model!r}; known: {list(MODELS)}")
 
 
-def create_receiver(
-    model: str, sink: Sink, address: str | None, duration: float | None
-) -> Receiver:
+def create_receiver(model: str, sink: Sink, address: str, duration: float | None) -> Receiver:
     _check(model)
     from frostlog.cooler.everfrost.receiver import EverfrostReceiver
 

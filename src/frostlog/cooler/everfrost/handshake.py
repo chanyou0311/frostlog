@@ -23,7 +23,6 @@ from frostlog.cooler.everfrost.protocol import (
     Frame,
     GcmCipher,
     Parameter,
-    ProtocolError,
     build_frame,
     build_parameters,
     parse_parameters,
@@ -43,6 +42,9 @@ PRIME_CLIENT_UUID = "79ebed35-dc9c-4904-b40c-72c4e863aa10"
 PRIME_NEGOTIATION_KEY = bytes.fromhex("b8ff7422955d4eb6d554a2c470280559")
 PRIME_NEGOTIATION_NONCE = bytes.fromhex("6ba3e3f2f3a60f2971ce5d1f")
 PRIME_AAD = bytes.fromhex("3322110077665544bbaa9988ffeeddcc")
+
+# What the client asks for at stage 1 of either variant (MTU negotiation).
+_MTU_REQUEST = [Parameter(0xA3, None, b"\x20"), Parameter(0xA4, None, b"\x00\xf0")]
 
 
 class HandshakeError(Exception):
@@ -133,8 +135,7 @@ class SolixHandshake(_Base):
         parameters = self._parameters(frame)
         match frame.cmd.hex():
             case "0801":
-                extra = [Parameter(0xA3, None, b"\x20"), Parameter(0xA4, None, b"\x00\xf0")]
-                return [self._send("0003", self._ident() + extra)]
+                return [self._send("0003", self._ident() + _MTU_REQUEST)]
             case "0803":
                 self._set_mtu(parameters)
                 return [self._send("0029", self._ident())]
@@ -187,8 +188,7 @@ class PrimeHandshake(_Base):
         parameters = self._parameters(frame)
         match frame.cmd.hex():
             case "4801":
-                extra = [Parameter(0xA3, None, b"\x20"), Parameter(0xA4, None, b"\x00\xf0")]
-                return [self._send("4003", [self._ts(), *extra])]
+                return [self._send("4003", [self._ts(), *_MTU_REQUEST])]
             case "4803":
                 self._set_mtu(parameters)
                 return [self._send("4029", [self._ts()])]
@@ -243,7 +243,3 @@ class PrimeHandshake(_Base):
                 ]
             case _:
                 return []
-
-
-def parse_error(exc: Exception) -> str:
-    return f"{type(exc).__name__}: {exc}" if isinstance(exc, ProtocolError) else str(exc)

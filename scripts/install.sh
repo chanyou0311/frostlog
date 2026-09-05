@@ -32,7 +32,7 @@ systemctl --user enable --now frostlog-ambient.service frostlog-upload.timer
 systemctl --user restart frostlog-ambient.service
 # Without a pinned address the receiver would latch onto any nearby Anker device,
 # so the cooler service only runs once FROSTLOG_COOLER_ADDRESS is set.
-if grep -q '^FROSTLOG_COOLER_ADDRESS=.' "$config_dir/frostlog/env"; then
+if grep -Eq '^FROSTLOG_COOLER_ADDRESS=[^[:space:]]' "$config_dir/frostlog/env"; then
   systemctl --user enable --now frostlog-cooler.service
   systemctl --user restart frostlog-cooler.service
 else

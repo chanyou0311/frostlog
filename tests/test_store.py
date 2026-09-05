@@ -35,6 +35,22 @@ def test_lines_are_visible_before_sync(tmp_path: Path) -> None:
     store.close()
 
 
+def test_reopen_after_torn_line_starts_a_fresh_line(tmp_path: Path) -> None:
+    # Power was cut while a record was being written; the next run must not weld
+    # its first record onto the torn one.
+    path = tmp_path / "ambient/2026-09-06.jsonl"
+    path.parent.mkdir()
+    path.write_bytes(b'{"ts":"2026-09-06T00:00:00Z","typ')
+    with Store(tmp_path) as store:
+        store.append(_ambient_at(datetime(2026, 9, 6, 1, tzinfo=UTC)))
+    lines = list(read_lines(path))
+    assert lines[0] == '{"ts":"2026-09-06T00:00:00Z","typ'
+    assert records.from_json(lines[1]).type == "ambient"
+    with Store(tmp_path) as store:  # a file that ends properly is left alone
+        store.append(_ambient_at(datetime(2026, 9, 6, 2, tzinfo=UTC)))
+    assert len(list(read_lines(path))) == 3
+
+
 def test_read_lines_drops_torn_last_line(tmp_path: Path) -> None:
     path = tmp_path / "x.jsonl"
     path.write_bytes(b'{"a":1}\n{"a":2}\n{"a"')

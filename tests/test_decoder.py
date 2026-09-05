@@ -22,6 +22,13 @@ def test_decode_prefers_plain_and_reports_errors() -> None:
     assert "error" in EverfrostDecoder().decode({})
 
 
+def test_unverified_plain_is_not_trusted() -> None:
+    record = {"payload": "a10105", "plain": "ffff", "plain_verified": False}
+    decoded = EverfrostDecoder().decode(record)
+    assert decoded["source"] == "payload" and decoded["params"]["a1"]["uint_le"] == 5
+    assert "note" in decoded
+
+
 def test_typed_readings() -> None:
     decoded = EverfrostDecoder().decode({"plain": "a1050500002041"})
     assert decoded["params"]["a1"]["f32le"] == 10.0
