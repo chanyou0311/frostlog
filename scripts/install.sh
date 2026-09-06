@@ -28,7 +28,8 @@ mkdir -p "$config_dir/systemd/user"
 install -m 644 scripts/systemd/* "$config_dir/systemd/user/"
 systemctl --user daemon-reload
 loginctl enable-linger "$USER"
-systemctl --user enable --now frostlog-ambient.service frostlog-cooler.service frostlog-upload.timer
-# Pick up new code (frostlog-cooler stays skipped until FROSTLOG_COOLER_ADDRESS is set).
-systemctl --user restart frostlog-ambient.service frostlog-cooler.service
+systemctl --user enable --now frostlog-ambient@dht20.service frostlog-cooler.service frostlog-upload.timer
+# Pick up new code. frostlog-cooler stays skipped until FROSTLOG_COOLER_ADDRESS is set;
+# further sensors are enabled once by hand: systemctl --user enable --now frostlog-ambient@am2320
+systemctl --user restart 'frostlog-ambient@*.service' frostlog-cooler.service
 systemctl --user --no-pager --no-legend list-units 'frostlog-*'

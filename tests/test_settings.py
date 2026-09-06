@@ -11,16 +11,14 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(name)
     settings = Settings()
     assert settings.i2c_bus == 1
-    assert settings.ambient_sensor == "dht20"
-    assert settings.ambient_address is None
+    assert settings.cooler_model == "everfrost"
     assert settings.s3_bucket == "frostlog"
+    assert settings.healthcheck_url is None
 
 
 def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FROSTLOG_AMBIENT_SENSOR", "am2320")
-    monkeypatch.setenv("FROSTLOG_AMBIENT_ADDRESS", "0x5c")
+    monkeypatch.setenv("FROSTLOG_I2C_BUS", "3")
     monkeypatch.setenv("FROSTLOG_COOLER_ADDRESS", "")
     settings = Settings()
-    assert settings.ambient_sensor == "am2320"
-    assert settings.ambient_address == 0x5C
+    assert settings.i2c_bus == 3
     assert settings.cooler_address is None

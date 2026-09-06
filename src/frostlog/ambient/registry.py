@@ -1,4 +1,4 @@
-"""Sensor name (as used in ``FROSTLOG_AMBIENT_SENSOR``) to implementation."""
+"""Sensor name (as given to ``--sensor``) to implementation."""
 
 from frostlog.ambient.am2320 import AM2320
 from frostlog.ambient.base import Sensor
