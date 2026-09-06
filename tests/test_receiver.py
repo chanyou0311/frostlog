@@ -29,7 +29,6 @@ class FakeSession:
         self.script = deque(script)
         self.written: list[bytes] = []
         self.disconnected = asyncio.Event()
-        self.dropped = 0
         self.address = "AA:BB"
         self.name = "cooler"
 

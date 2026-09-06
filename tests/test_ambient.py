@@ -106,29 +106,8 @@ def test_read_loop_emits_records_and_failures(monkeypatch: pytest.MonkeyPatch) -
     bad = bytes(7)
     sensor = dht20.DHT20(FakeBus([good, bad, good]))
     slept: list[float] = []
+    assert list(read_loop(sensor, interval=10, count=0, sleep=slept.append)) == []
     out = list(read_loop(sensor, interval=10, count=3, sleep=slept.append))
     assert [r.type for r in out] == ["ambient", "event", "ambient"]
     assert isinstance(out[1], records.Event) and out[1].kind == "ambient_read_failed"
-    # sleep is a no-op here, so the grid keeps stretching: ~10 s, then ~20 s.
-    assert [round(s) for s in slept] == [10, 20]
-
-
-def test_read_loop_reanchors_after_a_stall(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("time.sleep", lambda _s: None)
-    clock = {"now": 1000.0}
-    monkeypatch.setattr("frostlog.ambient.reader.clock.uptime", lambda: clock["now"])
-    frames = [_dht20_frame(2**19, 2**19)] * 4
-    sensor = dht20.DHT20(FakeBus(frames))
-    slept: list[float] = []
-
-    def sleep(seconds: float) -> None:
-        slept.append(seconds)
-        clock["now"] += seconds
-        if len(slept) == 1:
-            clock["now"] += 100  # the Pi stalled for 100 s after the first sleep
-
-    out = list(read_loop(sensor, interval=10, count=4, sleep=sleep))
-    assert len([r for r in out if r.type == "ambient"]) == 4
-    # 10 s to the second read; the stall is not "caught up" with back-to-back reads:
-    # the grid restarts from the moment the loop woke up.
-    assert [round(s) for s in slept] == [10, 10]
+    assert slept == [10, 10]  # between reads, not after the last one

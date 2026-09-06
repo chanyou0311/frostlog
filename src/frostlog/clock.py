@@ -1,10 +1,11 @@
-"""Time as seen from the Pi: uptime, boot identity and wall-clock jumps.
+"""Time as seen from the Pi: wall clock, uptime and boot identity.
 
-The Pi has no RTC and is offline in the car, so the wall clock may be wrong or
-jump when NTP catches up. Every record therefore also carries the seconds since
+The Pi has no RTC and is offline in the car, so the wall clock may be wrong
+until NTP catches up. Every record therefore also carries the seconds since
 boot (``CLOCK_BOOTTIME``, which keeps counting through suspend) and an
-identifier of the boot, which together order records exactly. When the wall
-clock jumps, the reader emits an event so the offset can be reconstructed later.
+identifier of the boot. Together they order records exactly, and the true
+time of every record of a boot can be recovered later from any record that
+was written after the clock had been set.
 """
 
 import functools
@@ -32,19 +33,3 @@ def boot_id() -> str:
     except OSError:
         # Not Linux (development machine): a per-process identifier is enough.
         return str(uuid.uuid4())
-
-
-class JumpDetector:
-    """Notice when wall time minus uptime changes by more than ``threshold`` seconds."""
-
-    def __init__(self, threshold: float = 2.0) -> None:
-        self._threshold = threshold
-        self._offset: float | None = None
-
-    def check(self, wall: datetime, up: float) -> float | None:
-        """The seconds the wall clock jumped since the previous check, if it did."""
-        offset = wall.timestamp() - up
-        previous, self._offset = self._offset, offset
-        if previous is None or abs(offset - previous) < self._threshold:
-            return None
-        return offset - previous
