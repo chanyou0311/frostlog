@@ -1,28 +1,22 @@
-"""Upload every record file whose remote copy is missing or different.
+"""Upload every record file whose remote copy is missing or shorter.
 
 The object key is the file's path relative to the root, so the bucket mirrors
-the local layout. A file is skipped when the remote object has the same size
-and SHA-256 (kept as object metadata), which makes re-running a no-op. Files
-that fail are reported and left for the next run; nothing is deleted.
-
-Today's files are still being appended to while they are uploaded: what is
-hashed and what is sent is the same prefix of the file, taken when it is
-opened, and whatever arrives after that waits for the next run. A local file
-that is shorter than its uploaded copy (a torn tail after a power cut) is
-reported as a conflict and not overwritten until it has grown past it.
+the local layout. A file is skipped when the remote object has the same size,
+which makes re-running a no-op; today's files grow between runs and are sent
+again in full. A local file that is shorter than its uploaded copy (a torn
+tail after a power cut) is reported as a conflict and left alone. Files that
+fail are reported and left for the next run; nothing is deleted. When the
+bucket cannot be reached at all, the run ends with an ``offline`` action.
 """
 
-import hashlib
-import io
 import logging
-import os
-from collections.abc import Buffer, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Literal
+from typing import Literal
 
 from frostlog.store import list_files
-from frostlog.upload.s3 import ObjectStore
+from frostlog.upload.s3 import ObjectStore, Offline
 
 log = logging.getLogger(__name__)
 
@@ -30,67 +24,35 @@ log = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class Action:
     key: str
-    action: Literal["upload", "skip", "conflict", "failed"]
-    size: int
+    action: Literal["upload", "skip", "conflict", "failed", "offline"]
+    size: int = 0
     error: str | None = None
 
 
-class FilePrefix(io.RawIOBase):
-    """The first ``size`` bytes of an open file, as a seekable binary stream."""
-
-    def __init__(self, file: IO[bytes], size: int) -> None:
-        super().__init__()
-        self._file = file
-        self._size = size
-
-    def readable(self) -> bool:
-        return True
-
-    def seekable(self) -> bool:
-        return True
-
-    def tell(self) -> int:
-        return self._file.tell()
-
-    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
-        if whence == io.SEEK_END:
-            offset, whence = self._size + offset, io.SEEK_SET
-        return self._file.seek(offset, whence)
-
-    def readinto(self, buffer: Buffer, /) -> int:
-        view = memoryview(buffer)
-        chunk = self._file.read(max(0, min(len(view), self._size - self._file.tell())))
-        view[: len(chunk)] = chunk
-        return len(chunk)
-
-
-def sync(root: Path, store: ObjectStore, dry_run: bool = False) -> Iterator[Action]:
+def sync(root: Path, store: ObjectStore) -> Iterator[Action]:
     for path in list_files(root):
         key = path.relative_to(root).as_posix()
-        size = 0
         try:
-            with path.open("rb") as file:
-                size = os.fstat(file.fileno()).st_size
-                body = FilePrefix(file, size)
-                digest = hashlib.file_digest(body, "sha256").hexdigest()
-                remote = store.head(key)
-                if remote is not None and remote.size == size and remote.sha256 == digest:
-                    yield Action(key, "skip", size)
-                    continue
-                if remote is not None and remote.size > size:
-                    # A torn tail after a power cut must not shrink what is already safe.
-                    log.warning(
-                        "%s: local %d bytes < uploaded %d bytes; left alone", key, size, remote.size
-                    )
-                    yield Action(
-                        key, "conflict", size, error=f"uploaded copy has {remote.size} bytes"
-                    )
-                    continue
-                if not dry_run:
-                    body.seek(0)
-                    store.put(key, body, size, digest)
+            size = path.stat().st_size
+            remote_size = store.head(key)
+            if remote_size == size:
+                yield Action(key, "skip", size)
+                continue
+            if remote_size is not None and remote_size > size:
+                # A torn tail after a power cut must not shrink what is already safe.
+                log.warning(
+                    "%s: local %d bytes < uploaded %d bytes; left alone", key, size, remote_size
+                )
+                yield Action(key, "conflict", size, error=f"uploaded copy has {remote_size} bytes")
+                continue
+            data = path.read_bytes()  # may have grown since the stat: send what is there now
+            store.put(key, data)
+        except Offline as exc:
+            log.info("%s: bucket not reachable, stopping: %s", key, exc)
+            yield Action(key, "offline", error=str(exc))
+            return
         except Exception as exc:
             log.warning("%s: %s", key, exc)
-            yield Action(key, "failed", size, error=str(exc))
-            continue
-        yield Action(key, "upload", size)
+            yield Action(key, "failed", error=str(exc))
+        else:
+            yield Action(key, "upload", len(data))
