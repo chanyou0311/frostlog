@@ -13,7 +13,7 @@
 
 ```sh
 uv sync
-uv run frostlog read ambient --interval 2 --count 3      # 配線の確認
+uv run frostlog read ambient --interval 2 --count 3      # 配線の確認（--sensor am2320 も可）
 uv run frostlog read cooler --scan                       # 近くの Bluetooth 機器
 uv run frostlog read cooler --duration 60 | uv run frostlog decode
 ```
@@ -21,10 +21,11 @@ uv run frostlog read cooler --duration 60 | uv run frostlog decode
 設定は環境変数 `FROSTLOG_*`（`scripts/env.example`）。
 
 Pi には Mac から `scripts/deploy.sh` で配る。Pi 上ではユーザー単位の systemd が
-`frostlog-ambient` を常駐させ、`frostlog-upload.timer` が 30 分おきに送る。`frostlog-cooler` は
+`frostlog-ambient@dht20` を常駐させ、`frostlog-upload.timer` が 30 分おきに送る。センサーを
+足すときは `systemctl --user enable --now frostlog-ambient@am2320` のようにインスタンスを増やす。`frostlog-cooler` は
 `FROSTLOG_COOLER_ADDRESS` を設定して再起動すると常駐する（未設定だと近くの Anker 機器を何でも
 掴んでしまうため、ユニットの `ExecCondition` で起動をスキップする）。
 データは `~/.local/state/frostlog`、設定は `~/.config/frostlog/env`、ログは
-`journalctl --user-unit frostlog-ambient` で見る。
+`journalctl --user-unit frostlog-ambient@dht20` で見る。
 `FROSTLOG_HEALTHCHECK_URL` を設定すると、失敗なく送れた回ごとに healthchecks.io などへ ping する
 （数日届かなければ通知する見張り）。

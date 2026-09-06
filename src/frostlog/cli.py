@@ -98,11 +98,19 @@ def load_settings() -> Settings:
 
 @read_app.command("ambient")
 def read_ambient(
+    sensor: Annotated[str, typer.Option(help="Which sensor to read: dht20 or am2320.")] = "dht20",
+    address: Annotated[
+        int | None,
+        typer.Option(
+            parser=lambda text: int(text, 0),
+            help="I2C address such as 0x38; default: the sensor's usual one.",
+        ),
+    ] = None,
     interval: Annotated[float, typer.Option(help="Seconds between reads.")] = 10.0,
     count: Annotated[int | None, typer.Option(help="Stop after this many reads.")] = None,
     output: OutputOption = None,
 ) -> None:
-    """Read the ambient temperature and humidity sensor (FROSTLOG_AMBIENT_SENSOR)."""
+    """Read one ambient temperature and humidity sensor on the I2C bus (FROSTLOG_I2C_BUS)."""
     from frostlog.ambient import registry
     from frostlog.ambient.i2c import SMBus2Bus
     from frostlog.ambient.reader import read_loop
@@ -110,12 +118,15 @@ def read_ambient(
     settings = load_settings()
     try:
         bus = SMBus2Bus(settings.i2c_bus)
-        sensor = registry.create(settings.ambient_sensor, bus, settings.ambient_address)
-    except (OSError, ValueError) as exc:
-        raise fail(f"cannot open sensor: {exc}") from None
+    except OSError as exc:
+        raise fail(f"cannot open I2C bus {settings.i2c_bus}: {exc}") from None
+    try:
+        device = registry.create(sensor, bus, address)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--sensor") from None
     stop = stop_signal()
     with Output(output) as out:
-        for record in read_loop(sensor, interval, count, sleep=lambda s: stop.wait(s)):
+        for record in read_loop(device, interval, count, sleep=lambda s: stop.wait(s)):
             out.write(record)
             if stop.is_set():
                 break
