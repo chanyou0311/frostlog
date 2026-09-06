@@ -26,3 +26,5 @@ Pi には Mac から `scripts/deploy.sh` で配る。Pi 上ではユーザー単
 掴んでしまうため、ユニットの `ExecCondition` で起動をスキップする）。
 データは `~/.local/state/frostlog`、設定は `~/.config/frostlog/env`、ログは
 `journalctl --user-unit frostlog-ambient` で見る。
+`FROSTLOG_HEALTHCHECK_URL` を設定すると、失敗なく送れた回ごとに healthchecks.io などへ ping する
+（数日届かなければ通知する見張り）。

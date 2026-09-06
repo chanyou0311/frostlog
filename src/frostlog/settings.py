@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     s3_access_key_id: str | None = None
     s3_secret_access_key: str | None = None
 
+    #: Pinged after every upload run that reached the bucket and left nothing behind.
+    healthcheck_url: str | None = None
+
     @field_validator("ambient_address", mode="before")
     @classmethod
     def _parse_address(cls, value: object) -> object:

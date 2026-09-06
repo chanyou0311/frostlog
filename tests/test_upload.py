@@ -1,7 +1,13 @@
-"""The uploader against an in-memory bucket."""
+"""The uploader against an in-memory bucket: ``sync`` and the ``upload`` command around it."""
 
+import json
 from pathlib import Path
 
+import pytest
+from typer.testing import CliRunner
+
+from frostlog import cli
+from frostlog.upload import healthcheck, s3
 from frostlog.upload.s3 import Offline
 from frostlog.upload.sync import sync
 
@@ -80,3 +86,75 @@ def test_offline_ends_the_run(tmp_path: Path) -> None:
     store.offline = True
     actions = [(a.key, a.action) for a in sync(tmp_path, store)]
     assert actions == [("ambient/2026-09-06.jsonl", "offline")]
+
+
+# --- the upload command around sync ---------------------------------------------------
+
+runner = CliRunner()
+
+
+@pytest.fixture
+def bucket(monkeypatch: pytest.MonkeyPatch) -> tuple[FakeStore, list[str]]:
+    monkeypatch.setenv("FROSTLOG_S3_ENDPOINT", "https://bucket.invalid")
+    monkeypatch.setenv("FROSTLOG_S3_ACCESS_KEY_ID", "key")
+    monkeypatch.setenv("FROSTLOG_S3_SECRET_ACCESS_KEY", "secret")
+    monkeypatch.setenv("FROSTLOG_HEALTHCHECK_URL", "https://hc-ping.com/x")
+    store = FakeStore()
+    monkeypatch.setattr(s3, "S3ObjectStore", lambda *_: store)
+    pings: list[str] = []
+    monkeypatch.setattr(healthcheck, "ping", pings.append)
+    return store, pings
+
+
+def _actions(stdout: str) -> list[str]:
+    return [json.loads(line)["action"] for line in stdout.splitlines() if line.startswith("{")]
+
+
+def test_clean_run_pings(bucket: tuple[FakeStore, list[str]], tmp_path: Path) -> None:
+    _populate(tmp_path)
+    _, pings = bucket
+    result = runner.invoke(cli.app, ["upload", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert _actions(result.stdout) == ["upload", "upload"]
+    assert pings == ["https://hc-ping.com/x"]
+
+
+def test_offline_exits_zero_without_ping(
+    bucket: tuple[FakeStore, list[str]], tmp_path: Path
+) -> None:
+    _populate(tmp_path)
+    store, pings = bucket
+    store.offline = True
+    result = runner.invoke(cli.app, ["upload", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert _actions(result.stdout) == ["offline"]
+    assert pings == []
+
+
+def test_failed_file_exits_one_without_ping(
+    bucket: tuple[FakeStore, list[str]], tmp_path: Path
+) -> None:
+    _populate(tmp_path)
+    store, pings = bucket
+    store.fail_on = {"ambient/2026-09-06.jsonl"}
+    result = runner.invoke(cli.app, ["upload", str(tmp_path)])
+    assert result.exit_code == 1
+    assert _actions(result.stdout) == ["failed", "upload"]
+    assert pings == []
+
+
+def test_conflict_does_not_ping(bucket: tuple[FakeStore, list[str]], tmp_path: Path) -> None:
+    _populate(tmp_path)
+    store, pings = bucket
+    store.objects["ambient/2026-09-06.jsonl"] = b"x" * 1000
+    result = runner.invoke(cli.app, ["upload", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert _actions(result.stdout) == ["conflict", "upload"]
+    assert pings == []
+
+
+def test_empty_directory_does_not_ping(bucket: tuple[FakeStore, list[str]], tmp_path: Path) -> None:
+    _, pings = bucket
+    result = runner.invoke(cli.app, ["upload", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert pings == []

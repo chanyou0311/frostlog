@@ -204,6 +204,7 @@ def upload(
     ],
 ) -> None:
     """Upload record files to the S3-compatible bucket (FROSTLOG_S3_*); re-running is a no-op."""
+    from frostlog.upload.healthcheck import ping
     from frostlog.upload.s3 import S3ObjectStore
     from frostlog.upload.sync import sync
 
@@ -229,3 +230,6 @@ def upload(
     log.info("%s", ", ".join(f"{name} {n}" for name, n in sorted(counts.items())) or "no files")
     if counts["failed"]:
         raise typer.Exit(1)
+    # Report only a run that reached the bucket, found files, and left nothing behind.
+    if settings.healthcheck_url and counts and not (counts["conflict"] or counts["offline"]):
+        ping(settings.healthcheck_url)
