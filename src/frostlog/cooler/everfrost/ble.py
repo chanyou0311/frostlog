@@ -41,11 +41,10 @@ class Session:
         self.address = device.address
         self.name = device.name
         self.disconnected = asyncio.Event()
-        self.dropped = 0
         self._client = BleakClient(
             device, disconnected_callback=self._on_disconnect, timeout=connect_timeout
         )
-        self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=4096)
+        self._queue: asyncio.Queue[bytes] = asyncio.Queue()
 
     async def __aenter__(self) -> "Session":
         await self._client.connect()
@@ -62,10 +61,7 @@ class Session:
             await self._client.disconnect()
 
     def _on_notify(self, _characteristic: Any, data: bytearray) -> None:
-        try:
-            self._queue.put_nowait(bytes(data))
-        except asyncio.QueueFull:
-            self.dropped += 1
+        self._queue.put_nowait(bytes(data))
 
     def _on_disconnect(self, _client: BleakClient) -> None:
         self.disconnected.set()

@@ -131,8 +131,6 @@ class EverfrostReceiver:
                     "error": "incomplete",
                 }
             )
-        if session.dropped:
-            self._event("ble_notifications_dropped", count=session.dropped)
 
     async def _handle(self, data: bytes, session: ble.Session, state: "_SessionState") -> None:
         try:

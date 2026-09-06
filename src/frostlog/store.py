@@ -1,29 +1,25 @@
 """Append records to ``<root>/<stream>/<YYYY-MM-DD>.jsonl``.
 
 Every line is handed to the kernel as soon as it is written, so readers (and
-``tail -f``) see it at once; files are fsynced every few seconds so that a
-power cut loses at most the last few seconds, and only the final line can be
-torn. The next run continues on a fresh line, so a torn line stays a line of
-its own that does not parse; readers must skip such lines (see
-:func:`read_lines` for the in-progress case).
+``tail -f``) see it at once and the OS puts it on disk within seconds. A power
+cut can lose those seconds and tear the final line; the next run continues on
+a fresh line, so a torn line stays a line of its own that does not parse, and
+readers skip it (see :func:`read_lines`).
 """
 
 import os
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 from typing import IO
 
-from frostlog import clock, records
+from frostlog import records
 from frostlog.records import Record
 
 
 class Store:
-    def __init__(self, root: Path, sync_interval: float = 5.0) -> None:
+    def __init__(self, root: Path) -> None:
         self.root = root
-        self._sync_interval = sync_interval
         self._files: dict[Path, IO[str]] = {}
-        self._dirty = False
-        self._last_sync = clock.uptime()
 
     def path_for(self, record: Record) -> Path:
         day = record.ts.strftime("%Y-%m-%d")
@@ -37,19 +33,8 @@ class Store:
             file = self._files[path] = _open_for_append(path)
         file.write(records.line(record))
         file.flush()
-        self._dirty = True
-        if clock.uptime() - self._last_sync >= self._sync_interval:
-            self.sync()
-
-    def sync(self) -> None:
-        """Force what has been written onto the disk."""
-        if self._dirty:
-            _fsync(self._files.values())
-            self._dirty = False
-        self._last_sync = clock.uptime()
 
     def close(self) -> None:
-        self.sync()
         for file in self._files.values():
             file.close()
         self._files.clear()
@@ -57,9 +42,7 @@ class Store:
     def _close_stream(self, directory: Path) -> None:
         # A new day started for this stream: release the previous day's file.
         for path in [p for p in self._files if p.parent == directory]:
-            file = self._files.pop(path)
-            _fsync([file])
-            file.close()
+            self._files.pop(path).close()
 
     def __enter__(self) -> "Store":
         return self
@@ -76,11 +59,6 @@ def _open_for_append(path: Path) -> IO[str]:
     if size and os.pread(file.fileno(), 1, size - 1) != b"\n":
         file.write("\n")
     return file
-
-
-def _fsync(files: Iterable[IO[str]]) -> None:
-    for file in files:
-        os.fsync(file.fileno())
 
 
 def list_files(root: Path) -> list[Path]:
