@@ -261,7 +261,11 @@ def _raw_test_environment(services: Services) -> dict[str, str] | None:
     if not name:
         log.info("no raw HMAC secret configured; the raw contract is not tested")
         return None
-    payload = services.secrets.read(name)
+    try:
+        payload = services.secrets.read(name)
+    except Exception:
+        log.exception("reading the raw HMAC secret failed")
+        return None
     if payload is None:
         return None
     return s3_credentials(payload)
