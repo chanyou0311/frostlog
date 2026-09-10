@@ -29,3 +29,17 @@ Pi には Mac から `scripts/deploy.sh` で配る。Pi 上ではユーザー単
 `journalctl --user-unit frostlog-ambient@dht20` で見る。
 `FROSTLOG_HEALTHCHECK_URL` を設定すると、失敗なく送れた回ごとに healthchecks.io などへ ping する
 （数日届かなければ通知する見張り）。
+
+## semantic/
+
+バケットに届いた JSONL を BigQuery に取り込み、dbt でディメンショナルモデルに変換する
+Cloud Run サービス（`frostlog-semantic`）。`semantic/service` が Python、`semantic/dbt` が
+dbt プロジェクト、スキーマの取り決めは `contracts/semantic.odcs.yaml`。
+
+```sh
+cd semantic
+make install        # service の uv プロジェクト（dbt と datacontract-cli を含む）
+make check          # ruff / ty / pytest / dbt parse — BigQuery なしで通る
+make build          # 全期間を作り直す（BigQuery が要る）
+make unit-test      # dbt のユニットテスト（同上）
+```

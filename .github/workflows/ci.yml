@@ -24,3 +24,45 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run ty check
       - run: uv run pytest
+
+  # The semantic data product: its service and its dbt project. Everything here
+  # runs without a warehouse; what needs BigQuery (dbt build, the dbt unit tests,
+  # datacontract test) waits for the deployment credentials to be wired up.
+  semantic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: semantic/service
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # datacontract breaking compares against the contract on main.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: "0.12.10"
+      - run: uv sync --locked --group transform
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run ty check
+      - run: uv run pytest
+      - run: uv run dbt parse --project-dir ../dbt --profiles-dir ../dbt
+      - name: datacontract lint
+        run: |
+          uv run datacontract lint ../../contracts/raw.odcs.yaml
+          uv run datacontract lint ../../contracts/semantic.odcs.yaml
+      - name: datacontract breaking
+        run: |
+          git fetch --depth=1 origin main
+          for contract in raw semantic; do
+            path="contracts/$contract.odcs.yaml"
+            if git cat-file -e "origin/main:$path" 2>/dev/null; then
+              git show "origin/main:$path" > "$RUNNER_TEMP/$contract.odcs.yaml"
+              uv run --project semantic/service datacontract breaking \
+                "$RUNNER_TEMP/$contract.odcs.yaml" "$path"
+            else
+              echo "$path is not on main yet; nothing to compare against"
+            fi
+          done
+        working-directory: .
