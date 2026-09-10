@@ -37,3 +37,17 @@ Pi には Mac から `scripts/deploy.sh` で配る。Pi 上ではユーザー単
 （数日届かなければ通知する見張り）。
 
 v1 より前に記録したファイルは `scripts/migrate_raw_v1.py` で契約どおりの形に書き換える（Pi 上で 1 回だけ）。
+
+## semantic/
+
+バケットに届いた JSONL を BigQuery に取り込み、dbt でディメンショナルモデルに変換する
+Cloud Run サービス（`frostlog-semantic`）。`semantic/service` が Python、`semantic/dbt` が
+dbt プロジェクト、スキーマの取り決めは `contracts/semantic.odcs.yaml`。
+
+```sh
+cd semantic
+make install        # service の uv プロジェクト（dbt と datacontract-cli を含む）
+make check          # ruff / ty / pytest / dbt parse — BigQuery なしで通る
+make build          # 全期間を作り直す（BigQuery が要る）
+make unit-test      # dbt のユニットテスト（同上）
+```

@@ -1,0 +1,97 @@
+version: 2
+
+# The raw fixtures are written as SQL because `payload` and `environment` are
+# STRUCTs, which dbt cannot build from a dictionary on BigQuery.
+
+unit_tests:
+  - name: held_seconds_stops_at_the_heartbeat
+    model: stg_cooler_state_update
+    description: >
+      A state holds until the next report, and at most the ten minutes after which
+      the cooler repeats itself: a silence does not stretch the last state over it.
+    given:
+      - input: source('raw', 'raw_cooler')
+        format: sql
+        rows: |
+          select
+            'boot-1' as boot_id, 100.0 as uptime_seconds,
+            timestamp '2026-09-06 00:00:00+00' as ts, false as ts_synced,
+            '4402' as cmd, 'v1/cooler/dt=2026-09-06/000000000000.jsonl.gz' as source_key,
+            timestamp '2026-09-06 01:00:00+00' as uploaded_at,
+            'everfrost' as model, 'F4:9D:8A:C3:4F:84' as address,
+            struct(
+              -20 as setpoint_celsius, 25 as interior_temperature_celsius,
+              'C' as display_unit, 0 as input_watts, 0 as usb_a_output_watts,
+              0 as usb_c_output_watts, 0 as charge_watts, 60 as discharge_watts,
+              'discharging' as battery_state, 100 as state_of_charge_percent,
+              'M' as protection_level, 'mid' as brightness,
+              'COOLER-1' as serial_number, 'BATTERY-1' as battery_serial_number
+            ) as payload,
+            struct('dht20' as sensor, 20.0 as temperature_celsius, 50.0 as humidity_percent)
+              as environment
+          union all
+          select
+            'boot-1', 200.0, timestamp '2026-09-06 00:10:00+00', true,
+            '4402', 'v1/cooler/dt=2026-09-06/000000000000.jsonl.gz',
+            timestamp '2026-09-06 01:00:00+00', 'everfrost', 'F4:9D:8A:C3:4F:84',
+            struct(-20, 5, 'C', 0, 0, 0, 0, 60, 'discharging', 99, 'M', 'mid',
+                   'COOLER-1', 'BATTERY-1'),
+            struct('dht20', 21.0, 51.0)
+          union all
+          select
+            'boot-1', 1000.0, timestamp '2026-09-06 00:24:00+00', true,
+            '4402', 'v1/cooler/dt=2026-09-06/000000000000.jsonl.gz',
+            timestamp '2026-09-06 01:00:00+00', 'everfrost', 'F4:9D:8A:C3:4F:84',
+            struct(-20, -19, 'C', 0, 0, 0, 0, 30, 'discharging', 98, 'M', 'mid',
+                   'COOLER-1', 'BATTERY-1'),
+            struct('dht20', 22.0, 52.0)
+      - input: ref('stg_clock_reference')
+        rows:
+          - {boot_id: 'boot-1', reference_ts: '2026-09-06 00:10:00+00', reference_uptime_seconds: 200.0}
+    expect:
+      rows:
+        - {uptime_seconds: 100.0, held_seconds: 100.0}
+        - {uptime_seconds: 200.0, held_seconds: 600.0}
+        - {uptime_seconds: 1000.0, held_seconds: 600.0}
+
+  - name: timestamps_before_the_clock_was_right_are_corrected
+    model: stg_cooler_state_update
+    description: >
+      A report made before NTP had synchronized is placed relative to the first
+      synchronized report of the same boot, using the uptime between them. A report
+      made after it keeps the time it was given.
+    given:
+      - input: source('raw', 'raw_cooler')
+        format: sql
+        rows: |
+          select
+            'boot-1' as boot_id, 100.0 as uptime_seconds,
+            timestamp '2020-01-01 00:00:00+00' as ts, false as ts_synced,
+            '4402' as cmd, 'chunk' as source_key,
+            timestamp '2026-09-06 01:00:00+00' as uploaded_at,
+            'everfrost' as model, 'F4:9D:8A:C3:4F:84' as address,
+            struct(
+              -20 as setpoint_celsius, 25 as interior_temperature_celsius,
+              'C' as display_unit, 0 as input_watts, 0 as usb_a_output_watts,
+              0 as usb_c_output_watts, 0 as charge_watts, 60 as discharge_watts,
+              'discharging' as battery_state, 100 as state_of_charge_percent,
+              'M' as protection_level, 'mid' as brightness,
+              'COOLER-1' as serial_number, 'BATTERY-1' as battery_serial_number
+            ) as payload,
+            struct('dht20' as sensor, 20.0 as temperature_celsius, 50.0 as humidity_percent)
+              as environment
+          union all
+          select
+            'boot-1', 200.0, timestamp '2026-09-06 00:10:00+00', true,
+            '4402', 'chunk', timestamp '2026-09-06 01:00:00+00',
+            'everfrost', 'F4:9D:8A:C3:4F:84',
+            struct(-20, 5, 'C', 0, 0, 0, 0, 60, 'discharging', 99, 'M', 'mid',
+                   'COOLER-1', 'BATTERY-1'),
+            struct('dht20', 21.0, 51.0)
+      - input: ref('stg_clock_reference')
+        rows:
+          - {boot_id: 'boot-1', reference_ts: '2026-09-06 00:10:00+00', reference_uptime_seconds: 200.0}
+    expect:
+      rows:
+        - {uptime_seconds: 100.0, updated_at: '2026-09-06 00:08:20+00', updated_at_raw: '2020-01-01 00:00:00+00', timestamp_corrected: true}
+        - {uptime_seconds: 200.0, updated_at: '2026-09-06 00:10:00+00', updated_at_raw: '2026-09-06 00:10:00+00', timestamp_corrected: false}
