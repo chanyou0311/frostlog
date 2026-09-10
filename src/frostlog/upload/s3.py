@@ -18,6 +18,10 @@ class Offline(Exception):
 
 
 class ObjectStore(Protocol):
+    #: Which bucket this is (endpoint and name). Upload state derived from one bucket
+    #: says nothing about another, so what is cached between runs is tied to this.
+    location: str
+
     def list(self, prefix: str) -> list[str]:
         """The keys of all objects whose key starts with ``prefix``."""
         ...
@@ -36,6 +40,7 @@ class S3ObjectStore:
         self, endpoint: str, bucket: str, access_key_id: str, secret_access_key: str
     ) -> None:
         self._bucket = bucket
+        self.location = f"{endpoint.rstrip('/')}/{bucket}"
         self._client = boto3.client(
             "s3",
             endpoint_url=endpoint,

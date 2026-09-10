@@ -13,7 +13,9 @@ Raspberry Pi で記録し、クラウドのバケットへ送るデータロガ�
 レコードは 1 行 1 JSON。`ts`（UTC）、`uptime_seconds`（起動からの秒）、`boot_id`、`ts_synced`、`type` を
 全行が持ち、`--output DIR` で `DIR/<stream>/<日付>.jsonl` に保存する。アップロードは
 `v1/<stream>/dt=<日付>/<開始オフセット>.jsonl.gz` という不変のチャンクで、どこまで送ったかはバケット側の
-メタデータ（`end`）が正。
+メタデータ（`end`）が正。空行や NUL で埋まった行はチャンクに入れない（オフセットはローカルのバイト位置のまま）。
+アップロード自体の記録（`upload_started` / `upload_done`）は `events` 以外のチャンクを送った回だけ残す
+（毎回書くと events だけが増え続け、5 分ごとに LIST + PUT を払うことになるため）。
 
 ## 使い方
 
