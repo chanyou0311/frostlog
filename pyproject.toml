@@ -26,7 +26,6 @@ dev = [
   "pytest>=9",
   "ruff>=0.16",
   "ty>=0.0.78",
-  "duckdb>=1.5",
 ]
 
 [build-system]
