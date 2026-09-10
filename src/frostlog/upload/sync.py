@@ -6,7 +6,11 @@ already there as one object per chunk, named after the byte offset the chunk
 starts at, e.g. ``v1/cooler/dt=2026-09-06/000000122880.jsonl.gz``. An object
 records the offsets it covers in its metadata (``start``, ``end``) and is never
 rewritten with different bytes: the same start always means the same lines, so
-resending after a failure just puts the same object again.
+resending after a failure just puts the same object again. What an object holds
+are the whole lines of that byte range that a reader can use: a line torn by a
+power cut is never in a range to begin with, and one left empty or filled with
+NUL bytes is dropped from the object while the range keeps covering it, because
+a single NUL line fails the load of the whole chunk downstream.
 
 The bucket is the record of what has been uploaded. Nothing that matters is kept
 locally: a run lists the prefix, reads the ``end`` of the last chunk and continues
@@ -92,8 +96,14 @@ def sync(root: Path, store: ObjectStore, cache: OffsetCache | None = None) -> It
                     data = file.read(size - uploaded)
                 for start, chunk in _chunks(data, uploaded):
                     key = f"{prefix}{start:012d}{SUFFIX}"
-                    store.put(key, gzip.compress(chunk), _metadata(start, start + len(chunk)))
-                    yield Action(key, "upload", len(chunk), chunk.count(b"\n"))
+                    body, dropped = _shippable(chunk)
+                    if dropped:
+                        log.warning("%s: %d unreadable line(s) left out", key, dropped)
+                    # mtime=0: the same byte range must compress to the same object.
+                    store.put(
+                        key, gzip.compress(body, mtime=0), _metadata(start, start + len(chunk))
+                    )
+                    yield Action(key, "upload", len(chunk), body.count(b"\n"))
             if cache is not None:
                 cache.set(root, path, size)
         except Offline as exc:
@@ -152,6 +162,20 @@ def _chunks(data: bytes, start: int) -> Iterator[tuple[int, bytes]]:
             end = cut + 1 if cut >= position else data.find(b"\n", end) + 1  # one long line
         yield start + position, data[position:end]
         position = end
+
+
+def _shippable(chunk: bytes) -> tuple[bytes, int]:
+    """The lines of a chunk that a reader can use, and how many were left out.
+
+    A power cut can leave a line empty or filled with NUL bytes. The contract says
+    such lines never reach the bucket, and one of them fails the load of the whole
+    chunk. Which lines go depends only on the bytes of the range, so re-uploading
+    the range produces the same object; the offsets in the metadata keep counting
+    local bytes, dropped lines included.
+    """
+    lines = chunk.splitlines(keepends=True)
+    kept = [line for line in lines if line.strip() and b"\0" not in line]
+    return b"".join(kept), len(lines) - len(kept)
 
 
 def _metadata(start: int, end: int) -> dict[str, str]:

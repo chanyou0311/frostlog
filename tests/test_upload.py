@@ -106,8 +106,12 @@ def test_re_uploading_the_same_bytes_is_the_same_object(tmp_path: Path) -> None:
     store = FakeStore()
     list(sync(tmp_path, store))
     before = dict(store.objects)
+    key = f"{COOLER_PREFIX}000000000000.jsonl.gz"
+    # gzip writes the current time into bytes 4..8 of its header unless told not to,
+    # which would make the same bytes a different object every time.
+    assert store.objects[key][4:8] == b"\x00\x00\x00\x00"
     # The bucket lost its record of the last chunk (or the run was killed after the PUT).
-    store.metadata[f"{COOLER_PREFIX}000000000000.jsonl.gz"] = {"start": "0", "end": "0"}
+    store.metadata[key] = {"start": "0", "end": "0"}
     list(sync(tmp_path, store))
     assert store.objects == before
     assert _lines(store, COOLER_PREFIX) == ['{"a":1}']
@@ -123,6 +127,22 @@ def test_a_torn_final_line_is_never_shipped(tmp_path: Path) -> None:
         file.write('\n{"a":3}\n')
     list(sync(tmp_path, store))
     assert _lines(store, COOLER_PREFIX) == ['{"a":1}', '{"a":2}', '{"a"', '{"a":3}']
+
+
+def test_lines_a_power_cut_left_unreadable_are_left_out_of_the_chunk(tmp_path: Path) -> None:
+    path = tmp_path / "cooler" / "2026-09-06.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b'{"a":1}\n' + b"\x00" * 7 + b"\n" + b"\n" + b'{"a":2}\n')
+    store = FakeStore()
+    actions = [action for action in sync(tmp_path, store) if action.action == "upload"]
+    assert _lines(store, COOLER_PREFIX) == ['{"a":1}', '{"a":2}']
+    # The offsets still count local bytes, dropped lines included, so the next run resumes here.
+    assert store.metadata[f"{COOLER_PREFIX}000000000000.jsonl.gz"]["end"] == "25"
+    assert actions[0].line_count == 2
+    with path.open("a", encoding="utf-8") as file:
+        file.write('{"a":3}\n')
+    list(sync(tmp_path, store))
+    assert _lines(store, COOLER_PREFIX) == ['{"a":1}', '{"a":2}', '{"a":3}']
 
 
 def test_a_long_backlog_is_split_at_line_ends(
