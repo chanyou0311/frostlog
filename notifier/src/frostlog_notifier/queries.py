@@ -1,9 +1,9 @@
 """The queries the notifications are built from, and the rows they return.
 
 Every statement opens with a ``-- name:`` comment; that name identifies the
-query in logs and in the tests' fake warehouse. Columns and tables are those of
-contracts/semantic.odcs.yaml, except ``raw_events``, which is the raw
-collector event stream as the transform loads it.
+query in logs and in the tests' fake warehouse. Columns and tables are only
+those of contracts/semantic.odcs.yaml: the raw tables behind it are the semantic
+data product's business, not this application's.
 """
 
 from datetime import datetime
@@ -107,19 +107,30 @@ def latest_state_update(warehouse: Warehouse) -> StateUpdate | None:
     return StateUpdate.model_validate(rows[0]) if rows else None
 
 
-def upload_started_times(
-    warehouse: Warehouse, raw_events_table: str, limit: int = 2
-) -> list[datetime]:
-    """Timestamps of the last upload runs the Pi started, newest first."""
+def latest_state_update_at(warehouse: Warehouse, moment: datetime) -> StateUpdate | None:
+    """The most recent state of the cooler at or before ``moment``."""
     sql = f"""
-      -- name: upload_started_times
-      SELECT ts
-      FROM {warehouse.table(raw_events_table)}
-      WHERE kind = 'upload_started'
-      ORDER BY ts DESC
-      LIMIT @limit
+      -- name: latest_state_update_at
+      SELECT {_STATE_UPDATE_COLUMNS}
+      FROM {warehouse.table("fact_cooler_state_update")}
+      WHERE updated_at <= @moment
+      ORDER BY updated_at DESC
+      LIMIT 1
     """
-    return [row["ts"] for row in warehouse.rows(sql, {"limit": limit})]
+    rows = warehouse.rows(sql, {"moment": moment})
+    return StateUpdate.model_validate(rows[0]) if rows else None
+
+
+def state_update_count_between(warehouse: Warehouse, start: datetime, end: datetime) -> int:
+    """How many state updates fall in [start, end); zero means the cooler said nothing."""
+    sql = f"""
+      -- name: state_update_count_between
+      SELECT COUNT(*) AS update_count
+      FROM {warehouse.table("fact_cooler_state_update")}
+      WHERE updated_at >= @start AND updated_at < @end
+    """
+    rows = warehouse.rows(sql, {"start": start, "end": end})
+    return int(rows[0]["update_count"]) if rows else 0
 
 
 def energy_between(warehouse: Warehouse, start: datetime, end: datetime) -> Energy:

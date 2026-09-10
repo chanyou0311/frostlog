@@ -48,9 +48,13 @@ class FakeWarehouse:
                 if row["kind"] == given["kind"] and row["key"] == given["key"]
             ]
             return [{"posted_count": len(matched)}]
-        if name == "latest_key":
-            keys = [row["key"] for row in self.posted if row["kind"] == given["kind"]]
-            return [{"key": keys[-1]}] if keys else []
+        if name == "latest_coverage_end":
+            ends = [
+                row["coverage_end"]
+                for row in self.posted
+                if row["kind"] == given["kind"] and row.get("coverage_end") is not None
+            ]
+            return [{"coverage_end": max(ends)}] if ends else []
         answer: Any = self.answers.get(name, [])
         rows: list[Row] = answer(given) if callable(answer) else answer
         return rows
@@ -64,16 +68,20 @@ class FakeWarehouse:
 
 
 class FakeSlack:
-    """Records what would have been posted."""
+    """Records what would have been posted; without a token it only counts dry runs."""
 
     def __init__(self, enabled: bool = True, fail: Exception | None = None) -> None:
         self.enabled = enabled
         self.fail = fail
         self.messages: list[tuple[str, bytes | None, str]] = []
+        self.dry_runs: list[str] = []
 
     def post(self, text: str, image: bytes | None = None, filename: str = "chart.png") -> Posted:
         if self.fail is not None:
             raise self.fail
+        if not self.enabled:
+            self.dry_runs.append(text)
+            return Posted(slack_timestamp=None, dry_run=True)
         self.messages.append((text, image, filename))
         return Posted(slack_timestamp=f"170000000.{len(self.messages):06d}", dry_run=False)
 
@@ -96,7 +104,6 @@ def slack() -> FakeSlack:
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
-        bigquery_project="frostlog-test",
         bigquery_dataset="frostlog",
         slack_bot_token=None,
         slack_channel="#fumo",
@@ -197,6 +204,23 @@ def pulldown_row(started_at: datetime, **overrides: Any) -> dict[str, Any]:
         "charged_watt_hours": 0.0,
         "ambient_temperature_celsius": 27.3,
         "external_input_ratio": 0.0,
+    }
+    return row | overrides
+
+
+def upload_run(
+    finished_at: datetime,
+    started_at: datetime | None = None,
+    previous_finished_at: datetime | None = None,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """One entry of the semantic_updated event's upload_runs array."""
+    row = {
+        "finished_at": finished_at,
+        "started_at": started_at,
+        "previous_finished_at": previous_finished_at,
+        "chunk_count": 3,
+        "line_count": 412,
     }
     return row | overrides
 

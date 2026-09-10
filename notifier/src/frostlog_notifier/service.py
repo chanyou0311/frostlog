@@ -11,7 +11,7 @@ from datetime import datetime
 
 from frostlog_notifier import clock, homecoming, pulldowns, quality, queries, weekly
 from frostlog_notifier.events import Event, QualityReport, SemanticUpdated
-from frostlog_notifier.notification import HOMECOMING, WEEKLY, Notification
+from frostlog_notifier.notification import FAILURE, HOMECOMING, WEEKLY, Notification
 from frostlog_notifier.settings import Settings
 from frostlog_notifier.slack import Posted, Poster, Slack
 from frostlog_notifier.state import PostedNotifications
@@ -54,40 +54,35 @@ class Notifier:
             log.warning("run %s did not build; no data changed", event.run_id)
             return []
         self._posted.ensure_table()
-        now = self._now()
-        candidates: list[Notification] = []
-        summary = homecoming.build(
+        candidates = homecoming.build_all(
             self._warehouse,
-            self._settings.raw_events_table,
-            self._posted.latest_key(HOMECOMING),
+            event.upload_runs,
+            self._posted.latest_coverage_end(HOMECOMING),
         )
-        if summary is not None:
-            candidates.append(summary)
-        candidates.extend(pulldowns.build_all(self._warehouse, self._posted.is_posted, now))
-        candidates.extend(self._weekly_if_closed(now))
+        candidates.extend(pulldowns.build_all(self._warehouse, self._posted.is_posted, self._now()))
+        candidates.extend(self._weekly_if_closed())
         return self._post_all(candidates)
 
-    def _weekly_if_closed(self, now: datetime) -> list[Notification]:
+    def _weekly_if_closed(self) -> list[Notification]:
         """The weekly summary once the week it covers is over and its data has arrived."""
         latest = queries.latest_state_update(self._warehouse)
         if latest is None:
             return []
-        newest = latest.updated_at
-        iso_year, iso_week = weekly.due_week(newest)
-        _, end = clock.iso_week_bounds(iso_year, iso_week)
-        if newest < end:
-            return []
-        return self._weekly(iso_year, iso_week)
+        return self._weekly(*weekly.due_week(latest.updated_at))
 
     def run_weekly_deadline(self) -> list[Notification]:
         """The Monday job: post last week's summary if the arrivals did not already."""
         self._posted.ensure_table()
-        iso_year, iso_week = weekly.due_week(self._now())
-        return self._post_all(self._weekly(iso_year, iso_week))
+        return self._post_all(self._weekly(*weekly.due_week(self._now())))
 
     def _weekly(self, iso_year: int, iso_week: int) -> list[Notification]:
         key = clock.iso_week_key(iso_year, iso_week)
         if self._posted.is_posted(WEEKLY, key):
+            return []
+        start, end = clock.iso_week_bounds(iso_year, iso_week)
+        if queries.state_update_count_between(self._warehouse, start, end) == 0:
+            # A week the cooler recorded nothing in has nothing to say, not zeros to report.
+            log.info("no state update in %s; no weekly summary", key)
             return []
         return [weekly.build(self._warehouse, iso_year, iso_week)]
 
@@ -97,24 +92,35 @@ class Notifier:
         ]
 
     def post(self, notification: Notification) -> Posted | None:
-        """Post a notification unless it has been posted before."""
+        """Post a notification unless it has been posted before.
+
+        The check and the insert are not one statement; they do not need to be,
+        because Cloud Run runs this service as a single instance handling one
+        request at a time (max_instance_count = 1, request concurrency = 1), so
+        no other handler can slip a row in between them.
+        """
         if self._posted.is_posted(notification.kind, notification.key):
             log.info("%s/%s already posted", notification.kind, notification.key)
             return None
         result = self._slack.post(notification.text, notification.image, notification.filename)
         self._posted.record(
-            notification.kind, notification.key, result.slack_timestamp, result.dry_run
+            notification.kind,
+            notification.key,
+            result.slack_timestamp,
+            result.dry_run,
+            notification.coverage_end,
         )
         return result
 
     def report_failure(self, context: str, error: BaseException) -> None:
         """Say in the channel that the notifier itself failed; never raise while doing so."""
-        text = f":warning: notifier の失敗 ({context}): {type(error).__name__}: {error}"
         log.exception("notifier failed while handling %s", context, exc_info=error)
-        if not self._slack.enabled:
-            return
+        # A defect repeats with every redelivery: one message a day for the same defect.
+        key = f"{context}/{type(error).__name__}/{clock.to_jst(self._now()):%Y-%m-%d}"
+        text = f":warning: notifier の失敗 ({context}): {type(error).__name__}: {error}"
         try:
-            self._slack.post(text)
+            self._posted.ensure_table()
+            self.post(Notification(kind=FAILURE, key=key, text=text))
         except Exception:  # a failed self-report must never mask the failure it reports
             log.exception("could not report the failure to Slack")
 

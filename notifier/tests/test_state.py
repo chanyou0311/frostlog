@@ -1,4 +1,4 @@
-from conftest import FakeWarehouse
+from conftest import FakeWarehouse, at
 
 from frostlog_notifier.state import PostedNotifications
 
@@ -25,12 +25,17 @@ def test_a_dry_run_is_recorded_without_a_slack_timestamp(
     name, parameters = warehouse.executed[-1]
     assert name == "record_posted"
     assert "slack_ts" not in parameters
+    assert "coverage_end" not in parameters
     assert parameters["dry_run"] is True
 
 
-def test_the_latest_key_of_a_kind_is_the_one_last_written(posted: PostedNotifications) -> None:
-    assert posted.latest_key("homecoming") is None
-    posted.record("homecoming", "first", None, dry_run=True)
+def test_the_coverage_end_of_a_kind_is_the_furthest_one_written(
+    posted: PostedNotifications,
+) -> None:
+    first, second = at("2026-09-10", 11), at("2026-09-11", 12)
+    assert posted.latest_coverage_end("homecoming") is None
+    posted.record("homecoming", "first", None, dry_run=True, coverage_end=first)
     posted.record("pulldown", "other", None, dry_run=True)
-    posted.record("homecoming", "second", None, dry_run=True)
-    assert posted.latest_key("homecoming") == "second"
+    posted.record("homecoming", "second", None, dry_run=True, coverage_end=second)
+    assert posted.latest_coverage_end("homecoming") == second
+    assert posted.latest_coverage_end("pulldown") is None

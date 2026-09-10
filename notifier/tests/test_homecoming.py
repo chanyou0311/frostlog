@@ -1,13 +1,22 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from conftest import FakeWarehouse, at, hourly, pulldown_row, state_update
+from conftest import FakeWarehouse, at, hourly, pulldown_row, state_update, upload_run
 
 from frostlog_notifier import homecoming
+from frostlog_notifier.events import UploadRun
 from frostlog_notifier.notification import HOMECOMING
 from frostlog_notifier.queries import HourlySnapshot, StateUpdate
 
 RETURN = at("2026-09-11", 12, 3)  # 21:03 JST
+#: The run that shipped the trip: started on arrival, finished two minutes later.
+ARRIVAL = UploadRun.model_validate(
+    upload_run(
+        finished_at=RETURN + timedelta(minutes=2),
+        started_at=RETURN,
+        previous_finished_at=RETURN - timedelta(hours=9),
+    )
+)
 
 
 def day_of_hours(end: datetime, first_charge: int = 86, plugged: range = range(0)) -> list[dict]:
@@ -37,11 +46,7 @@ def day_of_hours(end: datetime, first_charge: int = 86, plugged: range = range(0
 
 def warehouse_with(**overrides) -> FakeWarehouse:
     answers = {
-        "upload_started_times": [
-            {"ts": RETURN - timedelta(minutes=2)},
-            {"ts": RETURN - timedelta(hours=9)},
-        ],
-        "latest_state_update": [state_update(RETURN, state_of_charge_percent=62)],
+        "latest_state_update_at": [state_update(RETURN, state_of_charge_percent=62)],
         "energy_between": [
             {"discharged_watt_hours": 128.4, "charged_watt_hours": 40.2},
         ],
@@ -51,27 +56,43 @@ def warehouse_with(**overrides) -> FakeWarehouse:
     return FakeWarehouse(answers | overrides)
 
 
-def test_no_summary_while_the_uploads_keep_coming() -> None:
-    warehouse = warehouse_with(
-        upload_started_times=[
-            {"ts": RETURN},
-            {"ts": RETURN - timedelta(minutes=5)},
-        ]
+def test_an_event_without_upload_runs_summarises_nothing() -> None:
+    assert homecoming.build_all(warehouse_with(), [], None) == []
+
+
+def test_a_run_that_follows_the_previous_one_closely_is_not_a_return() -> None:
+    run = UploadRun.model_validate(
+        upload_run(
+            finished_at=RETURN + timedelta(minutes=7),
+            started_at=RETURN + timedelta(minutes=5),
+            previous_finished_at=RETURN + timedelta(minutes=2),
+        )
     )
-    assert homecoming.build(warehouse, "raw_events", None) is None
+    assert homecoming.is_return(run) is False
+    assert homecoming.build_all(warehouse_with(), [run], None) == []
 
 
-def test_no_summary_before_the_second_upload_run_ever() -> None:
-    warehouse = warehouse_with(upload_started_times=[{"ts": RETURN}])
-    assert homecoming.build(warehouse, "raw_events", None) is None
+def test_the_first_run_of_all_is_a_return() -> None:
+    run = UploadRun.model_validate(upload_run(finished_at=RETURN, previous_finished_at=None))
+    assert homecoming.is_return(run) is True
 
 
-def test_a_gap_of_two_hours_makes_a_summary() -> None:
-    notification = homecoming.build(warehouse_with(), "raw_events", None)
-    assert notification is not None
+def test_a_run_without_a_start_falls_back_to_when_it_finished() -> None:
+    run = UploadRun.model_validate(
+        upload_run(finished_at=RETURN, previous_finished_at=RETURN - timedelta(hours=3))
+    )
+    assert homecoming.is_return(run) is True
+    [notification] = homecoming.build_all(warehouse_with(), [run], None)
+    assert notification.key == RETURN.isoformat()
+
+
+def test_a_gap_of_two_hours_makes_one_summary() -> None:
+    [notification] = homecoming.build_all(warehouse_with(), [ARRIVAL], None)
     assert notification.kind == HOMECOMING
     assert notification.key == RETURN.isoformat()
+    assert notification.coverage_end == RETURN
     assert "帰宅の要約" in notification.text
+    assert "前回の到着から 9.0 h" in notification.text
     assert "SoC 62 %" in notification.text
     assert "消費 128.4 Wh" in notification.text
     assert "充電 40.2 Wh" in notification.text
@@ -81,20 +102,50 @@ def test_a_gap_of_two_hours_makes_a_summary() -> None:
     assert notification.image.startswith(b"\x89PNG")
 
 
+def test_the_period_ends_at_the_last_update_the_run_carried() -> None:
+    warehouse = warehouse_with()
+    homecoming.build_all(warehouse, [ARRIVAL], None)
+    assert dict(warehouse.queried)["latest_state_update_at"] == {"moment": ARRIVAL.finished_at}
+
+
 def test_the_period_starts_where_the_previous_summary_ended() -> None:
     previous = at("2026-09-11", 0, 0)
     warehouse = warehouse_with()
-    homecoming.build(warehouse, "raw_events", previous.isoformat())
+    homecoming.build_all(warehouse, [ARRIVAL], previous)
     energy = dict(warehouse.queried)["energy_between"]
     assert energy["start"] == previous
     assert energy["end"] == RETURN
 
 
-def test_an_unreadable_previous_key_falls_back_to_a_day() -> None:
+def test_the_first_summary_of_all_reaches_back_a_day() -> None:
     warehouse = warehouse_with()
-    homecoming.build(warehouse, "raw_events", "not a timestamp")
+    homecoming.build_all(warehouse, [ARRIVAL], None)
     energy = dict(warehouse.queried)["energy_between"]
     assert energy["end"] - energy["start"] == timedelta(hours=24)
+
+
+def test_two_returns_in_one_event_are_chained() -> None:
+    later = at("2026-09-12", 12, 0)
+    warehouse = FakeWarehouse(
+        {
+            "latest_state_update_at": lambda given: [state_update(given["moment"])],
+            "energy_between": [{"discharged_watt_hours": 10.0, "charged_watt_hours": 0.0}],
+            "finished_pulldowns_between": [],
+            "hourly_snapshots": day_of_hours(RETURN),
+        }
+    )
+    second = UploadRun.model_validate(
+        upload_run(finished_at=later, started_at=later, previous_finished_at=ARRIVAL.finished_at)
+    )
+    first, latest = homecoming.build_all(warehouse, [second, ARRIVAL], None)
+    assert [first.key, latest.key] == [RETURN.isoformat(), later.isoformat()]
+    # The second summary begins where the first one stopped, not a day back.
+    starts = [given["start"] for name, given in warehouse.queried if name == "energy_between"]
+    assert starts[1] == first.coverage_end
+
+
+def test_nothing_is_summarised_before_any_state_update() -> None:
+    assert homecoming.build_all(warehouse_with(latest_state_update_at=[]), [ARRIVAL], None) == []
 
 
 def test_the_outlook_follows_the_slope_of_the_last_unplugged_hours() -> None:
@@ -126,10 +177,9 @@ def test_there_is_no_outlook_while_charging() -> None:
     morning = datetime(2026, 9, 11, 22, 0, tzinfo=UTC)
     assert homecoming.projected_state_of_charge(charging, hours, morning) is None
 
-    notification = homecoming.build(
-        warehouse_with(latest_state_update=[dict(charging.model_dump())]), "raw_events", None
+    [notification] = homecoming.build_all(
+        warehouse_with(latest_state_update_at=[dict(charging.model_dump())]), [ARRIVAL], None
     )
-    assert notification is not None
     assert "見込みなし" in notification.text
 
 
@@ -146,7 +196,3 @@ def test_the_outlook_never_leaves_the_scale() -> None:
     ]
     latest = StateUpdate.model_validate(state_update(RETURN, state_of_charge_percent=2))
     assert homecoming.projected_state_of_charge(latest, hours, RETURN + timedelta(hours=10)) == 0.0
-
-
-def test_nothing_is_summarised_before_any_state_update() -> None:
-    assert homecoming.build(warehouse_with(latest_state_update=[]), "raw_events", None) is None
