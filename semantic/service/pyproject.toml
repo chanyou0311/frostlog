@@ -1,0 +1,48 @@
+[project]
+name = "frostlog-semantic"
+version = "0.1.0"
+description = "Cloud Run service that loads frostlog raw chunks into BigQuery and runs the dbt transform"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "fastapi>=0.121",
+  "uvicorn>=0.42",
+  "pydantic>=2.13",
+  "pydantic-settings>=2.15",
+  "google-cloud-bigquery>=3.41",
+  "google-cloud-pubsub>=2.34",
+  "google-cloud-storage>=2.19",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=9",
+  "ruff>=0.16",
+  "ty>=0.0.78",
+  "httpx>=0.28",
+]
+# The transform tools the service runs as subprocesses. They are a separate group so
+# that the unit tests and the linters do not have to resolve dbt and datacontract-cli
+# (and datacontract-cli's duckdb/pyarrow) alongside the service itself.
+transform = [
+  "dbt-bigquery>=1.11",
+  "datacontract-cli[s3]>=0.10.38",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/frostlog_semantic"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# So that a test can import the fakes from tests/conftest.py by name.
+pythonpath = ["."]
