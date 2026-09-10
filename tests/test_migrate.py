@@ -189,6 +189,57 @@ def test_a_state_report_is_decoded_and_an_unverified_plaintext_is_dropped(
     assert isinstance(incomplete, records.Cooler) and incomplete.error == "incomplete"
 
 
+def test_the_body_of_an_encrypted_message_is_never_taken_for_a_plaintext(
+    tmp_path: Path,
+) -> None:
+    """The old record kept the payload as received: ciphertext once the session has a key."""
+    (tmp_path / "cooler").mkdir()
+    (tmp_path / "cooler/2026-09-06.jsonl").write_text(
+        "\n".join(
+            [
+                # In the clear: the negotiation is not encrypted up to this reply.
+                _old_cooler(
+                    10.0,
+                    {
+                        "pattern": "030001",
+                        "cmd": "0829",
+                        "frames": [captured.HANDSHAKE_FRAME],
+                        "payload": captured.HANDSHAKE_PLAIN,
+                    },
+                ),
+                # Encrypted, and its decryption failed: there is no body in the clear.
+                _old_cooler(
+                    20.0,
+                    {
+                        "pattern": "03010f",
+                        "cmd": "4402",
+                        "frames": captured.DISCHARGING.frames,
+                        "payload": "f921d642",
+                    },
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    migrate_raw_v1.migrate(tmp_path, captured.ADDRESS)
+    handshake, encrypted = _rows(tmp_path / "cooler/2026-09-06.jsonl")
+    assert isinstance(handshake, records.Cooler) and handshake.plain == captured.HANDSHAKE_PLAIN
+    assert isinstance(encrypted, records.Cooler)
+    assert encrypted.plain is None and encrypted.payload is None
+    assert encrypted.frames == captured.DISCHARGING.frames  # the bytes are kept
+
+
+def test_the_upload_cache_goes_with_the_offsets_it_remembers(old_records: Path) -> None:
+    cache = old_records / ".upload-cache.json"
+    cache.write_text(
+        '{"location": "x", "ends": {"cooler/2026-09-06.jsonl": 512}}', encoding="utf-8"
+    )
+    counts = migrate_raw_v1.migrate(old_records, None)
+    assert not cache.exists()  # every byte offset in the files just moved
+    assert counts["upload cache removed"] == 1
+
+
 def test_the_environment_comes_from_the_reading_of_the_same_moment(old_records: Path) -> None:
     migrate_raw_v1.migrate(old_records, None)
     rows = [row for row in _rows(old_records / "cooler/2026-09-06.jsonl")]
