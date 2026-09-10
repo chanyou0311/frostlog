@@ -95,3 +95,37 @@ unit_tests:
       rows:
         - {uptime_seconds: 100.0, updated_at: '2026-09-06 00:08:20+00', updated_at_raw: '2020-01-01 00:00:00+00', timestamp_corrected: true}
         - {uptime_seconds: 200.0, updated_at: '2026-09-06 00:10:00+00', updated_at_raw: '2026-09-06 00:10:00+00', timestamp_corrected: false}
+
+  - name: a_report_from_a_boot_that_never_synced_keeps_the_time_it_was_given
+    model: stg_cooler_state_update
+    description: >
+      With no synced report of the same boot to place it against, the record keeps
+      the time the Pi wrote down — which is where a wrong JST date comes from in the
+      first place. The key is unaffected either way: only boot_id and uptime_seconds
+      go into it, so the record keeps its identity when a later chunk of the same
+      boot brings the reference and moves it to the date it belongs on.
+    given:
+      - input: source('raw', 'raw_cooler')
+        format: sql
+        rows: |
+          select
+            'boot-1' as boot_id, 100.0 as uptime_seconds,
+            timestamp '2020-01-01 00:00:00+00' as ts, false as ts_synced,
+            '4402' as cmd, 'v1/cooler/dt=2026-09-06/000000000000.jsonl.gz' as source_key,
+            timestamp '2026-09-06 16:00:00+00' as uploaded_at,
+            'everfrost' as model, 'F4:9D:8A:C3:4F:84' as address,
+            struct(
+              -20 as setpoint_celsius, 25 as interior_temperature_celsius,
+              'C' as display_unit, 60 as input_watts, 0 as usb_a_output_watts,
+              0 as usb_c_output_watts, 0 as charge_watts, 0 as discharge_watts,
+              'full' as battery_state, 100 as state_of_charge_percent,
+              'M' as protection_level, 'mid' as brightness,
+              'COOLER-1' as serial_number, 'BATTERY-1' as battery_serial_number
+            ) as payload,
+            struct('dht20' as sensor, 20.0 as temperature_celsius, 50.0 as humidity_percent)
+              as environment
+      - input: ref('stg_clock_reference')
+        rows: []
+    expect:
+      rows:
+        - {uptime_seconds: 100.0, updated_at: '2020-01-01 00:00:00+00', updated_at_raw: '2020-01-01 00:00:00+00', timestamp_corrected: false, battery_state: 'full', chunk_date: '2026-09-06'}

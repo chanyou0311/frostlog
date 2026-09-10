@@ -1,11 +1,7 @@
 {{
     config(
-        materialized='incremental',
-        incremental_strategy='insert_overwrite',
+        materialized='table',
         partition_by={'field': 'partition_date', 'data_type': 'date'},
-        partitions=frostlog_partitions(),
-        tags=['partitioned'],
-        on_schema_change='fail',
         contract={'enforced': true},
     )
 }}
@@ -20,9 +16,13 @@
 -- of an hour — interrupted. An episode whose end has not been recorded yet is in
 -- progress and keeps its milestones null.
 --
--- The whole fact table is read, not only the dates being rebuilt: whether a report
--- starts an episode depends on the one before it, and where the episode ends may be
--- on the day after. Only the rows whose start falls on a rebuilt date are written.
+-- The whole fact table is read and the whole table is written: whether a report
+-- starts an episode depends on the one before it and where the episode ends may be
+-- on the day after, so the query has to look at everything anyway. Writing only the
+-- dates of the arrived chunk would also leave an episode behind on its old date
+-- when a timestamp correction moves its first report to another one (the same
+-- reason fact_cooler_state_update merges on its key). The table is small: one row
+-- per pull-down.
 
 with updates as (
 
@@ -224,7 +224,3 @@ select
     e.covered_seconds,
     e.update_count
 from episodes e
-
-{% if is_incremental() %}
-where {{ frostlog_partition_filter("date(e.opening.updated_at, 'Asia/Tokyo')") }}
-{% endif %}

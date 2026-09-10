@@ -1,9 +1,15 @@
+{% set batch_boots = frostlog_batch_boot_ids(ref('stg_cooler_state_update')) %}
+
 {{
     config(
         materialized='incremental',
-        incremental_strategy='insert_overwrite',
+        incremental_strategy='merge',
+        unique_key='state_update_key',
+        incremental_predicates=[
+            'DBT_INTERNAL_DEST.boot_id in ' ~ frostlog_id_list(batch_boots)
+        ],
         partition_by={'field': 'partition_date', 'data_type': 'date'},
-        partitions=frostlog_partitions(),
+        cluster_by=['boot_id'],
         tags=['partitioned'],
         on_schema_change='fail',
         contract={'enforced': true},
@@ -14,13 +20,25 @@
 -- that moment and the seconds the state is taken to hold. Everything else in the
 -- model is an aggregate of this table.
 --
+-- The grain of a run is a boot, not a date, and the rows are merged on their key
+-- rather than written over a date partition. The Pi's clock is wrong until NTP
+-- catches up after a reboot, so the reports of a boot first land on whatever JST
+-- date their recorded timestamp says; when a synced report of the same boot arrives
+-- later, every earlier report of that boot is placed again and can end up on
+-- another date. Overwriting date partitions would leave the copies on the old date
+-- behind — two rows with the same state_update_key, a failing uniqueness test and
+-- no build after that. A merge on the key moves the row instead.
+--
 -- `partition_date` is the JST date of `updated_at` as a DATE. It carries no meaning
 -- beyond `date_key` and exists because BigQuery partitions on a column, not on an
--- expression, and rebuilding is done one JST date at a time.
+-- expression.
 
 with updates as (
 
     select * from {{ ref('stg_cooler_state_update') }}
+    {% if is_incremental() %}
+    where boot_id in {{ frostlog_id_list(batch_boots) }}
+    {% endif %}
 
 )
 
@@ -59,7 +77,3 @@ left join {{ ref('dim_cooler') }} c
    and (c.valid_to is null or u.updated_at < c.valid_to)
 left join {{ ref('dim_battery') }} b
     on b.serial_number = u.battery_serial_number
-
-{% if is_incremental() %}
-where {{ frostlog_partition_filter("date(u.updated_at, 'Asia/Tokyo')") }}
-{% endif %}
