@@ -31,8 +31,8 @@ def decode(frame: bytes) -> Reading:
     raw_humidity = (frame[1] << 12) | (frame[2] << 4) | (frame[3] >> 4)
     raw_temp = ((frame[3] & 0x0F) << 16) | (frame[4] << 8) | frame[5]
     return Reading(
-        temp_c=round(raw_temp / 2**20 * 200 - 50, 2),
-        humidity_pct=round(raw_humidity / 2**20 * 100, 2),
+        temperature_celsius=round(raw_temp / 2**20 * 200 - 50, 2),
+        humidity_percent=round(raw_humidity / 2**20 * 100, 2),
     )
 
 

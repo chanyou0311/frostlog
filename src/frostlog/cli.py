@@ -10,10 +10,10 @@ import logging
 import signal
 import sys
 import threading
-from collections import Counter
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 from pydantic import ValidationError
@@ -21,6 +21,9 @@ from pydantic import ValidationError
 from frostlog import records
 from frostlog.settings import Settings
 from frostlog.store import Store
+
+if TYPE_CHECKING:
+    from frostlog.ambient.sampler import EnvironmentSampler
 
 log = logging.getLogger("frostlog")
 
@@ -96,6 +99,28 @@ def load_settings() -> Settings:
         raise fail(f"bad FROSTLOG_* setting: {problems}") from None
 
 
+def environment_sampler(
+    settings: Settings, sensor: str, sink: Callable[[records.Event], None]
+) -> "EnvironmentSampler | None":
+    """The sensor read with every cooler message, or nothing when it cannot be opened.
+
+    A Pi whose sensor came loose still has a cooler to record, which is the more
+    important half; the missing environment shows up in the events file.
+    """
+    from frostlog.ambient import registry
+    from frostlog.ambient.i2c import SMBus2Bus
+    from frostlog.ambient.sampler import EnvironmentSampler
+
+    try:
+        device = registry.create(sensor, SMBus2Bus(settings.i2c_bus))
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--sensor") from None
+    except OSError as exc:
+        log.warning("no environment with the cooler messages: %s", exc)
+        return None
+    return EnvironmentSampler(device, sink)
+
+
 @read_app.command("ambient")
 def read_ambient(
     sensor: Annotated[str, typer.Option(help="Which sensor to read: dht20 or am2320.")] = "dht20",
@@ -140,6 +165,16 @@ def read_cooler(
     ] = None,
     duration: Annotated[float | None, typer.Option(help="Stop after this many seconds.")] = None,
     output: OutputOption = None,
+    sensor: Annotated[
+        str, typer.Option(help="Environment sensor read with every message: dht20 or am2320.")
+    ] = "dht20",
+    environment: Annotated[
+        bool,
+        typer.Option(
+            "--environment/--no-environment",
+            help="Measure the air around the Pi with every message.",
+        ),
+    ] = True,
     scan: Annotated[
         bool, typer.Option("--scan", help="List nearby Bluetooth devices and exit.")
     ] = False,
@@ -168,7 +203,10 @@ def read_cooler(
     if address is None:
         raise fail("set FROSTLOG_COOLER_ADDRESS or pass --address (--scan lists devices)")
     out = Output(output)
-    receiver = registry.create_receiver(settings.cooler_model, out.write, address, duration)
+    sampler = environment_sampler(settings, sensor, out.write) if environment else None
+    receiver = registry.create_receiver(
+        settings.cooler_model, out.write, address, duration, sampler
+    )
 
     async def run() -> None:
         stop = asyncio.Event()
@@ -196,7 +234,7 @@ def decode() -> None:
         except ValidationError as exc:
             log.warning("skipping a line that is not a record: %s", exc.errors()[0]["msg"])
             continue
-        out = record.model_dump(mode="json")
+        out = record.model_dump(mode="json", exclude_none=True)
         if isinstance(record, records.Cooler):
             if record.model not in decoders:
                 try:
@@ -204,7 +242,7 @@ def decode() -> None:
                 except ValueError as exc:
                     log.warning("%s", exc)
                     continue
-            out["decoded"] = decoders[record.model].decode(record.payload)
+            out["decoded"] = decoders[record.model].decode(record)
         print(json.dumps(out), flush=True)
 
 
@@ -215,9 +253,8 @@ def upload(
     ],
 ) -> None:
     """Upload record files to the S3-compatible bucket (FROSTLOG_S3_*); re-running is a no-op."""
-    from frostlog.upload.healthcheck import ping
-    from frostlog.upload.s3 import S3ObjectStore
-    from frostlog.upload.sync import sync
+    from frostlog.upload import healthcheck, s3
+    from frostlog.upload.run import Upload
 
     settings = load_settings()
     if not (settings.s3_endpoint and settings.s3_access_key_id and settings.s3_secret_access_key):
@@ -227,20 +264,18 @@ def upload(
         )
     if not directory.is_dir():
         raise fail(f"{directory} is not a directory")
-    store = S3ObjectStore(
+    object_store = s3.S3ObjectStore(
         settings.s3_endpoint,
         settings.s3_bucket,
         settings.s3_access_key_id,
         settings.s3_secret_access_key,
     )
-    counts: Counter[str] = Counter()
-    for action in sync(directory, store):
-        counts[action.action] += 1
-        if action.action != "skip" or log.isEnabledFor(logging.DEBUG):
+    run = Upload(directory, object_store)
+    for action in run.run():
+        if action.action not in {"skip", "cached"} or log.isEnabledFor(logging.DEBUG):
             print(json.dumps(asdict(action)), flush=True)
-    log.info("%s", ", ".join(f"{name} {n}" for name, n in sorted(counts.items())) or "no files")
-    if counts["failed"]:
+    log.info("%s", run.summary)
+    if run.failed:
         raise typer.Exit(1)
-    # Report only a run that reached the bucket, found files, and left nothing behind.
-    if settings.healthcheck_url and counts and not (counts["conflict"] or counts["offline"]):
-        ping(settings.healthcheck_url)
+    if settings.healthcheck_url and run.clean:
+        healthcheck.ping(settings.healthcheck_url)

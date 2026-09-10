@@ -16,8 +16,9 @@ class Settings(BaseSettings):
     cooler_model: str = "everfrost"
     cooler_address: str | None = None
 
-    s3_endpoint: str | None = None
-    s3_bucket: str = "frostlog"
+    #: Google Cloud Storage through its S3-compatible XML API; the keys are HMAC keys.
+    s3_endpoint: str | None = "https://storage.googleapis.com"
+    s3_bucket: str = "frostlog-raw"
     s3_access_key_id: str | None = None
     s3_secret_access_key: str | None = None
 
