@@ -36,19 +36,19 @@ servers:
     type: bigquery
     environment: production
     description: BigQuery dataset holding every table below (us-central1).
-    project: frostlog-chanyou
+    project: chanyou-frostlog
     dataset: frostlog
   - server: ci
     type: bigquery
     environment: ci
     description: Dataset rebuilt in CI from sample raw chunks for contract tests.
-    project: frostlog-chanyou
+    project: chanyou-frostlog
     dataset: frostlog_ci
   - server: events
     type: pubsub
     environment: production
     description: Pub/Sub topic carrying the semantic_updated and quality_report events.
-    project: frostlog-chanyou
+    project: chanyou-frostlog
     topic: frostlog-semantic-updated
 
 schema:

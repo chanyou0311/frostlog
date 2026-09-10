@@ -40,12 +40,12 @@ servers:
       `end` (byte offsets) and `uploaded-at` (RFC 3339). Layout:
       v1/{stream}/dt=YYYY-MM-DD/{offset:012d}.jsonl.gz, dt = UTC date of `ts`.
     endpointUrl: https://storage.googleapis.com
-    location: s3://frostlog-raw/v1/{model}/dt=*/*.jsonl.gz
+    location: s3://chanyou-frostlog-raw/v1/{model}/dt=*/*.jsonl.gz
     format: json
     delimiter: new_line
     customProperties:
       - property: bucket
-        value: frostlog-raw
+        value: chanyou-frostlog-raw
       - property: region
         value: us-central1
       - property: objectLayout
