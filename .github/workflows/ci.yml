@@ -126,7 +126,8 @@ jobs:
       contents: read
       id-token: write
     env:
-      FROSTLOG_GCP_PROJECT: chanyou-frostlog
+      FROSTLOG_GCP_PROJECT: chanyou-frostlog # the service's settings (sample load)
+      FROSTLOG_BQ_PROJECT: chanyou-frostlog  # dbt's profiles.yml (build, unit tests)
       FROSTLOG_BQ_DATASET_CI: frostlog_ci
     steps:
       - uses: actions/checkout@v7
