@@ -1,9 +1,10 @@
+{% set batch_boots = frostlog_batch_boot_ids(ref('stg_cooler_state_update')) %}
+
 {{
     config(
         materialized='incremental',
         incremental_strategy='insert_overwrite',
         partition_by={'field': 'partition_date', 'data_type': 'date'},
-        partitions=frostlog_partitions(),
         tags=['partitioned'],
         on_schema_change='fail',
         contract={'enforced': true},
@@ -18,10 +19,98 @@
 -- seconds inside the hour, conditions are averages weighted the same way, and
 -- `covered_seconds` says how much of the hour those pieces actually cover.
 --
--- An incremental run rebuilds whole JST dates, so it also has to look at the reports
--- of the day before: the last report of a day reaches into the next one.
+-- Which dates a run recomputes is wider than the dates its chunk touched, because
+-- the table has to stay dense: the reports of the boots in the batch may have moved
+-- to another date since the last run (timestamp correction), a day on which nothing
+-- was recorded appears in no chunk at all, and the day before a rebuilt one holds
+-- the reports that reach into it.
 
-with updates as (
+with observed as (
+
+    select
+        min(updated_at) as first_at,
+        max(timestamp_add(
+            updated_at, interval cast(round(held_seconds * 1000) as int64) millisecond
+        )) as last_at
+    from {{ ref('fact_cooler_state_update') }}
+
+),
+
+{% if is_incremental() %}
+
+wanted_days as (
+
+    select day from unnest([{{ frostlog_partitions() | join(', ') }}]) as day
+
+    union distinct
+
+    -- Where this run's reports are now...
+    select date(updated_at, 'Asia/Tokyo')
+    from {{ ref('fact_cooler_state_update') }}
+    where boot_id in {{ frostlog_id_list(batch_boots) }}
+
+    union distinct
+
+    -- ...and the date they were placed on before their timestamps were corrected.
+    select date(updated_at_raw, 'Asia/Tokyo')
+    from {{ ref('fact_cooler_state_update') }}
+    where boot_id in {{ frostlog_id_list(batch_boots) }}
+
+),
+
+target_days as (
+
+    select day from wanted_days
+
+    union distinct
+
+    -- A day the Pi spent switched off is in no chunk, so nothing would ever ask for
+    -- its hours; without them the table has a hole and stops being dense.
+    select day
+    from unnest(generate_date_array(
+        (select max(partition_date) from {{ this }}),
+        (select max(day) from wanted_days)
+    )) as day
+
+),
+
+{% else %}
+
+target_days as (
+
+    select day
+    from observed,
+        unnest(generate_date_array(
+            date(first_at, 'Asia/Tokyo'), date(last_at, 'Asia/Tokyo')
+        )) as day
+
+),
+
+{% endif %}
+
+hours as (
+
+    select hour_started_at
+    from target_days,
+        unnest(generate_timestamp_array(
+            timestamp(day, 'Asia/Tokyo'),
+            timestamp_sub(timestamp(date_add(day, interval 1 day), 'Asia/Tokyo'), interval 1 hour),
+            interval 1 hour
+        )) as hour_started_at
+    -- The table starts at the first hour observed and stops at the hour the last
+    -- held interval runs into, so that the tail of that interval is allocated too.
+    cross join observed
+    where hour_started_at between timestamp_trunc(first_at, hour)
+                              and greatest(
+                                      timestamp_trunc(first_at, hour),
+                                      timestamp_trunc(
+                                          timestamp_sub(last_at, interval 1 millisecond), hour
+                                      )
+                                  )
+
+),
+
+updates as (
 
     select
         cooler_key,
@@ -45,48 +134,13 @@ with updates as (
         battery_state
     from {{ ref('fact_cooler_state_update') }}
     {% if is_incremental() %}
-    where {{ frostlog_partition_filter('partition_date', days_before=1) }}
+    -- The day before a rebuilt one too: its last report reaches into this one.
+    where partition_date in (
+        select day from target_days
+        union distinct
+        select date_sub(day, interval 1 day) from target_days
+    )
     {% endif %}
-
-),
-
-observed as (
-
-    select
-        min(updated_at) as first_at,
-        max(updated_at) as last_at
-    from {{ ref('fact_cooler_state_update') }}
-
-),
-
--- The dates this run is responsible for; every hour of them gets a row.
-target_days as (
-
-    {% if is_incremental() %}
-    select day from unnest([{{ frostlog_partitions() | join(', ') }}]) as day
-    {% else %}
-    select day
-    from observed,
-        unnest(generate_date_array(
-            date(first_at, 'Asia/Tokyo'), date(last_at, 'Asia/Tokyo')
-        )) as day
-    {% endif %}
-
-),
-
-hours as (
-
-    select hour_started_at
-    from target_days,
-        unnest(generate_timestamp_array(
-            timestamp(day, 'Asia/Tokyo'),
-            timestamp_sub(timestamp(date_add(day, interval 1 day), 'Asia/Tokyo'), interval 1 hour),
-            interval 1 hour
-        )) as hour_started_at
-    -- The table starts at the first hour observed and stops at the last one.
-    cross join observed
-    where hour_started_at between timestamp_trunc(first_at, hour)
-                              and timestamp_trunc(last_at, hour)
 
 ),
 

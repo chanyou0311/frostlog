@@ -2,13 +2,19 @@
 # dbt use Application Default Credentials, i.e. the service account of the
 # revision. (To be confirmed on the first deploy.) Locally the same target works
 # after `gcloud auth application-default login`.
+#
+# The project is whatever the credentials belong to; the service resolves it from
+# them and passes it in (settings.resolve_project). The fallback is a name that
+# cannot exist, so parsing works without an environment while any attempt to reach
+# a warehouse without FROSTLOG_BQ_PROJECT fails loudly instead of quietly using
+# somebody else's project.
 frostlog:
   target: prod
   outputs:
     prod:
       type: bigquery
       method: oauth
-      project: "{{ env_var('FROSTLOG_BQ_PROJECT', 'frostlog-chanyou') }}"
+      project: "{{ env_var('FROSTLOG_BQ_PROJECT', 'project-not-set') }}"
       dataset: "{{ env_var('FROSTLOG_BQ_DATASET', 'frostlog') }}"
       location: "{{ env_var('FROSTLOG_BQ_LOCATION', 'us-central1') }}"
       threads: 4
@@ -18,8 +24,8 @@ frostlog:
     ci:
       type: bigquery
       method: oauth
-      project: "{{ env_var('FROSTLOG_BQ_PROJECT', 'frostlog-chanyou') }}"
-      dataset: "{{ env_var('FROSTLOG_BQ_DATASET', 'frostlog_ci') }}"
+      project: "{{ env_var('FROSTLOG_BQ_PROJECT', 'project-not-set') }}"
+      dataset: "{{ env_var('FROSTLOG_BQ_DATASET_CI', 'frostlog_ci') }}"
       location: "{{ env_var('FROSTLOG_BQ_LOCATION', 'us-central1') }}"
       threads: 4
       priority: interactive

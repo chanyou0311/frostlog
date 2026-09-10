@@ -21,6 +21,13 @@ COPY contracts /app/contracts
 COPY semantic /app/semantic
 RUN uv sync --locked --no-dev --group transform
 
+# Only what is the same in every deployment is set here. The deployment's own
+# names come from Terraform: FROSTLOG_RAW_BUCKET, FROSTLOG_BQ_DATASET,
+# FROSTLOG_BQ_DATASET_CI, FROSTLOG_SEMANTIC_UPDATED_TOPIC (short name),
+# FROSTLOG_CONTRACT_TEST_HEALTHCHECK_URL_SECRET and FROSTLOG_RAW_HMAC_SECRET
+# (Secret Manager names, read at run time). The project id is not among them: it
+# is resolved from the credentials the revision runs with, and
+# FROSTLOG_GCP_PROJECT overrides that.
 ENV PATH="/app/.venv/bin:${PATH}" \
     FROSTLOG_DBT_PROJECT_DIR=/app/semantic/dbt \
     FROSTLOG_DBT_PROFILES_DIR=/app/semantic/dbt \

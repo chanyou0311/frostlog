@@ -9,9 +9,24 @@ import logging
 from datetime import datetime
 from typing import Any, Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 log = logging.getLogger(__name__)
+
+
+class UploadRun(BaseModel):
+    """One upload run of the collector, reported by an arrived events chunk.
+
+    The gap between ``previous_finished_at`` and ``started_at`` is how long the
+    collector was away from the home network: a run that starts two hours or more
+    after the previous one ended is the car coming back.
+    """
+
+    finished_at: datetime
+    started_at: datetime | None = None
+    previous_finished_at: datetime | None = None
+    chunk_count: int
+    line_count: int
 
 
 class SemanticUpdated(BaseModel):
@@ -21,7 +36,10 @@ class SemanticUpdated(BaseModel):
     published_at: datetime
     date_keys: list[int]
     raw_uploaded_at_max: datetime
+    #: Always true: a run whose build failed publishes nothing (reserved field).
     build_passed: bool
+    #: Filled when the run was triggered by an events chunk; empty otherwise.
+    upload_runs: list[UploadRun] = Field(default_factory=list)
 
     @property
     def name(self) -> str:

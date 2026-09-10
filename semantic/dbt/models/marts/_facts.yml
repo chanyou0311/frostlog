@@ -38,8 +38,8 @@ models:
       - name: partition_date
         data_type: date
         description: >
-          The same JST date as a DATE. Not part of the data contract: it exists
-          because BigQuery partitions on a column rather than on an expression.
+          The same JST date as a DATE. BigQuery partitions on a column rather than
+          on an expression, so this is the partitioning column.
         constraints: [{type: not_null}]
       - name: updated_at
         data_type: timestamp
@@ -72,7 +72,7 @@ models:
         constraints: [{type: not_null}]
         data_tests:
           - accepted_values:
-              arguments: {values: [idle, charging, discharging, absent]}
+              arguments: {values: [idle, charging, discharging, full, absent]}
       - name: display_unit
         data_type: string
         constraints: [{type: not_null}]
@@ -143,7 +143,7 @@ models:
               arguments: {to: ref('dim_date'), field: date_key}
       - name: partition_date
         data_type: date
-        description: The JST date as a DATE, for partitioning. Not part of the data contract.
+        description: The JST date as a DATE; the partitioning column.
         constraints: [{type: not_null}]
       - name: hour_of_day
         data_type: int64
@@ -225,7 +225,7 @@ models:
               arguments: {to: ref('dim_date'), field: date_key}
       - name: partition_date
         data_type: date
-        description: The JST date of started_at as a DATE. Not part of the data contract.
+        description: The JST date of started_at as a DATE; the partitioning column.
         constraints: [{type: not_null}]
       - name: started_at
         data_type: timestamp

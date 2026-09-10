@@ -88,12 +88,16 @@ held as (
 )
 
 select
+    -- The key is made of the boot and the uptime, never of the timestamp: a record
+    -- whose clock was wrong keeps its identity when its time is later corrected.
     {{ frostlog_string_key("concat(boot_id, '/', cast(uptime_seconds as string))") }}
         as state_update_key,
     boot_id,
     uptime_seconds,
     updated_at,
     updated_at_raw,
+    -- The UTC day of the chunk this row was shipped in; what an arrival is batched by.
+    date(regexp_extract(source_key, r'dt=(\d{4}-\d{2}-\d{2})')) as chunk_date,
     updated_at != updated_at_raw as timestamp_corrected,
     source_key,
     model,
