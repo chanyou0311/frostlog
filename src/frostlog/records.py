@@ -2,8 +2,10 @@
 
 A record is one thing that happened at one source: one sensor reading, one
 message received from the cooler, or one event. All records share ``ts``
-(wall clock, UTC), ``uptime`` and ``boot_id`` (see :mod:`frostlog.clock`) and
-``type``, which selects the stream the record belongs to.
+(wall clock, UTC), ``uptime``, ``boot_id`` and ``clock_synced`` (see
+:mod:`frostlog.clock`) and ``type``, which selects the stream the record
+belongs to. ``clock_synced`` is ``None`` only in records converted from the
+first days, before it was recorded.
 """
 
 from datetime import datetime
@@ -18,6 +20,7 @@ class _Common(BaseModel):
     ts: datetime
     uptime: float
     boot_id: str
+    clock_synced: bool | None = None
 
 
 class Ambient(_Common):
@@ -30,6 +33,7 @@ class Ambient(_Common):
 class Cooler(_Common):
     type: Literal["cooler"] = "cooler"
     model: str
+    address: str
     payload: dict[str, Any]
 
 
@@ -49,15 +53,20 @@ _adapter: TypeAdapter[Record] = TypeAdapter(Record)
 
 def stamp() -> dict[str, Any]:
     """The common fields for a record created right now."""
-    return {"ts": clock.now(), "uptime": clock.uptime(), "boot_id": clock.boot_id()}
+    return {
+        "ts": clock.now(),
+        "uptime": clock.uptime(),
+        "boot_id": clock.boot_id(),
+        "clock_synced": clock.synced(),
+    }
 
 
 def ambient(sensor: str, temp_c: float, humidity_pct: float) -> Ambient:
     return Ambient(sensor=sensor, temp_c=temp_c, humidity_pct=humidity_pct, **stamp())
 
 
-def cooler(model: str, payload: dict[str, Any]) -> Cooler:
-    return Cooler(model=model, payload=payload, **stamp())
+def cooler(model: str, address: str, payload: dict[str, Any]) -> Cooler:
+    return Cooler(model=model, address=address, payload=payload, **stamp())
 
 
 def event(kind: str, **fields: Any) -> Event:

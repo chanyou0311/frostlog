@@ -9,7 +9,12 @@ import struct
 from typing import Any
 
 from frostlog.cooler.everfrost import MODEL
-from frostlog.cooler.everfrost.protocol import Parameter, ProtocolError, parse_parameters
+from frostlog.cooler.everfrost.protocol import (
+    Parameter,
+    ProtocolError,
+    parse_parameters,
+    payload_from_notifications,
+)
 
 # Type bytes seen in Anker payloads and the reading they suggest.
 _TYPED = {0x00: "str", 0x01: "u8", 0x02: "i16le", 0x04: "bytes", 0x05: "f32le"}
@@ -48,17 +53,22 @@ class EverfrostDecoder:
 
     def decode(self, payload: dict[str, Any]) -> dict[str, Any]:
         # A plaintext whose tag did not verify is most likely the wrong key's output
-        # (the Prime fallback decrypts everything with a static key): use the raw bytes.
+        # (the Prime fallback decrypts everything with a static key): use the raw bytes,
+        # which are what the notifications carried (unencrypted before the handshake).
         verified = bool(payload.get("plain_verified"))
-        source = "plain" if payload.get("plain") and verified else "payload"
-        hex_payload = payload.get(source)
-        if not hex_payload:
-            return {"error": "no payload to decode"}
-        out: dict[str, Any] = {"source": source}
-        if not verified:
-            out["note"] = "plain did not verify; decoding the raw payload"
+        out: dict[str, Any] = {}
         try:
-            prefix, parameters = parse_parameters(bytes.fromhex(hex_payload))
+            if payload.get("plain") and verified:
+                out["source"] = "plain"
+                data = bytes.fromhex(payload["plain"])
+            elif payload.get("frames"):
+                out["source"] = "frames"
+                if payload.get("plain"):
+                    out["note"] = "plain did not verify; decoding the raw payload"
+                data = payload_from_notifications([bytes.fromhex(f) for f in payload["frames"]])
+            else:
+                return {"error": "no payload to decode"}
+            prefix, parameters = parse_parameters(data)
         except (ProtocolError, ValueError) as exc:
             return out | {"error": str(exc)}
         return out | {

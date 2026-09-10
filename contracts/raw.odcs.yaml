@@ -1,0 +1,422 @@
+# Data contract 1: the collection data product (frostlog raw).
+# Open Data Contract Standard v3.2. Source of truth for what the Raspberry Pi
+# ships to the raw bucket; the semantic data product is the only consumer.
+apiVersion: v3.2.0
+kind: DataContract
+id: frostlog-raw
+name: frostlog raw
+version: 1.0.0
+status: draft
+domain: frostlog
+dataProduct: frostlog-raw
+tenant: chanyou
+
+description:
+  purpose: >
+    Raw record of everything the Raspberry Pi observes about the Anker EverFrost 2
+    cooler: every BLE state message (with its bytes, decrypted body and decoded values),
+    the cabin temperature and humidity measured at the same moment, and the operational
+    events of the collector itself. Nothing is aggregated, filtered or corrected.
+  usage: >
+    Read by the semantic data product (frostlog-semantic) to build the dimensional model.
+    Rows are immutable facts; interpretation errors are fixed downstream by re-reading
+    `frames`/`plain`, never by rewriting raw.
+  limitations: >
+    Data only arrives while the Pi is on the home Wi-Fi (evenings indoors and mornings
+    during pre-cooling). Records made right after a reboot may carry a wrong `ts` until
+    NTP has synchronized (see `ts_synced`); `boot_id` + `uptime_seconds` give the exact
+    order and spacing regardless. Environment readings exist only while the Pi is
+    connected to the cooler over BLE. Lines torn by a power cut are dropped by the
+    uploader; NUL-filled lines may exist in the Pi's local files but are never shipped.
+
+servers:
+  - server: gcs
+    type: s3
+    environment: production
+    description: >
+      Google Cloud Storage bucket accessed through its S3-compatible XML API with HMAC
+      keys (the collector uses boto3). Objects are immutable chunks named after the byte
+      offset of the Pi's local day file they start at; user metadata carries `start`,
+      `end` (byte offsets) and `uploaded-at` (RFC 3339). Layout:
+      v1/{stream}/dt=YYYY-MM-DD/{offset:012d}.jsonl.gz, dt = UTC date of `ts`.
+    endpointUrl: https://storage.googleapis.com
+    location: s3://frostlog-raw/v1/{model}/dt=*/*.jsonl.gz
+    format: json
+    delimiter: new_line
+    customProperties:
+      - property: bucket
+        value: frostlog-raw
+      - property: region
+        value: us-central1
+      - property: objectLayout
+        value: v1/{stream}/dt=YYYY-MM-DD/{offset:012d}.jsonl.gz
+      - property: objectMetadata
+        value: start, end, uploaded-at
+  - server: samples
+    type: local
+    environment: ci
+    description: Sample chunks checked into the repository for CI conformance tests.
+    path: contracts/samples/raw/{model}/*.jsonl.gz
+    format: json
+    delimiter: new_line
+
+schema:
+  - name: cooler
+    physicalName: cooler
+    logicalType: object
+    description: >
+      One row per message received from the cooler over BLE. Rows are written when the
+      cooler updates its state (on any value change, at least every 10 minutes as a
+      heartbeat, and once after each connection). The cabin environment is measured at
+      the same moment and stored on the same row.
+    dataGranularityDescription: One BLE message from the cooler, with the environment at that moment.
+    properties:
+      - name: ts
+        logicalType: timestamp
+        physicalType: string
+        required: true
+        description: >
+          Wall-clock time of the record in UTC (RFC 3339). Taken from the Pi's clock,
+          which may be wrong until NTP has synchronized after a boot; see ts_synced.
+        examples: ["2026-09-06T11:02:11.586699Z"]
+      - name: uptime_seconds
+        logicalType: number
+        required: true
+        description: Seconds since the Pi booted (CLOCK_BOOTTIME). Monotonic within a boot; the authoritative order and spacing of records.
+      - name: boot_id
+        logicalType: string
+        required: true
+        description: Linux boot identifier (/proc/sys/kernel/random/boot_id). Changes on every reboot; uptime_seconds restarts from 0 with it.
+      - name: ts_synced
+        logicalType: boolean
+        required: false
+        description: >
+          True when the Pi's clock had been synchronized with NTP when the record was
+          made (systemd-timesyncd). False means ts may be off by the time the Pi was
+          powered down. Null only in rows migrated from before this field existed.
+      - name: type
+        logicalType: string
+        required: true
+        description: Stream discriminator. Always "cooler" in this object.
+        enum:
+          - value: cooler
+      - name: model
+        logicalType: string
+        required: true
+        description: Which decoder produced `payload`. Currently always "everfrost".
+        examples: ["everfrost"]
+      - name: address
+        logicalType: string
+        required: true
+        description: Bluetooth device address of the cooler the message came from.
+        examples: ["F4:9D:8A:C3:4F:84"]
+      - name: pattern
+        logicalType: string
+        required: false
+        description: Frame header pattern (3 bytes, hex). 030001 = connection handshake, 03010f = status/telemetry. Absent when the notification was not a valid frame.
+        examples: ["03010f"]
+      - name: cmd
+        logicalType: string
+        required: false
+        description: Frame header command (2 bytes, hex). 4402 = state report (decoded into payload), 4489 = external input connected/disconnected, 4500 = 10-minute message of unknown meaning, 08xx/4822 = handshake replies.
+        examples: ["4402"]
+      - name: frames
+        logicalType: array
+        required: true
+        description: >
+          The BLE notifications this message arrived in, each as the exact bytes received
+          (hex). A message longer than the MTU is split into several notifications; they
+          are listed in order. This is the original: everything else on the row is derived.
+        items:
+          logicalType: string
+      - name: plain
+        logicalType: string
+        required: false
+        description: >
+          The message body in the clear (hex): the payload as sent for unencrypted handshake
+          messages, or the AES-decrypted payload once the session is encrypted. Present only
+          when decryption verified; absent on failure (frames and error remain).
+      - name: payload
+        logicalType: object
+        required: false
+        description: >
+          The decoded body for message types whose meaning is known (cmd 4402 only for now).
+          Values are in SI-style units regardless of the cooler's display unit. Absent for
+          other message types and whenever plain is absent.
+        properties:
+          - name: setpoint_celsius
+            logicalType: integer
+            required: true
+            description: Target temperature in °C (normalized from the display unit).
+          - name: interior_temperature_celsius
+            logicalType: integer
+            required: true
+            description: Measured interior temperature in °C (normalized from the display unit).
+          - name: display_unit
+            logicalType: string
+            required: true
+            description: Unit the cooler was displaying when it sent the message.
+            enum:
+              - value: C
+              - value: F
+          - name: input_watts
+            logicalType: integer
+            required: true
+            description: Power drawn from the external DC input (car socket or AC adapter). 0 when no input.
+          - name: usb_a_output_watts
+            logicalType: integer
+            required: true
+            description: Power supplied on the USB-A port (1 W resolution).
+          - name: usb_c_output_watts
+            logicalType: integer
+            required: true
+            description: Power supplied on the USB-C port (1 W resolution).
+          - name: charge_watts
+            logicalType: integer
+            required: true
+            description: Power flowing into the battery.
+          - name: discharge_watts
+            logicalType: integer
+            required: true
+            description: Power flowing out of the battery (compressor, USB outputs).
+          - name: battery_state
+            logicalType: string
+            required: true
+            description: State of the removable battery.
+            enum:
+              - value: idle
+              - value: charging
+              - value: discharging
+              - value: absent
+          - name: state_of_charge_percent
+            logicalType: integer
+            required: true
+            description: Battery state of charge in percent as shown on the cooler's display. 0 when the battery is absent.
+          - name: protection_level
+            logicalType: string
+            required: true
+            description: Battery protection level setting.
+            enum:
+              - value: L
+              - value: M
+              - value: H
+          - name: brightness
+            logicalType: string
+            required: true
+            description: Display brightness setting.
+            enum:
+              - value: low
+              - value: mid
+              - value: high
+          - name: serial_number
+            logicalType: string
+            required: true
+            description: Serial number of the cooler.
+          - name: battery_serial_number
+            logicalType: string
+            required: false
+            description: Serial number of the battery. Absent when no battery is installed.
+      - name: environment
+        logicalType: object
+        required: false
+        description: Cabin temperature and humidity measured by the Pi's sensor at the moment the message was received. Absent when the sensor read failed.
+        properties:
+          - name: sensor
+            logicalType: string
+            required: true
+            description: Sensor name.
+            examples: ["dht20"]
+          - name: temperature_celsius
+            logicalType: number
+            required: true
+            description: Air temperature at the Pi in °C.
+          - name: humidity_percent
+            logicalType: number
+            required: true
+            description: Relative humidity at the Pi in percent.
+      - name: error
+        logicalType: string
+        required: false
+        description: Why the message could not be assembled or decrypted (e.g. "incomplete", "fragment 3/2 out of order"). Present only on failure.
+    quality:
+      - name: message_identity_is_unique
+        type: sql
+        dimension: uniqueness
+        description: A message is identified by (boot_id, uptime_seconds); no duplicates.
+        query: SELECT COUNT(*) - COUNT(DISTINCT boot_id || '/' || CAST(uptime_seconds AS VARCHAR)) FROM {model}
+        mustBe: 0
+      - name: frames_present
+        type: sql
+        dimension: completeness
+        description: Every row keeps the original notification bytes.
+        query: SELECT COUNT(*) FROM {model} WHERE frames IS NULL OR len(frames) = 0
+        mustBe: 0
+      - name: state_of_charge_in_range
+        type: sql
+        dimension: conformity
+        description: Decoded state of charge is a percentage.
+        query: SELECT COUNT(*) FROM {model} WHERE payload.state_of_charge_percent < 0 OR payload.state_of_charge_percent > 100
+        mustBe: 0
+      - name: temperatures_in_range
+        type: sql
+        dimension: conformity
+        description: Decoded and measured temperatures are physically plausible (−40 to 85 °C).
+        query: >
+          SELECT COUNT(*) FROM {model}
+          WHERE payload.interior_temperature_celsius NOT BETWEEN -40 AND 85
+             OR payload.setpoint_celsius NOT BETWEEN -40 AND 85
+             OR environment.temperature_celsius NOT BETWEEN -40 AND 85
+        mustBe: 0
+      - name: payload_only_with_plain
+        type: sql
+        dimension: consistency
+        description: A decoded payload exists only when the body was readable.
+        query: SELECT COUNT(*) FROM {model} WHERE payload IS NOT NULL AND plain IS NULL
+        mustBe: 0
+
+  - name: events
+    physicalName: events
+    logicalType: object
+    description: >
+      One row per operational event of the collector: BLE connection milestones and
+      failures, environment sensor failures, and upload runs. This is the collection data
+      product's own observability data. Known kinds are listed; consumers must tolerate
+      new kinds.
+    dataGranularityDescription: One collector event.
+    properties:
+      - name: ts
+        logicalType: timestamp
+        physicalType: string
+        required: true
+        description: Event time in UTC (RFC 3339), same caveats as cooler.ts.
+      - name: uptime_seconds
+        logicalType: number
+        required: true
+        description: Seconds since boot.
+      - name: boot_id
+        logicalType: string
+        required: true
+        description: Linux boot identifier.
+      - name: ts_synced
+        logicalType: boolean
+        required: false
+        description: Whether the clock was NTP-synchronized when the event was recorded.
+      - name: type
+        logicalType: string
+        required: true
+        description: Stream discriminator. Always "event" in this object.
+        enum:
+          - value: event
+      - name: kind
+        logicalType: string
+        required: true
+        description: >
+          What happened. Known values: ble_device_not_found, ble_error, ble_connected,
+          ble_negotiated, ble_handshake_retry, ble_negotiation_timeout, ble_handshake_failed,
+          ble_disconnected, ble_silent (no message for 15 minutes, link dropped),
+          environment_read_failed, upload_started, upload_done. Other kinds may appear.
+      - name: address
+        logicalType: string
+        required: false
+        description: Bluetooth address involved (ble_* kinds).
+      - name: name
+        logicalType: string
+        required: false
+        description: Advertised device name (ble_connected).
+      - name: error
+        logicalType: string
+        required: false
+        description: Error text (ble_error, ble_handshake_failed, environment_read_failed).
+      - name: variant
+        logicalType: string
+        required: false
+        description: Handshake variant tried (solix, prime).
+      - name: mtu
+        logicalType: integer
+        required: false
+        description: Negotiated BLE MTU (ble_negotiated).
+      - name: chip
+        logicalType: string
+        required: false
+        description: Cooler chip reported during the handshake (ble_negotiated).
+      - name: firmware
+        logicalType: string
+        required: false
+        description: Cooler firmware version reported during the handshake (ble_negotiated). Source of dim_cooler history.
+      - name: serial
+        logicalType: string
+        required: false
+        description: Cooler serial number reported during the handshake (ble_negotiated).
+      - name: secret
+        logicalType: string
+        required: false
+        description: Session key (hex) derived during the handshake (ble_negotiated). Lets frames be decrypted again later.
+      - name: cmd
+        logicalType: string
+        required: false
+        description: Handshake command that failed (ble_handshake_failed).
+      - name: sensor
+        logicalType: string
+        required: false
+        description: Sensor name (environment_read_failed).
+      - name: uploaded_chunk_count
+        logicalType: integer
+        required: false
+        description: Number of chunks put in this upload run (upload_done).
+      - name: uploaded_line_count
+        logicalType: integer
+        required: false
+        description: Number of lines shipped in this upload run (upload_done).
+    quality:
+      - name: event_identity_is_unique
+        type: sql
+        dimension: uniqueness
+        query: SELECT COUNT(*) - COUNT(DISTINCT boot_id || '/' || CAST(uptime_seconds AS VARCHAR) || '/' || kind) FROM {model}
+        mustBe: 0
+
+slaProperties:
+  - property: latency
+    value: 5
+    unit: m
+    element: cooler.ts
+    description: While the Pi is on the home Wi-Fi, a record is in the bucket within 5 minutes of being made (upload timer). No promise while away.
+  - property: frequency
+    value: 5
+    unit: m
+    element: cooler.ts
+    description: Upload runs every 5 minutes; a run only ships new lines.
+  - property: retention
+    value: unlimited
+    element: cooler.ts
+    description: Objects are never deleted from the bucket. The Pi keeps its local copy for 30 days.
+  - property: timeliness
+    value: 1
+    unit: d
+    element: cooler.ts
+    description: Warn when no new record has arrived for more than 1 day; error after 7 days (the car comes home almost daily, trips of a few days happen).
+  - property: availability
+    value: best-effort
+    description: Availability follows Google Cloud Storage; there is no additional guarantee.
+
+support:
+  - channel: github
+    url: https://github.com/chanyou0311/frostlog/issues
+    tool: other
+    scope: issues
+
+team:
+  name: frostlog
+  members:
+    - username: chanyou0311
+      role: owner
+
+customProperties:
+  - property: changePolicy
+    value: additive-only
+    description: Fields and event kinds may be added. Removing or re-typing a field, or changing a meaning, bumps the major version and moves the data to a new path prefix (v2/).
+  - property: chunkSemantics
+    value: immutable-offset-chunks
+    description: Each object holds whole lines of one local day file starting at the byte offset in its name; the same offset always means the same lines, so re-uploads overwrite identical bytes. Upload state is derived from the bucket (LIST + metadata `end`), never kept on the Pi.
+  - property: lateArrival
+    value: unbounded
+    description: Records for a past day may arrive days later (after a trip). Consumers must expect new chunks in old dt= partitions.

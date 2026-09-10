@@ -3,7 +3,8 @@
 Each notification becomes one ``cooler`` record (fragments are joined first).
 The record keeps the raw notification bytes, the header fields, and, once the
 session is encrypted, the decrypted payload, so that a later decoder can work
-from the files alone. Connection and negotiation milestones are ``event``
+from the files alone; the encrypted payload itself is not repeated, it is a
+pure function of the notification bytes. Connection and negotiation milestones are ``event``
 records. No meaning is assigned here and nothing on the cooler is changed.
 """
 
@@ -52,8 +53,8 @@ class EverfrostReceiver:
     def _event(self, kind: str, **fields: Any) -> None:
         self._sink(records.event(kind, **fields))
 
-    def _message(self, payload: dict[str, Any]) -> None:
-        self._sink(records.cooler(MODEL, payload))
+    def _message(self, address: str, payload: dict[str, Any]) -> None:
+        self._sink(records.cooler(MODEL, address, payload))
 
     async def run(self, stop: asyncio.Event) -> None:
         deadline = clock.uptime() + self._duration if self._duration is not None else None
@@ -124,19 +125,20 @@ class EverfrostReceiver:
             last_seen = clock.uptime()
         for key, notifications in state.reassembler.pending().items():
             self._message(
+                session.address,
                 {
                     "pattern": key[:3].hex(),
                     "cmd": key[3:].hex(),
                     "frames": _hex(notifications),
                     "error": "incomplete",
-                }
+                },
             )
 
     async def _handle(self, data: bytes, session: ble.Session, state: "_SessionState") -> None:
         try:
             frame = parse_frame(data)
         except ProtocolError as exc:
-            self._message({"frames": [data.hex()], "error": str(exc)})
+            self._message(session.address, {"frames": [data.hex()], "error": str(exc)})
             return
         notifications = [data]
         if state.reassembler.is_fragment(frame, len(data), state.handshake.mtu):
@@ -144,14 +146,15 @@ class EverfrostReceiver:
                 joined = state.reassembler.add(frame, data)
             except FragmentError as exc:
                 self._message(
-                    _header(frame) | {"frames": _hex(exc.notifications), "error": str(exc)}
+                    session.address,
+                    _header(frame) | {"frames": _hex(exc.notifications), "error": str(exc)},
                 )
                 return
             if joined is None:
                 return
             payload, notifications = joined
             frame = Frame(frame.pattern, frame.cmd, payload)
-        info = _header(frame) | {"frames": _hex(notifications), "payload": frame.payload.hex()}
+        info = _header(frame) | {"frames": _hex(notifications)}
         cipher = state.handshake.cipher
         if cipher is not None:
             try:
@@ -160,7 +163,7 @@ class EverfrostReceiver:
                 pass
             else:
                 info["plain"], info["plain_verified"] = plain.hex(), verified
-        self._message(info)
+        self._message(session.address, info)
         if frame.pattern == PATTERN_NEGOTIATION:
             await self._negotiate(frame, session, state)
 

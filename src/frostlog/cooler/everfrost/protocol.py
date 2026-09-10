@@ -139,6 +139,19 @@ class Reassembler:
         return {key: [n for _, n in collected] for key, collected in self._pending.items()}
 
 
+def payload_from_notifications(notifications: list[bytes]) -> bytes:
+    """The payload of a message from the notifications it was recorded from.
+
+    One notification is one frame; several are the fragments of one message and
+    are joined the way :class:`Reassembler` joined them. What the receiver
+    stored as ``frames`` can thus be turned back into the bytes it decrypted.
+    """
+    frames = [parse_frame(n) for n in notifications]
+    if len(frames) == 1:
+        return frames[0].payload
+    return b"".join(parse_fragment(f.payload).data for f in frames)
+
+
 # --- parameters (TLV) -------------------------------------------------------------
 
 

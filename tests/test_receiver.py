@@ -72,12 +72,13 @@ def test_joined_message_records_every_notification_it_came_from(
     second = _fragment(2, 2, b"bbb")
     out, _ = _run(monkeypatch, [first, stray, second])
     cooler = [r.payload for r in out if isinstance(r, records.Cooler)]
+    assert {r.address for r in out if isinstance(r, records.Cooler)} == {"AA:BB"}
     assert cooler[0]["error"] == "empty fragment"
     assert cooler[0]["frames"] == [first.hex(), stray.hex()]
     # The stray frame ended that message, so the second fragment stands on its own:
     # nothing claims the bytes of ``first`` without listing it.
     assert "error" not in cooler[1]
-    assert cooler[1]["frames"] == [second.hex()] and cooler[1]["payload"] == b"\x22bbb".hex()
+    assert cooler[1]["frames"] == [second.hex()] and "payload" not in cooler[1]
 
 
 def test_negotiation_silence_tries_prime_then_gives_up(monkeypatch: pytest.MonkeyPatch) -> None:
