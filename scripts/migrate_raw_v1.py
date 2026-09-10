@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Rewrite the Pi's local record files into the shape of the raw v1 data contract.
 
-One-off, run on the Pi with the collector stopped:
+One-off, run on the Pi with the collector stopped, and before the v1 uploader has
+ever run on that directory: every record is rewritten, so every byte offset in
+the files moves, and offsets are what the bucket names its chunks after. Once a
+chunk has been uploaded, a migration would make the offsets in the bucket mean
+different lines. The advisory upload cache is deleted here for the same reason.
 
     systemctl --user stop frostlog-cooler frostlog-upload.timer
     ~/frostlog/.venv/bin/python ~/frostlog/scripts/migrate_raw_v1.py ~/.local/state/frostlog
@@ -16,7 +20,9 @@ after which the ambient stream is deleted, because from v1 on the environment is
 measured with each message and lives on the message's record.
 
 ``ts_synced`` is null wherever the old record does not say: those records were
-made before the collector knew whether the clock had been set.
+made before the collector knew whether the clock had been set. ``plain`` stays
+absent unless the body really is in the clear: the old record kept the payload
+as received, which is ciphertext for every message of an encrypted session.
 
 Lines that a power cut left torn or filled with NUL bytes are dropped; the
 uploader never shipped them either. Running the script again changes nothing:
@@ -36,12 +42,18 @@ from pathlib import Path
 from typing import Any
 
 from frostlog.cooler.everfrost.decoder import CMD_STATE, decode_state
-from frostlog.cooler.everfrost.protocol import ProtocolError
+from frostlog.cooler.everfrost.protocol import PATTERN_NEGOTIATION, ProtocolError
+from frostlog.upload.cache import NAME as UPLOAD_CACHE
 
 log = logging.getLogger("migrate")
 
 #: How far a cabin reading may be from a message and still describe its moment.
 ENVIRONMENT_WINDOW_SECONDS = 15.0
+
+#: The device's replies while the Solix negotiation is still in the clear: up to
+#: and including 0821 there is no session key, so their body was sent as it is.
+CLEAR_PATTERN = PATTERN_NEGOTIATION.hex()
+CLEAR_CMDS = frozenset({"0801", "0803", "0805", "0821", "0829"})
 
 
 class MissingAddress(Exception):
@@ -180,10 +192,20 @@ def migrate_cooler(
 
 
 def _plain(old: dict[str, Any]) -> str | None:
-    """The body in the clear: as sent before the session was encrypted, else decrypted."""
+    """The body in the clear: as sent before the session was encrypted, else decrypted.
+
+    The old record kept ``payload`` as received. That is the body itself only
+    while the handshake is still in the clear; once the session key exists it is
+    ciphertext, and a message whose decryption failed has no body in the clear at
+    all (the contract has ``plain`` only when decryption verified).
+    """
     if "plain" in old:
         return old["plain"] if old.get("plain_verified", True) else None
-    return old.get("payload")
+    return old.get("payload") if _sent_in_the_clear(old) else None
+
+
+def _sent_in_the_clear(old: dict[str, Any]) -> bool:
+    return old.get("pattern") == CLEAR_PATTERN and old.get("cmd") in CLEAR_CMDS
 
 
 def _decoded(plain: str) -> dict[str, Any] | None:
@@ -242,6 +264,12 @@ def migrate(root: Path, fallback_address: str | None) -> Counter[str]:
         shutil.rmtree(ambient)
         log.info("%s: removed (the environment now travels with each message)", ambient)
         counts["ambient files removed"] += 1
+    cache = root / UPLOAD_CACHE
+    if cache.is_file():
+        cache.unlink()
+        # Its offsets point into the files as they were before this rewrite.
+        log.info("%s: removed (the offsets it remembers have all moved)", cache)
+        counts["upload cache removed"] += 1
     return counts
 
 
@@ -262,7 +290,8 @@ def main() -> int:
     except MissingAddress as exc:
         log.error("%s", exc)
         return 1
-    log.info("%s", ", ".join(f"{name} {count}" for name, count in sorted(counts.items())) or "-")
+    summary = ", ".join(f"{name} {count}" for name, count in sorted(counts.items()))
+    log.info("done: %s", summary or "nothing to migrate")
     return 0
 
 
