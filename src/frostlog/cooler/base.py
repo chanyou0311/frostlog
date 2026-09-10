@@ -28,11 +28,11 @@ class Receiver(Protocol):
 
 
 class Decoder(Protocol):
-    """Adds meaning to the ``payload`` of one cooler record (development-time use)."""
+    """Splits one cooler record into its parameters, for reading by hand (development-time use)."""
 
     model: str
 
-    def decode(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+    def decode(self, record: records.Cooler) -> dict[str, Any]: ...
 
 
 Scanner = Callable[[float], Coroutine[Any, Any, list[Found]]]

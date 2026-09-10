@@ -1,13 +1,19 @@
 # frostlog
 
-ポータブル冷蔵庫（Anker EverFrost 2）の電力と、その周囲の温湿度を Raspberry Pi で記録するデータロガー。
+ポータブル冷蔵庫（Anker EverFrost 2）が Bluetooth で送ってくるメッセージと、その周囲の温湿度を
+Raspberry Pi で記録し、クラウドのバケットへ送るデータロガー。スキーマの正は
+`contracts/raw.odcs.yaml`（収集データプロダクトのデータ契約）。
 
-- `frostlog read ambient` — I2C の温湿度センサー（DHT20 / AM2320）を定期的に読む
-- `frostlog read cooler` — 冷蔵庫が Bluetooth で送ってくるメッセージを、意味づけせずにそのまま残す
-- `frostlog upload DIR` — 溜めた JSONL を S3 互換のバケット（Cloudflare R2）へ送る。再実行しても同じ結果になる
-- `frostlog decode` — 冷蔵庫レコードの生データを分解して眺める（開発用）
+- `frostlog read cooler` — 冷蔵庫のメッセージを受け取り、生のバイト列・復号した本文・意味づけした値、
+  そのときの車内の温湿度（DHT20）を 1 行に記録する
+- `frostlog upload DIR` — 溜めた JSONL を S3 互換 API 経由で GCS へ送る。再実行しても同じ結果になる
+- `frostlog read ambient` — 温湿度センサーだけを読む（配線確認用）
+- `frostlog decode` — 未知のメッセージをパラメータに分解して眺める（開発用）
 
-レコードは 1 行 1 JSON。`ts`（UTC）、`uptime`（起動からの秒）、`boot_id`、`type` を全行が持ち、`--output DIR` で `DIR/<type>/<日付>.jsonl` に保存する。集計は Mac の DuckDB が R2 のファイルを直接読む（`analysis/`）。
+レコードは 1 行 1 JSON。`ts`（UTC）、`uptime_seconds`（起動からの秒）、`boot_id`、`ts_synced`、`type` を
+全行が持ち、`--output DIR` で `DIR/<stream>/<日付>.jsonl` に保存する。アップロードは
+`v1/<stream>/dt=<日付>/<開始オフセット>.jsonl.gz` という不変のチャンクで、どこまで送ったかはバケット側の
+メタデータ（`end`）が正。
 
 ## 使い方
 
@@ -16,16 +22,18 @@ uv sync
 uv run frostlog read ambient --interval 2 --count 3      # 配線の確認（--sensor am2320 も可）
 uv run frostlog read cooler --scan                       # 近くの Bluetooth 機器
 uv run frostlog read cooler --duration 60 | uv run frostlog decode
+uv run python scripts/build_samples.py                   # contracts/samples を作り直す
 ```
 
 設定は環境変数 `FROSTLOG_*`（`scripts/env.example`）。
 
-Pi には Mac から `scripts/deploy.sh` で配る。Pi 上ではユーザー単位の systemd が
-`frostlog-ambient@dht20` を常駐させ、`frostlog-upload.timer` が 30 分おきに送る。センサーを
-足すときは `systemctl --user enable --now frostlog-ambient@am2320` のようにインスタンスを増やす。`frostlog-cooler` は
+Pi には Mac から `scripts/deploy.sh` で配る。Pi 上ではユーザー単位の systemd が `frostlog-cooler` を
+常駐させ、`frostlog-upload.timer` が 5 分おきに送る。`frostlog-cooler` は
 `FROSTLOG_COOLER_ADDRESS` を設定して再起動すると常駐する（未設定だと近くの Anker 機器を何でも
 掴んでしまうため、ユニットの `ExecCondition` で起動をスキップする）。
 データは `~/.local/state/frostlog`、設定は `~/.config/frostlog/env`、ログは
-`journalctl --user-unit frostlog-ambient@dht20` で見る。
+`journalctl --user-unit frostlog-cooler` で見る。
 `FROSTLOG_HEALTHCHECK_URL` を設定すると、失敗なく送れた回ごとに healthchecks.io などへ ping する
 （数日届かなければ通知する見張り）。
+
+v1 より前に記録したファイルは `scripts/migrate_raw_v1.py` で契約どおりの形に書き換える（Pi 上で 1 回だけ）。

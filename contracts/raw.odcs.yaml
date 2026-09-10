@@ -55,8 +55,12 @@ servers:
   - server: samples
     type: local
     environment: ci
-    description: Sample chunks checked into the repository for CI conformance tests.
-    path: contracts/samples/raw/{model}/*.jsonl.gz
+    description: >
+      Sample chunks checked into the repository for CI conformance tests: one day of
+      each stream, as the Pi writes it. They are kept uncompressed because
+      datacontract-cli reads only plain `.json` files from a local server; the chunks
+      in the bucket are the same lines gzipped.
+    path: contracts/samples/raw/{model}/*.json
     format: json
     delimiter: new_line
 
@@ -182,11 +186,14 @@ schema:
           - name: battery_state
             logicalType: string
             required: true
-            description: State of the removable battery.
+            description: >
+              State of the removable battery. `full` is charging finished: the cooler is
+              on external power at 100 % with no current flowing either way.
             enum:
               - value: idle
               - value: charging
               - value: discharging
+              - value: full
               - value: absent
           - name: state_of_charge_percent
             logicalType: integer

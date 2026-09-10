@@ -65,3 +65,8 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# `tests/captured.py` holds the messages the cooler really sent; the sample builder
+# reads them too, the way pytest does.
+[tool.ty.environment]
+extra-paths = ["tests"]

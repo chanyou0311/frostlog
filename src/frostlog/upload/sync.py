@@ -8,16 +8,17 @@ records the offsets it covers in its metadata (``start``, ``end``) and is never
 rewritten with different bytes: the same start always means the same lines, so
 resending after a failure just puts the same object again.
 
-The bucket is the record of what has been uploaded. Nothing is kept locally:
-a run lists the prefix, reads the ``end`` of the last chunk and continues from
-there, so a re-imaged SD card or a lost state file cannot cause a gap or a
-duplicate. A torn final line (power cut) is never sent; the recorder starts a
-fresh line after it, so it is skipped for good.
+The bucket is the record of what has been uploaded. Nothing that matters is kept
+locally: a run lists the prefix, reads the ``end`` of the last chunk and continues
+from there, so a re-imaged SD card or a lost cache cannot cause a gap or a
+duplicate (see :mod:`frostlog.upload.cache` for why a run may skip the listing).
+A torn final line (power cut) is never sent; the recorder starts a fresh line
+after it, so it is skipped for good.
 
 Once a file has been fully uploaded and its day is old enough it is deleted
-locally, and the oldest uploaded files go first when the disk runs low. When
-the bucket cannot be reached at all the run stops with an ``offline`` action
-and touches nothing.
+locally, and the oldest uploaded files go first when the disk runs low. When the
+bucket cannot be reached at all the run stops with an ``offline`` action and
+touches nothing.
 """
 
 import gzip
@@ -30,6 +31,7 @@ from pathlib import Path
 from typing import Literal
 
 from frostlog.store import list_files
+from frostlog.upload.cache import OffsetCache
 from frostlog.upload.s3 import ObjectStore, Offline
 
 log = logging.getLogger(__name__)
@@ -43,24 +45,39 @@ KEEP_DAYS = 30
 #: Below this much free space, uploaded files are deleted oldest first.
 MIN_FREE_BYTES = 256 * 1024 * 1024
 
+#: The streams the raw data contract describes. Anything else under the root is local
+#: (the retired ``ambient`` stream until the migration removes it, a stream a newer
+#: collector writes that this uploader predates) and stays local.
+UPLOADED_STREAMS = frozenset({"cooler", "events"})
+
+#: What happened to one file or one chunk. ``cached`` is a file the cache says is
+#: complete, the one outcome that does not prove the bucket was reached.
+ActionName = Literal["upload", "skip", "cached", "conflict", "failed", "offline", "delete"]
+
 
 @dataclass(frozen=True)
 class Action:
     key: str
-    action: Literal["upload", "skip", "conflict", "failed", "offline", "delete"]
+    action: ActionName
     size: int = 0
+    line_count: int = 0
     error: str | None = None
 
 
-def sync(root: Path, store: ObjectStore) -> Iterator[Action]:
+def sync(root: Path, store: ObjectStore, cache: OffsetCache | None = None) -> Iterator[Action]:
     today = datetime.now(UTC).date()
+    files = [path for path in list_files(root) if path.parent.name in UPLOADED_STREAMS]
     done: list[tuple[Path, date]] = []  # fully uploaded files, oldest first
-    for path in list_files(root):
+    for path in files:
         stream, day = path.parent.name, path.stem
         prefix = f"{PREFIX}/{stream}/dt={day}/"
         try:
-            uploaded = _uploaded_end(store, prefix)
             size = _complete_size(path)
+            if cache is not None and cache.get(root, path) == size:
+                yield Action(prefix, "cached", size)
+                done.append((path, date.fromisoformat(day)))
+                continue
+            uploaded = _uploaded_end(store, prefix)
             if uploaded > size:
                 log.warning(
                     "%s: local %d bytes < uploaded %d bytes; left alone", path, size, uploaded
@@ -76,7 +93,9 @@ def sync(root: Path, store: ObjectStore) -> Iterator[Action]:
                 for start, chunk in _chunks(data, uploaded):
                     key = f"{prefix}{start:012d}{SUFFIX}"
                     store.put(key, gzip.compress(chunk), _metadata(start, start + len(chunk)))
-                    yield Action(key, "upload", len(chunk))
+                    yield Action(key, "upload", len(chunk), chunk.count(b"\n"))
+            if cache is not None:
+                cache.set(root, path, size)
         except Offline as exc:
             log.info("%s: bucket not reachable, stopping: %s", prefix, exc)
             yield Action(prefix, "offline", error=str(exc))
@@ -87,6 +106,8 @@ def sync(root: Path, store: ObjectStore) -> Iterator[Action]:
         else:
             done.append((path, date.fromisoformat(day)))
     yield from _prune(root, done, today)
+    if cache is not None:
+        cache.save(root, (path for path in files if path.exists()))
 
 
 def _uploaded_end(store: ObjectStore, prefix: str) -> int:

@@ -35,7 +35,7 @@ def decode(frame: bytes) -> Reading:
     temp = (((frame[4] & 0x7F) << 8) | frame[5]) / 10
     if frame[4] & 0x80:
         temp = -temp
-    return Reading(temp_c=temp, humidity_pct=humidity)
+    return Reading(temperature_celsius=temp, humidity_percent=humidity)
 
 
 class AM2320(Sensor):
