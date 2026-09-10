@@ -1,0 +1,66 @@
+# Build the two Cloud Run service images and swap them in. The services themselves
+# (sizing, service accounts, env vars, triggers) are defined in fumo-terraform
+# (envs/gcp-chanyou-frostlog); this workflow only updates the container image.
+# Auth is Workload Identity Federation: the repository variable
+# FROSTLOG_GCP_PROJECT_NUMBER must be set once after the project is bootstrapped.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "semantic/**"
+      - "notifier/**"
+      - "contracts/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: chanyou-frostlog
+  REGION: us-central1
+  REPOSITORY: frostlog
+
+jobs:
+  deploy:
+    if: ${{ vars.FROSTLOG_GCP_PROJECT_NUMBER != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: frostlog-semantic
+            context: semantic
+          - service: frostlog-notifier
+            context: notifier
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ vars.FROSTLOG_GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: frostlog-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push
+        env:
+          IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ matrix.service }}
+        run: |
+          # The contracts are baked into both images (datacontract test, load schema).
+          docker build -f ${{ matrix.context }}/Dockerfile -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+
+      - name: Update the Cloud Run service image
+        run: |
+          gcloud run services update ${{ matrix.service }} \
+            --project=${{ env.PROJECT_ID }} --region=${{ env.REGION }} \
+            --image=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ matrix.service }}:${{ github.sha }}
