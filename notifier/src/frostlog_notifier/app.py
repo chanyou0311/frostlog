@@ -36,8 +36,10 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/events/semantic")
-async def events_semantic(request: Request, notifier: Notifier = Depends(get_notifier)) -> Response:
+@app.post("/events/semantic-updated")
+async def events_semantic_updated(
+    request: Request, notifier: Notifier = Depends(get_notifier)
+) -> Response:
     try:
         event = parse(await request.json())
     except (Undecodable, ValueError) as exc:
@@ -50,7 +52,7 @@ async def events_semantic(request: Request, notifier: Notifier = Depends(get_not
         log.warning("transient failure; asking Pub/Sub to retry: %s", exc)
         return _answer(500, {"error": str(exc)})
     except Exception as exc:  # a defect, not a hiccup: reported, then acknowledged
-        notifier.report_failure("events/semantic", exc)
+        notifier.report_failure("events/semantic-updated", exc)
         return _answer(200, {"error": f"{type(exc).__name__}: {exc}"})
     return _answer(200, {"posted": [notification.key for notification in posted]})
 
