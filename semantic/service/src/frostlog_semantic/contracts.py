@@ -22,6 +22,10 @@ TEST_TIMEOUT_SECONDS = 1800
 #: Check results that mean the contract is not being met.
 _FAILING = {"failed", "error"}
 
+#: Where datacontract-cli looks for the bucket's HMAC key (S3-compatible API).
+S3_ACCESS_KEY_VARIABLE = "DATACONTRACT_S3_ACCESS_KEY_ID"
+S3_SECRET_KEY_VARIABLE = "DATACONTRACT_S3_SECRET_ACCESS_KEY"
+
 
 @dataclass(frozen=True)
 class ContractTestResult:
@@ -32,7 +36,28 @@ class ContractTestResult:
 
 
 class ContractTester(Protocol):
-    def test(self, contract: Path, server: str, contract_id: str) -> ContractTestResult: ...
+    def test(
+        self,
+        contract: Path,
+        server: str,
+        contract_id: str,
+        environment: dict[str, str] | None = None,
+    ) -> ContractTestResult: ...
+
+
+def s3_credentials(payload: str) -> dict[str, str] | None:
+    """The raw HMAC secret's payload as the variables datacontract-cli reads.
+
+    ``None`` when the payload is not the agreed JSON object; the payload itself is
+    never logged.
+    """
+    try:
+        keys = json.loads(payload)
+        access_id, secret = keys["access_id"], keys["secret"]
+    except (ValueError, TypeError, KeyError):
+        log.error('the raw HMAC secret is not {"access_id": ..., "secret": ...}')
+        return None
+    return {S3_ACCESS_KEY_VARIABLE: str(access_id), S3_SECRET_KEY_VARIABLE: str(secret)}
 
 
 class DatacontractTester:
@@ -41,7 +66,13 @@ class DatacontractTester:
     def __init__(self, environment: dict[str, str] | None = None) -> None:
         self._environment = environment or {}
 
-    def test(self, contract: Path, server: str, contract_id: str) -> ContractTestResult:
+    def test(
+        self,
+        contract: Path,
+        server: str,
+        contract_id: str,
+        environment: dict[str, str] | None = None,
+    ) -> ContractTestResult:
         with tempfile.TemporaryDirectory() as workspace:
             report = Path(workspace) / "test-results.json"
             command = [
@@ -60,7 +91,7 @@ class DatacontractTester:
                 capture_output=True,
                 text=True,
                 timeout=TEST_TIMEOUT_SECONDS,
-                env={**os.environ, **self._environment},
+                env={**os.environ, **self._environment, **(environment or {})},
                 check=False,
             )
             output = completed.stdout + completed.stderr
