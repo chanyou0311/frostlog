@@ -11,6 +11,7 @@ dependencies = [
   "google-cloud-bigquery>=3.41",
   "google-cloud-pubsub>=2.34",
   "google-cloud-storage>=2.19",
+  "google-cloud-secret-manager>=2.24",
 ]
 
 [dependency-groups]
@@ -41,6 +42,17 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+# Without a [tool.ty] section here ty walks up to the repository root, adopts the
+# Pi package's configuration and type-checks src/frostlog against this service's
+# environment (which has no bleak). This service is its own project.
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.ty.environment]
+# "." so that tests/conftest.py is importable as tests.conftest, the way pytest
+# sees it (see pythonpath below).
+root = ["src", "."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
