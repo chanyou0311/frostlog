@@ -95,3 +95,24 @@ def test_a_rejected_message_is_not_transient() -> None:
     with pytest.raises(Exception, match="channel_not_found") as raised:
         slack.post("x")
     assert not isinstance(raised.value, Transient)
+
+
+def test_the_token_is_looked_up_once_and_only_when_it_is_needed(tmp_path: Path) -> None:
+    lookups: list[str] = []
+
+    def source() -> str | None:
+        lookups.append("looked up")
+        return None
+
+    slack = Slack(token=source, channel="#fumo", dry_run_directory=tmp_path)
+    assert lookups == []  # building the poster reaches nothing
+    assert slack.post("one").dry_run is True
+    assert slack.post("two").dry_run is True
+    assert len(lookups) == 1
+
+
+def test_a_token_that_arrives_later_is_used() -> None:
+    client = FakeWebClient()
+    slack = Slack(token=lambda: "xoxb-from-the-secret", channel="#fumo", client=client)
+    assert slack.token == "xoxb-from-the-secret"
+    assert slack.enabled is True

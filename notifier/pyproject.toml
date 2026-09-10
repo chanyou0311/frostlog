@@ -6,7 +6,9 @@ requires-python = ">=3.13"
 dependencies = [
   "fastapi>=0.115",
   "uvicorn>=0.30",
+  "google-auth>=2.35",
   "google-cloud-bigquery>=3.25",
+  "google-cloud-secret-manager>=2.20",
   "matplotlib>=3.9",
   "slack-sdk>=3.33",
   "pydantic>=2.13",

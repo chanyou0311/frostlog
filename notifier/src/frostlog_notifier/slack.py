@@ -6,6 +6,7 @@ posted all the same, which keeps the idempotency rules exercised.
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -17,6 +18,9 @@ log = logging.getLogger(__name__)
 #: Slack answers these with a retry: rate limit and server errors.
 _TRANSIENT_STATUS = frozenset({408, 429, 500, 502, 503, 504})
 
+#: A token, looked up on first use because the lookup may reach Secret Manager.
+TokenSource = Callable[[], str | None]
+
 
 @dataclass(frozen=True)
 class Posted:
@@ -27,10 +31,6 @@ class Posted:
 class Poster(Protocol):
     """What the notifier needs of Slack; the tests substitute their own."""
 
-    @property
-    def enabled(self) -> bool:
-        """False when there is no token and messages only reach the log."""
-
     def post(
         self, text: str, image: bytes | None = None, filename: str = "chart.png"
     ) -> Posted: ...
@@ -39,26 +39,40 @@ class Poster(Protocol):
 class Slack:
     def __init__(
         self,
-        token: str | None,
+        token: str | TokenSource | None,
         channel: str,
         dry_run_directory: Path = Path("/tmp"),
         client: Any = None,
     ) -> None:
-        self._token = token
+        self._token_source: TokenSource
+        if token is None or isinstance(token, str):
+            self._token_source = lambda: token
+        else:
+            self._token_source = token
+        self._token: str | None = None
+        self._looked_up = False
         self._channel = channel
         self._dry_run_directory = dry_run_directory
         self._client = client
 
     @property
+    def token(self) -> str | None:
+        """The bot token, looked up once and kept for the life of the instance."""
+        if not self._looked_up:
+            self._token = self._token_source()
+            self._looked_up = True
+        return self._token
+
+    @property
     def enabled(self) -> bool:
-        return bool(self._token) or self._client is not None
+        return self._client is not None or bool(self.token)
 
     @property
     def client(self) -> Any:
         if self._client is None:
             from slack_sdk import WebClient
 
-            self._client = WebClient(token=self._token)
+            self._client = WebClient(token=self.token)
         return self._client
 
     def post(self, text: str, image: bytes | None = None, filename: str = "chart.png") -> Posted:

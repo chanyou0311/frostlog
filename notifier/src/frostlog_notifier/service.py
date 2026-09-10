@@ -127,13 +127,21 @@ class Notifier:
 
 def build(settings: Settings | None = None) -> Notifier:
     """A notifier wired to the real BigQuery dataset and Slack workspace."""
+    from frostlog_notifier import secret_manager
+    from frostlog_notifier.settings import resolve_project
     from frostlog_notifier.warehouse import BigQueryWarehouse
 
-    settings = settings or Settings()
-    warehouse = BigQueryWarehouse(settings.bigquery_project, settings.bigquery_dataset)
+    configuration = settings or Settings()
+    project = resolve_project(configuration)
+    secret = configuration.slack_bot_token_secret
+    warehouse = BigQueryWarehouse(project, configuration.bigquery_dataset)
+    # The token is looked up on first use: the secret may still be empty at deployment.
+    token = configuration.slack_bot_token or (
+        lambda: secret_manager.slack_bot_token(project, secret)
+    )
     return Notifier(
         warehouse=warehouse,
-        posted=PostedNotifications(warehouse, settings.posted_table),
-        slack=Slack(settings.slack_bot_token, settings.slack_channel, settings.dry_run_directory),
-        settings=settings,
+        posted=PostedNotifications(warehouse, configuration.posted_table),
+        slack=Slack(token, configuration.slack_channel, configuration.dry_run_directory),
+        settings=configuration,
     )
