@@ -1,0 +1,119 @@
+-- The state reports (cmd 4402), one row each, with their timestamps repaired and
+-- the seconds each state is taken to hold.
+--
+-- A report whose body could not be decoded, or which is missing a value the
+-- dimensional model requires, is dropped here rather than carried as nulls: the
+-- bytes stay in raw and can be decoded again later.
+
+with decoded as (
+
+    select
+        boot_id,
+        uptime_seconds,
+        ts,
+        ts_synced,
+        source_key,
+        uploaded_at,
+        model,
+        address,
+        payload,
+        environment
+    from {{ source('raw', 'raw_cooler') }}
+    where cmd = '4402'
+      and boot_id is not null
+      and uptime_seconds is not null
+      and ts is not null
+      and payload.serial_number is not null
+      and payload.setpoint_celsius is not null
+      and payload.interior_temperature_celsius is not null
+      and payload.state_of_charge_percent is not null
+      and payload.input_watts is not null
+      and payload.charge_watts is not null
+      and payload.discharge_watts is not null
+      and payload.usb_a_output_watts is not null
+      and payload.usb_c_output_watts is not null
+      and payload.battery_state is not null
+      and payload.display_unit is not null
+      and payload.protection_level is not null
+      and payload.brightness is not null
+
+),
+
+-- A message is identified by (boot_id, uptime_seconds). The same message reaches
+-- BigQuery twice if a chunk was re-cut; the copy from the newest chunk wins.
+deduplicated as (
+
+    select *
+    from decoded
+    qualify row_number() over (
+        partition by boot_id, uptime_seconds
+        order by uploaded_at desc, source_key desc
+    ) = 1
+
+),
+
+corrected as (
+
+    select
+        d.boot_id,
+        d.uptime_seconds,
+        d.ts as updated_at_raw,
+        {{ frostlog_corrected_at(
+            "d.ts", "d.uptime_seconds", "d.ts_synced",
+            "r.reference_ts", "r.reference_uptime_seconds") }} as updated_at,
+        d.source_key,
+        d.model,
+        d.address,
+        d.payload,
+        d.environment
+    from deduplicated d
+    left join {{ ref('stg_clock_reference') }} r using (boot_id)
+
+),
+
+-- How long a state is taken to hold: until the next report of the same cooler, at
+-- most the ten minutes after which the cooler repeats itself anyway. The last
+-- report before a silence therefore counts for ten minutes, not for the silence.
+held as (
+
+    select
+        *,
+        greatest(0.0, least(600.0, coalesce(
+            lead(uptime_seconds) over (partition by boot_id, address order by uptime_seconds)
+                - uptime_seconds,
+            600.0
+        ))) as held_seconds
+    from corrected
+
+)
+
+select
+    {{ frostlog_string_key("concat(boot_id, '/', cast(uptime_seconds as string))") }}
+        as state_update_key,
+    boot_id,
+    uptime_seconds,
+    updated_at,
+    updated_at_raw,
+    updated_at != updated_at_raw as timestamp_corrected,
+    source_key,
+    model,
+    address,
+    held_seconds,
+    payload.serial_number as serial_number,
+    payload.battery_serial_number as battery_serial_number,
+    payload.display_unit as display_unit,
+    payload.protection_level as protection_level,
+    payload.brightness as brightness,
+    payload.battery_state as battery_state,
+    payload.setpoint_celsius as setpoint_celsius,
+    payload.interior_temperature_celsius as interior_temperature_celsius,
+    payload.state_of_charge_percent as state_of_charge_percent,
+    payload.input_watts as input_watts,
+    payload.usb_a_output_watts as usb_a_output_watts,
+    payload.usb_c_output_watts as usb_c_output_watts,
+    payload.charge_watts as charge_watts,
+    payload.discharge_watts as discharge_watts,
+    payload.input_watts > 0 as external_input,
+    environment.temperature_celsius as ambient_temperature_celsius,
+    environment.humidity_percent as ambient_humidity_percent
+from held

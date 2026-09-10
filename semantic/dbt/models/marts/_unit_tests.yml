@@ -1,0 +1,98 @@
+version: 2
+
+unit_tests:
+  - name: a_new_firmware_opens_a_new_cooler_version
+    model: dim_cooler
+    description: >
+      A handshake that reports a firmware the cooler did not have before closes the
+      row that was open and opens a new one; repeating the same firmware changes
+      nothing. The first row reaches back to the first sign of the cooler, so a state
+      update recorded before the first handshake still finds its version.
+    given:
+      - input: ref('stg_cooler_negotiation')
+        rows:
+          - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.0.0', negotiated_at: '2026-09-01 00:00:00+00'}
+          - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.1.0', negotiated_at: '2026-09-05 00:00:00+00'}
+          - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.1.0', negotiated_at: '2026-09-06 00:00:00+00'}
+      - input: ref('stg_cooler_state_update')
+        rows:
+          - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-08-31 00:00:00+00'}
+    expect:
+      rows:
+        - {serial_number: 'COOLER-1', model: 'everfrost', firmware_version: '1.0.0', valid_from: '2026-08-31 00:00:00+00', valid_to: '2026-09-05 00:00:00+00', is_current: false}
+        - {serial_number: 'COOLER-1', model: 'everfrost', firmware_version: '1.1.0', valid_from: '2026-09-05 00:00:00+00', valid_to: null, is_current: true}
+
+  - name: hours_are_dense_and_energy_is_integrated_over_the_covered_seconds
+    model: fact_cooler_hourly_snapshot
+    overrides:
+      macros:
+        is_incremental: false
+    description: >
+      Watt-hours are the sum of watts times the seconds inside the hour, conditions
+      are averages weighted the same way, and an hour in which nothing was recorded
+      still gets a row, with no measures and no covered seconds.
+    given:
+      - input: ref('fact_cooler_state_update')
+        rows:
+          - {state_update_key: 'a', cooler_key: 11, battery_key: 22, updated_at: '2026-09-05 15:00:00+00', held_seconds: 600.0, state_of_charge_percent: 80, discharge_watts: 60, charge_watts: 0, input_watts: 0, usb_a_output_watts: 0, usb_c_output_watts: 0, ambient_temperature_celsius: 20.0, ambient_humidity_percent: 50.0, interior_temperature_celsius: -10, setpoint_celsius: -20, external_input: false, battery_state: 'discharging'}
+          - {state_update_key: 'b', cooler_key: 11, battery_key: 22, updated_at: '2026-09-05 15:10:00+00', held_seconds: 600.0, state_of_charge_percent: 79, discharge_watts: 0, charge_watts: 0, input_watts: 0, usb_a_output_watts: 0, usb_c_output_watts: 0, ambient_temperature_celsius: 30.0, ambient_humidity_percent: 50.0, interior_temperature_celsius: -12, setpoint_celsius: -20, external_input: false, battery_state: 'idle'}
+          - {state_update_key: 'c', cooler_key: 11, battery_key: 22, updated_at: '2026-09-05 17:30:00+00', held_seconds: 600.0, state_of_charge_percent: 78, discharge_watts: 30, charge_watts: 0, input_watts: 0, usb_a_output_watts: 0, usb_c_output_watts: 0, ambient_temperature_celsius: 22.0, ambient_humidity_percent: 50.0, interior_temperature_celsius: -14, setpoint_celsius: -20, external_input: false, battery_state: 'discharging'}
+    expect:
+      rows:
+        - {hour_key: '2026090600', date_key: 20260906, hour_of_day: 0, cooler_key: 11, covered_seconds: 1200.0, update_count: 2, discharged_watt_hours: 10.0, ambient_temperature_celsius: 25.0, state_of_charge_start_percent: 80, state_of_charge_end_percent: 79, state_of_charge_delta_percent: -1}
+        - {hour_key: '2026090601', date_key: 20260906, hour_of_day: 1, cooler_key: null, covered_seconds: 0.0, update_count: 0, discharged_watt_hours: null, ambient_temperature_celsius: null, state_of_charge_start_percent: null, state_of_charge_end_percent: null, state_of_charge_delta_percent: null}
+        - {hour_key: '2026090602', date_key: 20260906, hour_of_day: 2, cooler_key: 11, covered_seconds: 600.0, update_count: 1, discharged_watt_hours: 5.0, ambient_temperature_celsius: 22.0, state_of_charge_start_percent: 78, state_of_charge_end_percent: 78, state_of_charge_delta_percent: 0}
+
+  - name: a_pulldown_from_start_up_ends_when_the_setpoint_is_reached
+    model: fact_cooler_pulldown
+    overrides:
+      macros:
+        is_incremental: false
+    description: >
+      The first report of a boot that is 5 °C or more above the setpoint starts an
+      episode, which ends at the first report within 1 °C of the setpoint. The
+      reports after that belong to no episode.
+    given:
+      - input: ref('fact_cooler_state_update')
+        rows:
+          - {state_update_key: 's1', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:00:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: 25, state_of_charge_percent: 100, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's2', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:05:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: 5, state_of_charge_percent: 99, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's3', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:10:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: -19, state_of_charge_percent: 98, battery_state: 'discharging', external_input: false, discharge_watts: 30, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's4', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:15:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: -20, state_of_charge_percent: 98, battery_state: 'idle', external_input: false, discharge_watts: 0, charge_watts: 0, ambient_temperature_celsius: 20.0}
+    expect:
+      rows:
+        - {pulldown_key: 's1', date_key: 20260906, started_at: '2026-09-06 00:00:00+00', reached_at: '2026-09-06 00:10:00+00', ended_at: '2026-09-06 00:10:00+00', trigger: 'start_up', outcome: 'reached', interior_temperature_start_celsius: 25, setpoint_celsius: -20, state_of_charge_start_percent: 100, state_of_charge_delta_percent: -2, duration_seconds: 600.0, elapsed_seconds: 600.0, covered_seconds: 600.0, update_count: 3}
+
+  - name: lowering_the_setpoint_below_the_interior_starts_a_pulldown
+    model: fact_cooler_pulldown
+    overrides:
+      macros:
+        is_incremental: false
+    description: The trigger is what put the interior above the setpoint, not the temperature itself.
+    given:
+      - input: ref('fact_cooler_state_update')
+        rows:
+          - {state_update_key: 's1', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:00:00+00', held_seconds: 300.0, setpoint_celsius: 5, interior_temperature_celsius: 2, state_of_charge_percent: 90, battery_state: 'idle', external_input: false, discharge_watts: 0, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's2', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:05:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: 2, state_of_charge_percent: 89, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's3', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:10:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: -19, state_of_charge_percent: 88, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+    expect:
+      rows:
+        - {pulldown_key: 's2', trigger: 'setpoint_change', outcome: 'reached', started_at: '2026-09-06 00:05:00+00', reached_at: '2026-09-06 00:10:00+00', update_count: 2}
+
+  - name: a_pulldown_is_interrupted_when_the_battery_is_taken_out
+    model: fact_cooler_pulldown
+    overrides:
+      macros:
+        is_incremental: false
+    description: >
+      An episode that stops being recorded before the setpoint is reached is
+      interrupted: it has an end but no reached_at and no duration.
+    given:
+      - input: ref('fact_cooler_state_update')
+        rows:
+          - {state_update_key: 's1', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:00:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: -20, state_of_charge_percent: 90, battery_state: 'idle', external_input: false, discharge_watts: 0, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's2', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:05:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: -10, state_of_charge_percent: 89, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's3', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:10:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: -12, state_of_charge_percent: 0, battery_state: 'absent', external_input: false, discharge_watts: 0, charge_watts: 0, ambient_temperature_celsius: 20.0}
+    expect:
+      rows:
+        - {pulldown_key: 's2', trigger: 'rise', outcome: 'interrupted', started_at: '2026-09-06 00:05:00+00', reached_at: null, ended_at: '2026-09-06 00:10:00+00', duration_seconds: null, elapsed_seconds: 300.0, update_count: 2}

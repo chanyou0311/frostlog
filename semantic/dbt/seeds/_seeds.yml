@@ -1,0 +1,51 @@
+version: 2
+
+seeds:
+  - name: japanese_holidays
+    description: >
+      The national holidays of Japan for the years dim_date covers. They are announced
+      by the cabinet, not computed, so they are data. Extend the file when the next
+      year's dates are published (and dim_date's calendar_end with it).
+    config:
+      column_types:
+        holiday_date: date
+        holiday_name: string
+    columns:
+      - name: holiday_date
+        data_tests: [unique, not_null]
+
+  - name: band_celsius
+    description: >
+      The temperature bands, all of them in one file because they share their shape.
+      One model per band picks its rows out. Bounds are half-open, [lower, upper);
+      an empty bound is infinite.
+    config:
+      column_types:
+        band: string
+        band_key: int64
+        label: string
+        lower_celsius: float64
+        upper_celsius: float64
+        sort_order: int64
+
+  - name: band_percent
+    description: The percentage bands (humidity, state of charge). Half-open bounds.
+    config:
+      column_types:
+        band: string
+        band_key: int64
+        label: string
+        lower_percent: float64
+        upper_percent: float64
+        sort_order: int64
+
+  - name: band_watts
+    description: The power bands (external input, charge, discharge). Half-open bounds.
+    config:
+      column_types:
+        band: string
+        band_key: int64
+        label: string
+        lower_watts: float64
+        upper_watts: float64
+        sort_order: int64
