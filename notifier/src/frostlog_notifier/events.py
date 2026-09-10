@@ -13,6 +13,28 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
+class UploadRun(BaseModel):
+    """One upload run of the collector that shipped cooler data.
+
+    The collector's own ``upload_done`` reaches BigQuery in the run that follows
+    it, so an entry appears here only once every cooler chunk it announced is
+    loaded; that is what makes it safe to summarise a return of the car from it.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    finished_at: datetime
+    started_at: datetime | None = None
+    previous_finished_at: datetime | None = None
+    chunk_count: int = 0
+    line_count: int = 0
+
+    @property
+    def began_at(self) -> datetime:
+        """When the run started, or when it finished if the start was not recorded."""
+        return self.started_at or self.finished_at
+
+
 class SemanticUpdated(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -21,6 +43,8 @@ class SemanticUpdated(BaseModel):
     date_keys: list[int]
     raw_uploaded_at_max: datetime
     build_passed: bool
+    #: Present when this run loaded an `events` chunk; empty otherwise.
+    upload_runs: list[UploadRun] = Field(default_factory=list)
 
 
 class QualityReport(BaseModel):

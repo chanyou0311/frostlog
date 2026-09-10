@@ -47,14 +47,14 @@ def client() -> TestClient:
 
 
 def test_an_event_is_handled_and_acknowledged(client: TestClient, notifier: StubNotifier) -> None:
-    response = client.post("/events/semantic", json=envelope(SEMANTIC_UPDATED))
+    response = client.post("/events/semantic-updated", json=envelope(SEMANTIC_UPDATED))
     assert response.status_code == 200
     assert response.json()["posted"] == ["2026-09-11T12:03:00+00:00"]
     assert len(notifier.handled) == 1
 
 
 def test_a_quality_report_reaches_the_notifier(client: TestClient, notifier: StubNotifier) -> None:
-    assert client.post("/events/semantic", json=envelope(QUALITY_REPORT)).status_code == 200
+    assert client.post("/events/semantic-updated", json=envelope(QUALITY_REPORT)).status_code == 200
     assert len(notifier.handled) == 1
 
 
@@ -62,7 +62,7 @@ def test_a_quality_report_reaches_the_notifier(client: TestClient, notifier: Stu
 def test_a_message_that_cannot_be_read_is_acknowledged(
     client: TestClient, notifier: StubNotifier, body: dict[str, Any]
 ) -> None:
-    response = client.post("/events/semantic", json=body)
+    response = client.post("/events/semantic-updated", json=body)
     assert response.status_code == 200
     assert "dropped" in response.json()
     assert notifier.handled == []
@@ -72,7 +72,7 @@ def test_a_transient_failure_asks_for_a_retry(client: TestClient) -> None:
     stub = StubNotifier(error=Transient("BigQuery is unavailable"))
     app.dependency_overrides[get_notifier] = lambda: stub
     try:
-        response = client.post("/events/semantic", json=envelope(SEMANTIC_UPDATED))
+        response = client.post("/events/semantic-updated", json=envelope(SEMANTIC_UPDATED))
         assert response.status_code == 500
         assert stub.reported == []
     finally:
@@ -83,10 +83,10 @@ def test_a_defect_is_reported_and_acknowledged(client: TestClient) -> None:
     stub = StubNotifier(error=ValueError("boom"))
     app.dependency_overrides[get_notifier] = lambda: stub
     try:
-        response = client.post("/events/semantic", json=envelope(SEMANTIC_UPDATED))
+        response = client.post("/events/semantic-updated", json=envelope(SEMANTIC_UPDATED))
         # Retrying would only repeat the defect; take the message off the queue.
         assert response.status_code == 200
-        assert stub.reported[0][0] == "events/semantic"
+        assert stub.reported[0][0] == "events/semantic-updated"
     finally:
         app.dependency_overrides.clear()
 
