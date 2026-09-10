@@ -32,9 +32,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # semantic builds from the repository root (it bakes in contracts/);
+          # notifier is self-contained in its own directory.
           - service: frostlog-semantic
-            context: semantic
+            dockerfile: semantic/Dockerfile
+            context: .
           - service: frostlog-notifier
+            dockerfile: notifier/Dockerfile
             context: notifier
     steps:
       - uses: actions/checkout@v7
@@ -54,8 +58,7 @@ jobs:
         env:
           IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ matrix.service }}
         run: |
-          # The contracts are baked into both images (datacontract test, load schema).
-          docker build -f ${{ matrix.context }}/Dockerfile -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
+          docker build -f ${{ matrix.dockerfile }} -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" ${{ matrix.context }}
           docker push "$IMAGE:${{ github.sha }}"
           docker push "$IMAGE:latest"
 

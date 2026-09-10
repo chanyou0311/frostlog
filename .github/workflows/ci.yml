@@ -101,10 +101,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        context: [semantic, notifier]
+        include:
+          - dockerfile: semantic/Dockerfile
+            context: . # bakes in contracts/
+          - dockerfile: notifier/Dockerfile
+            context: notifier
     steps:
       - uses: actions/checkout@v7
-      - run: docker build -f ${{ matrix.context }}/Dockerfile .
+      - run: docker build -f ${{ matrix.dockerfile }} ${{ matrix.context }}
 
   # What needs BigQuery: the sample chunks are loaded into the CI dataset, the
   # dbt project is built and unit-tested there, and the semantic contract is
