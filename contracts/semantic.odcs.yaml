@@ -69,7 +69,7 @@ schema:
         primaryKey: true
         required: true
         unique: true
-        description: Surrogate key (hash of boot_id and uptime_seconds).
+        description: Surrogate key, a stable hash of the natural key (boot_id and uptime_seconds). It does not depend on the timestamp, so correcting one never changes it.
       - name: cooler_key
         logicalType: integer
         physicalType: INT64
@@ -84,8 +84,13 @@ schema:
         logicalType: integer
         physicalType: INT64
         required: true
-        partitioned: true
         description: dim_date key (JST date of updated_at, yyyymmdd).
+      - name: partition_date
+        logicalType: date
+        physicalType: DATE
+        required: true
+        partitioned: true
+        description: The same JST date as a DATE. BigQuery partitions on a column rather than on an expression, so this is the partitioning column.
       - name: updated_at
         logicalType: timestamp
         physicalType: TIMESTAMP
@@ -125,11 +130,14 @@ schema:
         logicalType: string
         physicalType: STRING
         required: true
-        description: idle, charging, discharging or absent.
+        description: >
+          idle, charging, discharging, full or absent. `full` is charging finished:
+          the cooler on external power at 100 % with nothing flowing either way.
         enum:
           - value: idle
           - value: charging
           - value: discharging
+          - value: full
           - value: absent
       - name: display_unit
         logicalType: string
@@ -303,8 +311,13 @@ schema:
         logicalType: integer
         physicalType: INT64
         required: true
-        partitioned: true
         description: dim_date key (JST).
+      - name: partition_date
+        logicalType: date
+        physicalType: DATE
+        required: true
+        partitioned: true
+        description: The JST date of hour_started_at as a DATE; the partitioning column.
       - name: hour_of_day
         logicalType: integer
         physicalType: INT64
@@ -441,13 +454,23 @@ schema:
       - name: energy_matches_state_updates
         type: sql
         dimension: consistency
-        description: Total discharged Wh agrees with the integration over fact_cooler_state_update (within 1 Wh per day of rounding).
+        description: >
+          Every watt-hour of fact_cooler_state_update is allocated to some hour and to
+          no more than one (within 1 Wh of rounding). Compared over the whole table,
+          not per date: a held interval that straddles midnight JST is split between
+          two dates here and belongs wholly to the update's date there.
         query: >
           SELECT COUNT(*) FROM (
-            SELECT h.date_key, SUM(h.discharged_watt_hours) AS hourly,
-                   (SELECT SUM(discharge_watts * held_seconds / 3600) FROM fact_cooler_state_update s WHERE s.date_key = h.date_key) AS atomic
-            FROM {model} h GROUP BY h.date_key
-          ) WHERE ABS(hourly - atomic) > 1
+            SELECT
+              (SELECT SUM(discharged_watt_hours) FROM {model}) AS hourly_discharged,
+              (SELECT SUM(charged_watt_hours) FROM {model}) AS hourly_charged,
+              (SELECT SUM(input_watt_hours) FROM {model}) AS hourly_input,
+              (SELECT SUM(discharge_watts * held_seconds / 3600) FROM fact_cooler_state_update) AS atomic_discharged,
+              (SELECT SUM(charge_watts * held_seconds / 3600) FROM fact_cooler_state_update) AS atomic_charged,
+              (SELECT SUM(input_watts * held_seconds / 3600) FROM fact_cooler_state_update) AS atomic_input
+          ) WHERE ABS(hourly_discharged - atomic_discharged) > 1
+             OR ABS(hourly_charged - atomic_charged) > 1
+             OR ABS(hourly_input - atomic_input) > 1
         mustBe: 0
       - name: hourly_energy_plausible
         type: sql
@@ -473,7 +496,7 @@ schema:
         primaryKey: true
         required: true
         unique: true
-        description: Surrogate key (hash of the starting state update).
+        description: Surrogate key, the key of the state update that opened the episode (itself a stable hash of its natural key).
       - name: cooler_key
         logicalType: integer
         physicalType: INT64
@@ -488,8 +511,13 @@ schema:
         logicalType: integer
         physicalType: INT64
         required: true
-        partitioned: true
         description: dim_date key of started_at (JST).
+      - name: partition_date
+        logicalType: date
+        physicalType: DATE
+        required: true
+        partitioned: true
+        description: The JST date of started_at as a DATE; the partitioning column.
       - name: started_at
         logicalType: timestamp
         physicalType: TIMESTAMP
@@ -632,7 +660,7 @@ schema:
         primaryKey: true
         required: true
         unique: true
-        description: Surrogate key.
+        description: Surrogate key, a stable hash of the natural key (serial number and version), so rebuilding the dimension never moves it under a fact that was not rebuilt.
       - name: serial_number
         logicalType: string
         physicalType: STRING
@@ -697,6 +725,7 @@ schema:
         primaryKey: true
         required: true
         unique: true
+        description: Surrogate key, a stable hash of the natural key (serial number); 0 on the absent row.
       - name: serial_number
         logicalType: string
         physicalType: STRING
@@ -762,7 +791,7 @@ schema:
   - name: band_setpoint
     physicalName: band_setpoint
     logicalType: object
-    description: Setpoint bands. Initial values 冷凍 (< 0 °C) and 冷蔵 (≥ 0 °C).
+    description: Setpoint bands, half-open [lower, upper). Initial values 冷凍 (< 0 °C) and 冷蔵 (0 °C and above).
     properties: &band_celsius
       - name: band_key
         logicalType: integer
@@ -791,22 +820,22 @@ schema:
   - name: band_ambient_temperature
     physicalName: band_ambient_temperature
     logicalType: object
-    description: Cabin temperature bands. Initial values 5 °C steps from < 5 to ≥ 40.
+    description: Cabin temperature bands, half-open [lower, upper). Initial values < 5 / 5..10 / 10..15 / 15..20 / 20..25 / 25..30 / 30..35 / 35..40 / ≥ 40 °C.
     properties: *band_celsius
   - name: band_interior_temperature
     physicalName: band_interior_temperature
     logicalType: object
-    description: Interior temperature bands. Initial values ≤ −18 / −18..−15 / −15..−5 / −5..5 / 5..15 / ≥ 15.
+    description: Interior temperature bands, half-open [lower, upper). Initial values < −18 / −18..−15 / −15..−5 / −5..5 / 5..15 / ≥ 15 °C.
     properties: *band_celsius
   - name: band_interior_delta
     physicalName: band_interior_delta
     logicalType: object
-    description: Bands of interior temperature minus setpoint (how far above target). Initial values ≤ 0 / 0..2 / 2..5 / 5..10 / 10..20 / ≥ 20.
+    description: Bands of interior temperature minus setpoint (how far above target), half-open [lower, upper). Initial values < 0 / 0..2 / 2..5 / 5..10 / 10..20 / ≥ 20 °C.
     properties: *band_celsius
   - name: band_humidity
     physicalName: band_humidity
     logicalType: object
-    description: Humidity bands, 20 % steps.
+    description: Humidity bands, half-open [lower, upper). Initial values < 20 / 20..40 / 40..60 / 60..80 / ≥ 80 %.
     properties: &band_percent
       - name: band_key
         logicalType: integer
@@ -833,12 +862,12 @@ schema:
   - name: band_state_of_charge
     physicalName: band_state_of_charge
     logicalType: object
-    description: State of charge bands. Initial values < 20 / 20..50 / 50..80 / 80..95 / ≥ 95.
+    description: State of charge bands, half-open [lower, upper). Initial values < 20 / 20..50 / 50..80 / 80..95 / ≥ 95 %.
     properties: *band_percent
   - name: band_input_power
     physicalName: band_input_power
     logicalType: object
-    description: External input power bands. Initial values 0 / < 10 / 10..40 / 40..70 / ≥ 70 W.
+    description: External input power bands, half-open [lower, upper). Initial values < 1 (labelled 0 W, the cooler reports whole watts) / 1..10 / 10..40 / 40..70 / ≥ 70 W.
     properties: &band_watts
       - name: band_key
         logicalType: integer
@@ -865,12 +894,12 @@ schema:
   - name: band_charge_power
     physicalName: band_charge_power
     logicalType: object
-    description: Battery charge power bands. Initial values 0 / < 10 / 10..30 / 30..60 / ≥ 60 W.
+    description: Battery charge power bands, half-open [lower, upper). Initial values < 1 (labelled 0 W) / 1..10 / 10..30 / 30..60 / ≥ 60 W.
     properties: *band_watts
   - name: band_discharge_power
     physicalName: band_discharge_power
     logicalType: object
-    description: Battery discharge power bands. Initial values 0 / < 10 / 10..30 / 30..50 / ≥ 50 W.
+    description: Battery discharge power bands, half-open [lower, upper). Initial values < 1 (labelled 0 W) / 1..10 / 10..30 / 30..50 / ≥ 50 W.
     properties: *band_watts
 
   # ---------------------------------------------------------------- events
@@ -902,7 +931,40 @@ schema:
       - name: build_passed
         logicalType: boolean
         required: true
-        description: True when dbt build (schema enforcement, not-null, unique) passed; false runs publish no data change.
+        description: Always true in this version (reserved). A run whose dbt build failed publishes no event at all; it answers 500 and is delivered again.
+      - name: upload_runs
+        logicalType: array
+        required: false
+        description: >
+          The collector's upload runs this event's chunk reported as finished; empty
+          unless the chunk was an events chunk. The upload_done of a run reaches the
+          bucket in the following run, so by the time it is here every cooler chunk of
+          that run is loaded. A run whose started_at is 2 h or more after
+          previous_finished_at is a return of the car: everything recorded while it was
+          away came in with it.
+        items:
+          logicalType: object
+          properties:
+            - name: finished_at
+              logicalType: timestamp
+              required: true
+              description: When the upload run finished (the upload_done event).
+            - name: started_at
+              logicalType: timestamp
+              required: false
+              description: When the same boot's upload run started (the upload_started before it).
+            - name: previous_finished_at
+              logicalType: timestamp
+              required: false
+              description: When the upload run before this one finished, whichever boot it belonged to.
+            - name: chunk_count
+              logicalType: integer
+              required: true
+              description: Chunks put in the bucket by this run.
+            - name: line_count
+              logicalType: integer
+              required: true
+              description: Lines shipped by this run.
   - name: quality_report
     physicalName: quality_report
     logicalType: object
@@ -964,8 +1026,8 @@ customProperties:
     value: additive-only
     description: Columns, tables and event fields may be added. Renaming, removing or re-typing a column, or changing its meaning, bumps the major version and is published as a new dbt model version.
   - property: rebuildRule
-    value: by-date-partition
-    description: Each arrival rebuilds the date partitions the new raw chunks belong to; a full rebuild is always possible.
+    value: by-arrived-boot
+    description: Each arrival rebuilds every row of every boot its chunks touched, and the JST dates those rows fall on now or fell on before their timestamps were corrected; a full rebuild is always possible.
   - property: rules
     value: "held_seconds cap 600 s; ts correction from the first NTP-synced update of the same boot; pull-down start = interior >= setpoint + 5 C, reached = interior <= setpoint + 1 C, first update after >= 15 min silence counts as start_up; hourly rows are dense over JST hours; band joins are half-open [lower, upper)"
   - property: estimatesNotStored
