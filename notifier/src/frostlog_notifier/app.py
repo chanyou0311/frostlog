@@ -1,0 +1,72 @@
+"""The Cloud Run service: a Pub/Sub push endpoint and the Monday job.
+
+Answers are chosen for the sender, not for the reader: Pub/Sub gets 200 for
+anything a retry cannot fix (a malformed message, a defect that would repeat)
+and 500 only when the failure is transient, so redelivery has a point.
+"""
+
+import logging
+from typing import Any
+
+from fastapi import Depends, FastAPI, Request, Response
+from fastapi.responses import JSONResponse
+
+from frostlog_notifier import service
+from frostlog_notifier.errors import Transient
+from frostlog_notifier.events import Undecodable, parse
+from frostlog_notifier.service import Notifier
+
+log = logging.getLogger(__name__)
+
+app = FastAPI(title="frostlog-notifier")
+
+_notifier: Notifier | None = None
+
+
+def get_notifier() -> Notifier:
+    """The service's own notifier, built on first use (tests override this)."""
+    global _notifier
+    if _notifier is None:
+        _notifier = service.build()
+    return _notifier
+
+
+@app.get("/healthz")
+def healthz() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.post("/events/semantic")
+async def events_semantic(request: Request, notifier: Notifier = Depends(get_notifier)) -> Response:
+    try:
+        event = parse(await request.json())
+    except (Undecodable, ValueError) as exc:
+        # Nothing about this message will improve on redelivery; take it off the queue.
+        log.warning("dropping an unusable message: %s", exc)
+        return _answer(200, {"posted": [], "dropped": str(exc)})
+    try:
+        posted = notifier.handle(event)
+    except Transient as exc:
+        log.warning("transient failure; asking Pub/Sub to retry: %s", exc)
+        return _answer(500, {"error": str(exc)})
+    except Exception as exc:  # a defect, not a hiccup: reported, then acknowledged
+        notifier.report_failure("events/semantic", exc)
+        return _answer(200, {"error": f"{type(exc).__name__}: {exc}"})
+    return _answer(200, {"posted": [notification.key for notification in posted]})
+
+
+@app.post("/jobs/weekly-deadline")
+def jobs_weekly_deadline(notifier: Notifier = Depends(get_notifier)) -> Response:
+    try:
+        posted = notifier.run_weekly_deadline()
+    except Transient as exc:
+        log.warning("transient failure; asking Cloud Scheduler to retry: %s", exc)
+        return _answer(500, {"error": str(exc)})
+    except Exception as exc:  # reported, then answered so the run is not lost silently
+        notifier.report_failure("jobs/weekly-deadline", exc)
+        return _answer(500, {"error": f"{type(exc).__name__}: {exc}"})
+    return _answer(200, {"posted": [notification.key for notification in posted]})
+
+
+def _answer(status: int, body: dict[str, Any]) -> Response:
+    return JSONResponse(status_code=status, content=body)

@@ -58,7 +58,7 @@ line-length = 100
 target-version = "py313"
 # The cloud services under semantic/ are their own uv project with their own
 # dependencies; the ci workflow checks them from there.
-extend-exclude = ["semantic"]
+extend-exclude = ["semantic", "notifier"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
@@ -67,7 +67,9 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 "tests/*" = ["E501"]  # captured byte sequences are long
 
 [tool.ty.src]
-exclude = ["semantic"]
+# The cloud services have their own project, environment and checks; the Pi's
+# environment does not contain their dependencies.
+exclude = ["notifier", "semantic"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
