@@ -65,7 +65,7 @@ jobs:
         run: uvx --python 3.13 --from "$DATACONTRACT_CLI" datacontract test contracts/collection.odcs.yaml --server samples
 
   # The semantic data product without a warehouse: service checks and dbt parse.
-  semantic:
+  semantics:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -73,8 +73,8 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           version: ${{ env.UV_VERSION }}
-      - run: make -C semantic install
-      - run: make -C semantic check
+      - run: make -C semantics install
+      - run: make -C semantics check
 
   # The container images must at least build; deploy.yml pushes them from main.
   images:
@@ -84,14 +84,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - dockerfile: semantic/Dockerfile
+          - dockerfile: semantics/Dockerfile
             context: . # bakes in contracts/
     steps:
       - uses: actions/checkout@v7
       - run: docker build -f ${{ matrix.dockerfile }} ${{ matrix.context }}
 
   # What needs BigQuery: the sample chunks are loaded into the CI dataset, the
-  # dbt project is built and unit-tested there, and the semantic contract is
+  # dbt project is built and unit-tested there, and the semantics contract is
   # tested against the result. Runs only once the GCP project is wired up
   # (repository variable FROSTLOG_GCP_PROJECT_NUMBER), as frostlog-ci via
   # Workload Identity Federation; one run at a time because the dataset is shared.
@@ -118,5 +118,5 @@ jobs:
         with:
           workload_identity_provider: projects/${{ vars.FROSTLOG_GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: frostlog-ci@${{ env.FROSTLOG_GCP_PROJECT }}.iam.gserviceaccount.com
-      - run: make -C semantic install
-      - run: make -C semantic ci-warehouse
+      - run: make -C semantics install
+      - run: make -C semantics ci-warehouse

@@ -43,14 +43,14 @@ v1 より前に記録したファイルは `scripts/migrate_raw_v1.py` で契約
 一度でも動かした後には実行できない（バケット上のチャンク名が指す行が変わってしまう）。スクリプトは
 同じ理由で `<DIR>/.upload-cache.json` を削除し、最後に処理件数の 1 行を出す。
 
-## semantic/
+## semantics/
 
 バケットに届いた JSONL を BigQuery に取り込み、dbt でディメンショナルモデルに変換する
-Cloud Run サービス（`frostlog-semantic`）。`semantic/service` が Python、`semantic/dbt` が
-dbt プロジェクト、スキーマの取り決めは `contracts/semantic.odcs.yaml`。
+Cloud Run サービス（`frostlog-semantics`）。`semantics/service` が Python、`semantics/dbt` が
+dbt プロジェクト、スキーマの取り決めは `contracts/semantics.odcs.yaml`。
 
 ```sh
-cd semantic
+cd semantics
 make install        # service の uv プロジェクト（dbt と datacontract-cli を含む）
 make check          # ruff / ty / pytest / dbt parse — BigQuery なしで通る
 make build          # 全期間を作り直す（BigQuery が要る）
@@ -58,9 +58,9 @@ make unit-test      # dbt のユニットテスト（同上）
 make ci-warehouse   # contracts/samples から CI データセットを作り直して契約を検査する
 ```
 
-設定は環境変数（Terraform が Cloud Run に与える）。`FROSTLOG_RAW_BUCKET`（これ以外の
+設定は環境変数（Terraform が Cloud Run に与える）。`FROSTLOG_COLLECTION_BUCKET`（これ以外の
 バケットのイベントは無視する）、`FROSTLOG_BQ_DATASET`、`FROSTLOG_BQ_DATASET_CI`、
-`FROSTLOG_SEMANTIC_UPDATED_TOPIC`（トピックの短い名前）、`FROSTLOG_GCP_PROJECT`（省略時は
+`FROSTLOG_EVENTS_TOPIC`（トピックの短い名前）、`FROSTLOG_GCP_PROJECT`（省略時は
 Application Default Credentials のプロジェクト）。healthchecks.io の URL とバケットの HMAC 鍵は
 Secret Manager にあり、`FROSTLOG_CONTRACT_TEST_HEALTHCHECK_URL_SECRET` と
-`FROSTLOG_RAW_HMAC_SECRET` にはその名前だけを渡す（読めなければ ping と raw 契約の検査を飛ばす）。
+`FROSTLOG_COLLECTION_HMAC_SECRET` にはその名前だけを渡す（読めなければ ping と raw 契約の検査を飛ばす）。
