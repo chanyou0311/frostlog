@@ -1,14 +1,14 @@
-# Data contract 1: the collection data product (frostlog raw).
+# Data contract 1: the collection data product (frostlog collection).
 # Open Data Contract Standard v3.2. Source of truth for what the Raspberry Pi
-# ships to the raw bucket; the semantic data product is the only consumer.
+# ships to its bucket; the semantics data product is the only consumer.
 apiVersion: v3.2.0
 kind: DataContract
-id: frostlog-raw
-name: frostlog raw
+id: frostlog-collection
+name: frostlog collection
 version: 1.0.0
 status: draft
 domain: frostlog
-dataProduct: frostlog-raw
+dataProduct: frostlog-collection
 tenant: chanyou
 
 description:
@@ -18,7 +18,7 @@ description:
     the cabin temperature and humidity measured at the same moment, and the operational
     events of the collector itself. Nothing is aggregated, filtered or corrected.
   usage: >
-    Read by the semantic data product (frostlog-semantic) to build the dimensional model.
+    Read by the semantic data product (frostlog-semantics) to build the dimensional model.
     A row's original — `frames`, and `plain` where decryption verified — is never
     rewritten. What a row means may be revised: an interpretation error is fixed
     downstream by reading those bytes again, and a message type that becomes decodable
@@ -44,12 +44,12 @@ servers:
       `end` (byte offsets) and `uploaded-at` (RFC 3339). Layout:
       v1/{stream}/dt=YYYY-MM-DD/{offset:012d}.jsonl.gz, dt = UTC date of `ts`.
     endpointUrl: https://storage.googleapis.com
-    location: s3://chanyou-frostlog-raw/v1/{model}/dt=*/*.jsonl.gz
+    location: s3://chanyou-frostlog-collection/v1/{model}/dt=*/*.jsonl.gz
     format: json
     delimiter: new_line
     customProperties:
       - property: bucket
-        value: chanyou-frostlog-raw
+        value: chanyou-frostlog-collection
       - property: region
         value: us-central1
       - property: objectLayout
@@ -64,7 +64,7 @@ servers:
       each stream, as the Pi writes it. They are kept uncompressed because
       datacontract-cli reads only plain `.json` files from a local server; the chunks
       in the bucket are the same lines gzipped.
-    path: contracts/samples/raw/{model}/*.json
+    path: contracts/samples/collection/{model}/*.json
     format: json
     delimiter: new_line
 

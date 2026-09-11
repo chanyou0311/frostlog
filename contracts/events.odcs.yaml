@@ -1,20 +1,21 @@
-# Data contract for the events the semantic data product publishes on Pub/Sub.
-# Same product as contracts/semantic.odcs.yaml (the BigQuery tables); kept in its own
-# file because datacontract-cli tests every schema object of a contract against the
-# selected server, and events are not tables.
+# Data contract for the Pub/Sub topic the frostlog components announce themselves on.
+# Not one product's output: `semantic_updated` comes from the semantics transform,
+# `quality_report` from the contract-test job, and one consumer reads both off one
+# subscription. Its own file because datacontract-cli tests every schema object of a
+# contract against the selected server, and events are not tables.
 apiVersion: v3.2.0
 kind: DataContract
-id: frostlog-semantic-events
-name: frostlog semantic events
+id: frostlog-events
+name: frostlog events
 version: 1.0.0
 status: draft
 domain: frostlog
-dataProduct: frostlog-semantic
+dataProduct: frostlog-events
 tenant: chanyou
 
 description:
   purpose: >
-    Tell consumers when the semantic tables changed (semantic_updated) and what the daily
+    Tell consumers when the semantics tables changed (semantic_updated) and what the daily
     contract tests found (quality_report), so they react to new data without polling.
   usage: >
     Consumed by frostlog-notifier through a Pub/Sub push subscription. Message bodies are
@@ -29,7 +30,7 @@ servers:
     environment: production
     description: Pub/Sub topic carrying the semantic_updated and quality_report events.
     project: chanyou-frostlog
-    topic: frostlog-semantic-updated
+    topic: frostlog-events
 
 schema:
   - name: semantic_updated
@@ -104,7 +105,7 @@ schema:
     logicalType: object
     description: >
       Event published on the same topic by the daily contract test run: the result of
-      testing this contract and the raw contract against production data.
+      testing this contract and the collection contract against production data.
     dataGranularityDescription: One daily contract test run.
     properties:
       - name: event
@@ -121,7 +122,7 @@ schema:
       - name: contract_id
         logicalType: string
         required: true
-        description: frostlog-raw or frostlog-semantic.
+        description: frostlog-collection or frostlog-semantics.
       - name: passed
         logicalType: boolean
         required: true

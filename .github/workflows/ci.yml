@@ -31,9 +31,9 @@ jobs:
       - run: uv run ty check
       - run: uv run pytest
 
-  # The two data contracts are the source of truth; nothing is generated from
+  # The three data contracts are the source of truth; nothing is generated from
   # them, so they are checked directly: well-formed, no breaking change against
-  # main, and the raw contract holds for the sample chunks built from real messages.
+  # main, and the collection contract holds for the sample chunks built from real messages.
   contracts:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -61,5 +61,5 @@ jobs:
               echo "$path is not on main yet; nothing to compare against"
             fi
           done
-      - name: datacontract test (raw contract vs sample chunks)
-        run: uvx --python 3.13 --from "$DATACONTRACT_CLI" datacontract test contracts/raw.odcs.yaml --server samples
+      - name: datacontract test (collection contract vs sample chunks)
+        run: uvx --python 3.13 --from "$DATACONTRACT_CLI" datacontract test contracts/collection.odcs.yaml --server samples

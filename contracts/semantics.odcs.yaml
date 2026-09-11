@@ -1,15 +1,15 @@
-# Data contract 2: the semantic data product (frostlog semantic).
+# Data contract 2: the semantic data product (frostlog semantics).
 # Open Data Contract Standard v3.2. A Kimball dimensional model of one business
 # process, "冷蔵庫の運転" (cooler operation), built from the raw data product
-# (contracts/raw.odcs.yaml) and consumed by the Slack notification application.
+# (contracts/collection.odcs.yaml) and consumed by the Slack notification application.
 apiVersion: v3.2.0
 kind: DataContract
-id: frostlog-semantic
-name: frostlog semantic
+id: frostlog-semantics
+name: frostlog semantics
 version: 1.0.0
 status: draft
 domain: frostlog
-dataProduct: frostlog-semantic
+dataProduct: frostlog-semantics
 tenant: chanyou
 
 description:
@@ -20,7 +20,7 @@ description:
     under given conditions, and how long the interior takes to reach the setpoint.
   usage: >
     Read by frostlog-notifier (Slack digests) and by ad-hoc analysis. Consumers depend
-    only on the tables listed here and on the events of contracts/semantic-events.odcs.yaml
+    only on the tables listed here and on the events of contracts/events.odcs.yaml
     (the same data product, published on Pub/Sub); the raw bytes are never needed downstream.
     Estimates (next-morning level, hours left, next pull-down time) are not stored: they
     are computed by consumers from these actuals.
@@ -297,7 +297,7 @@ schema:
           reflected, and a chunk of which only some reports were loaded is caught. About
           arrival and reflection, not about how old the observations are: a trip's data
           arrives days after it was recorded and passes once loaded. Whether raw arrives at
-          all is the collector's healthcheck (contracts/raw.odcs.yaml, timeliness).
+          all is the collector's healthcheck (contracts/collection.odcs.yaml, timeliness).
         query: >
           SELECT COUNT(*) FROM (
             SELECT DISTINCT r.boot_id, r.uptime_seconds
