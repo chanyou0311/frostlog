@@ -35,7 +35,9 @@ def read_loop(
             reading = sensor.read()
         except SensorError as exc:
             log.warning("%s", exc)
-            yield records.event("ambient_read_failed", sensor=sensor.name, error=str(exc))
+            yield records.event("environment_read_failed", sensor=sensor.name, error=str(exc))
         else:
-            yield records.ambient(sensor.name, reading.temp_c, reading.humidity_pct)
+            yield records.ambient(
+                sensor.name, reading.temperature_celsius, reading.humidity_percent
+            )
         done += 1

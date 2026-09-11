@@ -26,10 +26,14 @@ fi
 
 mkdir -p "$config_dir/systemd/user"
 install -m 644 scripts/systemd/* "$config_dir/systemd/user/"
+# The environment sensor is read with every cooler message now; its own service is gone.
+if [ -f "$config_dir/systemd/user/frostlog-ambient@.service" ]; then
+  systemctl --user disable --now 'frostlog-ambient@*.service' || true
+  rm -f "$config_dir/systemd/user/frostlog-ambient@.service"
+fi
 systemctl --user daemon-reload
 loginctl enable-linger "$USER"
-systemctl --user enable --now frostlog-ambient@dht20.service frostlog-cooler.service frostlog-upload.timer
-# Pick up new code. frostlog-cooler stays skipped until FROSTLOG_COOLER_ADDRESS is set;
-# further sensors are enabled once by hand: systemctl --user enable --now frostlog-ambient@am2320
-systemctl --user restart 'frostlog-ambient@*.service' frostlog-cooler.service
+systemctl --user enable --now frostlog-cooler.service frostlog-upload.timer
+# Pick up new code. frostlog-cooler stays skipped until FROSTLOG_COOLER_ADDRESS is set.
+systemctl --user restart frostlog-cooler.service
 systemctl --user --no-pager --no-legend list-units 'frostlog-*'

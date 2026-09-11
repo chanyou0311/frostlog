@@ -1,4 +1,4 @@
-"""The two S3 operations the uploader needs: HEAD and PUT of one object."""
+"""The S3 operations the uploader needs: LIST under a prefix, HEAD and PUT of one object."""
 
 from typing import Protocol
 
@@ -12,17 +12,25 @@ class Offline(Exception):
     """The bucket cannot be connected to at all (the Pi is away from home).
 
     Only failures to connect count; errors after connecting (timeouts, closed
-    connections) are ordinary per-object failures, so the other objects are
-    still tried.
+    connections) are ordinary per-file failures, so the other files are still
+    tried.
     """
 
 
 class ObjectStore(Protocol):
-    def head(self, key: str) -> int | None:
-        """The size of the object in bytes, or ``None`` if there is no such object."""
+    #: Which bucket this is (endpoint and name). Upload state derived from one bucket
+    #: says nothing about another, so what is cached between runs is tied to this.
+    location: str
+
+    def list(self, prefix: str) -> list[str]:
+        """The keys of all objects whose key starts with ``prefix``."""
         ...
 
-    def put(self, key: str, data: bytes) -> None: ...
+    def head(self, key: str) -> dict[str, str] | None:
+        """The user metadata of the object, or ``None`` if there is no such object."""
+        ...
+
+    def put(self, key: str, data: bytes, metadata: dict[str, str]) -> None: ...
 
 
 class S3ObjectStore:
@@ -32,6 +40,7 @@ class S3ObjectStore:
         self, endpoint: str, bucket: str, access_key_id: str, secret_access_key: str
     ) -> None:
         self._bucket = bucket
+        self.location = f"{endpoint.rstrip('/')}/{bucket}"
         self._client = boto3.client(
             "s3",
             endpoint_url=endpoint,
@@ -45,7 +54,17 @@ class S3ObjectStore:
             ),
         )
 
-    def head(self, key: str) -> int | None:
+    def list(self, prefix: str) -> list[str]:
+        keys: list[str] = []
+        try:
+            paginator = self._client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+                keys.extend(item["Key"] for item in page.get("Contents", []))
+        except TransportError as exc:
+            raise Offline(str(exc)) from exc
+        return keys
+
+    def head(self, key: str) -> dict[str, str] | None:
         try:
             response = self._client.head_object(Bucket=self._bucket, Key=key)
         except ClientError as exc:
@@ -54,12 +73,16 @@ class S3ObjectStore:
             raise
         except TransportError as exc:
             raise Offline(str(exc)) from exc
-        return int(response["ContentLength"])
+        return dict(response.get("Metadata", {}))
 
-    def put(self, key: str, data: bytes) -> None:
+    def put(self, key: str, data: bytes, metadata: dict[str, str]) -> None:
         try:
             self._client.put_object(
-                Bucket=self._bucket, Key=key, Body=data, ContentType="application/x-ndjson"
+                Bucket=self._bucket,
+                Key=key,
+                Body=data,
+                ContentType="application/gzip",
+                Metadata=metadata,
             )
         except TransportError as exc:
             raise Offline(str(exc)) from exc

@@ -3,9 +3,10 @@
 The Pi has no RTC and is offline in the car, so the wall clock may be wrong
 until NTP catches up. Every record therefore also carries the seconds since
 boot (``CLOCK_BOOTTIME``, which keeps counting through suspend) and an
-identifier of the boot. Together they order records exactly, and the true
-time of every record of a boot can be recovered later from any record that
-was written after the clock had been set.
+identifier of the boot, plus whether the clock had been synchronized when
+the record was made. Together they order records exactly, and the true time
+of every record of a boot can be recovered later from any record that was
+written after the clock had been set.
 """
 
 import functools
@@ -15,6 +16,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 _BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
+# systemd-timesyncd creates this file once the clock has been set from NTP.
+_SYNCED_PATH = Path("/run/systemd/timesync/synchronized")
 _BOOTTIME = getattr(time, "CLOCK_BOOTTIME", time.CLOCK_MONOTONIC)
 
 
@@ -24,6 +27,11 @@ def now() -> datetime:
 
 def uptime() -> float:
     return time.clock_gettime(_BOOTTIME)
+
+
+def synced() -> bool:
+    """Whether the wall clock has been set from NTP since boot (``ts`` can be trusted)."""
+    return _SYNCED_PATH.exists()
 
 
 @functools.cache

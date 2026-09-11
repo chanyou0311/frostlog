@@ -1,10 +1,10 @@
 [Unit]
-Description=frostlog: upload every 30 minutes
+Description=frostlog: upload every 5 minutes
 
 [Timer]
 OnBootSec=3min
-OnUnitActiveSec=30min
-RandomizedDelaySec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
 Unit=frostlog-upload.service
 
 [Install]

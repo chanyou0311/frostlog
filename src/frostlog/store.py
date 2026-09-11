@@ -22,8 +22,7 @@ class Store:
         self._files: dict[Path, IO[str]] = {}
 
     def path_for(self, record: Record) -> Path:
-        day = record.ts.strftime("%Y-%m-%d")
-        return self.root / records.stream_dir(record) / f"{day}.jsonl"
+        return path_for(self.root, record)
 
     def append(self, record: Record) -> None:
         path = self.path_for(record)
@@ -59,6 +58,32 @@ def _open_for_append(path: Path) -> IO[str]:
     if size and os.pread(file.fileno(), 1, size - 1) != b"\n":
         file.write("\n")
     return file
+
+
+def path_for(root: Path, record: Record) -> Path:
+    """The day file a record belongs in: ``<root>/<stream>/<YYYY-MM-DD>.jsonl``."""
+    return root / records.stream_dir(record) / f"{record.ts.strftime('%Y-%m-%d')}.jsonl"
+
+
+def append_line(root: Path, record: Record) -> None:
+    """Append one record to its day file in a single write, without holding the file open.
+
+    For the odd record written by a program whose job is something else (the
+    uploader's own events): ``O_APPEND`` puts one whole line at the end of the
+    file even while the recorder is writing to it.
+    """
+    path = path_for(root, record)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Readable as well, to see whether the last line is whole; O_APPEND still writes at the end.
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        size = os.fstat(descriptor).st_size
+        data = records.line(record).encode("utf-8")
+        if size and os.pread(descriptor, 1, size - 1) != b"\n":
+            data = b"\n" + data  # the last line was torn: do not weld this one onto it
+        os.write(descriptor, data)
+    finally:
+        os.close(descriptor)
 
 
 def list_files(root: Path) -> list[Path]:

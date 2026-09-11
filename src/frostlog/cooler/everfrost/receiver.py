@@ -1,10 +1,16 @@
-"""Keep a connection to the EverFrost and record every message it sends, as is.
+"""Keep a connection to the EverFrost and record every message it sends.
 
 Each notification becomes one ``cooler`` record (fragments are joined first).
-The record keeps the raw notification bytes, the header fields, and, once the
-session is encrypted, the decrypted payload, so that a later decoder can work
-from the files alone. Connection and negotiation milestones are ``event``
-records. No meaning is assigned here and nothing on the cooler is changed.
+The record keeps the raw notification bytes, the header fields, the message body
+in the clear where it could be read, the decoded values of the message types
+whose meaning is known, and the air around the Pi as it was measured at that
+moment. The encrypted payload itself is not repeated: it is a pure function of
+the notification bytes. Connection and negotiation milestones are ``event``
+records. Nothing on the cooler is changed.
+
+A cooler that stops sending without dropping the link would look like a cooler
+that is doing nothing; after 15 minutes of silence the link is dropped so the
+usual reconnect can prove the difference.
 """
 
 import asyncio
@@ -13,8 +19,10 @@ import logging
 from typing import Any
 
 from frostlog import clock, records
+from frostlog.ambient.sampler import EnvironmentSampler
 from frostlog.cooler.base import Sink
 from frostlog.cooler.everfrost import MODEL, ble, handshake
+from frostlog.cooler.everfrost.decoder import CMD_STATE, decode_state
 from frostlog.cooler.everfrost.protocol import (
     PATTERN_NEGOTIATION,
     FragmentError,
@@ -25,6 +33,9 @@ from frostlog.cooler.everfrost.protocol import (
 )
 
 log = logging.getLogger(__name__)
+
+#: Silence from a connected cooler that means the link is no longer worth keeping.
+SILENCE_TIMEOUT = 900.0
 
 
 async def _wait(stop: asyncio.Event, seconds: float) -> None:
@@ -38,22 +49,27 @@ class EverfrostReceiver:
         sink: Sink,
         address: str,
         duration: float | None = None,
+        environment: EnvironmentSampler | None = None,
         scan_timeout: float = 10.0,
         reconnect_delay: float = 5.0,
         negotiation_timeout: float = 15.0,
+        silence_timeout: float = SILENCE_TIMEOUT,
     ) -> None:
         self._sink = sink
         self._address = address
         self._duration = duration
+        self._environment = environment
         self._scan_timeout = scan_timeout
         self._reconnect_delay = reconnect_delay
         self._negotiation_timeout = negotiation_timeout
+        self._silence_timeout = silence_timeout
 
     def _event(self, kind: str, **fields: Any) -> None:
         self._sink(records.event(kind, **fields))
 
-    def _message(self, payload: dict[str, Any]) -> None:
-        self._sink(records.cooler(MODEL, payload))
+    async def _message(self, address: str, frames: list[str], **fields: Any) -> None:
+        environment = await self._environment.sample() if self._environment is not None else None
+        self._sink(records.cooler(MODEL, address, frames, environment=environment, **fields))
 
     async def run(self, stop: asyncio.Event) -> None:
         deadline = clock.uptime() + self._duration if self._duration is not None else None
@@ -96,7 +112,7 @@ class EverfrostReceiver:
         self, session: ble.Session, stop: asyncio.Event, deadline: float | None
     ) -> None:
         state = _SessionState(handshake.SolixHandshake())
-        last_seen = clock.uptime()
+        last_seen = last_message = clock.uptime()
         for frame in state.handshake.start():
             await session.write(frame)
         while (
@@ -106,9 +122,12 @@ class EverfrostReceiver:
         ):
             data = await session.next_notification(timeout=1.0)
             if data is not None:
-                last_seen = clock.uptime()
+                last_seen = last_message = clock.uptime()
                 await self._handle(data, session, state)
                 continue
+            if clock.uptime() - last_message >= self._silence_timeout:
+                self._event("ble_silent", address=session.address)
+                break  # disconnect; the reconnect proves whether the cooler is still there
             if state.handshake.done or clock.uptime() - last_seen < self._negotiation_timeout:
                 continue
             # The handshake is open and the device has said nothing for a while. A
@@ -123,44 +142,40 @@ class EverfrostReceiver:
                 await session.write(frame)
             last_seen = clock.uptime()
         for key, notifications in state.reassembler.pending().items():
-            self._message(
-                {
-                    "pattern": key[:3].hex(),
-                    "cmd": key[3:].hex(),
-                    "frames": _hex(notifications),
-                    "error": "incomplete",
-                }
+            await self._message(
+                session.address,
+                _hex(notifications),
+                pattern=key[:3].hex(),
+                cmd=key[3:].hex(),
+                error="incomplete",
             )
 
     async def _handle(self, data: bytes, session: ble.Session, state: "_SessionState") -> None:
         try:
             frame = parse_frame(data)
         except ProtocolError as exc:
-            self._message({"frames": [data.hex()], "error": str(exc)})
+            await self._message(session.address, [data.hex()], error=str(exc))
             return
         notifications = [data]
         if state.reassembler.is_fragment(frame, len(data), state.handshake.mtu):
             try:
                 joined = state.reassembler.add(frame, data)
             except FragmentError as exc:
-                self._message(
-                    _header(frame) | {"frames": _hex(exc.notifications), "error": str(exc)}
+                await self._message(
+                    session.address, _hex(exc.notifications), **_header(frame), error=str(exc)
                 )
                 return
             if joined is None:
                 return
             payload, notifications = joined
             frame = Frame(frame.pattern, frame.cmd, payload)
-        info = _header(frame) | {"frames": _hex(notifications), "payload": frame.payload.hex()}
-        cipher = state.handshake.cipher
-        if cipher is not None:
-            try:
-                plain, verified = cipher.decrypt(frame.payload)
-            except (ProtocolError, ValueError):
-                pass
-            else:
-                info["plain"], info["plain_verified"] = plain.hex(), verified
-        self._message(info)
+        info: dict[str, Any] = _header(frame)
+        plain = _plain(frame, state)
+        if plain is not None:
+            info["plain"] = plain.hex()
+            if frame.cmd.hex() == CMD_STATE:
+                info["payload"] = _decoded(plain)
+        await self._message(session.address, _hex(notifications), **info)
         if frame.pattern == PATTERN_NEGOTIATION:
             await self._negotiate(frame, session, state)
 
@@ -185,6 +200,31 @@ class EverfrostReceiver:
                 serial=device.serial,
                 secret=state.handshake.secret.hex() if state.handshake.secret else None,
             )
+
+
+def _plain(frame: Frame, state: "_SessionState") -> bytes | None:
+    """The message body in the clear, or ``None`` when it could not be read.
+
+    Before the session is encrypted the body is sent as it is; afterwards it is
+    decrypted, and a plaintext whose tag did not verify is not a plaintext.
+    """
+    cipher = state.handshake.cipher
+    if cipher is None:
+        return frame.payload
+    try:
+        plain, verified = cipher.decrypt(frame.payload)
+    except (ProtocolError, ValueError):
+        return None
+    return plain if verified else None
+
+
+def _decoded(plain: bytes) -> records.CoolerPayload | None:
+    try:
+        return decode_state(plain)
+    except (ProtocolError, ValueError) as exc:
+        # The bytes are kept; a decoder that learns to read them can be run over them later.
+        log.warning("state report not decoded: %s", exc)
+        return None
 
 
 def _header(frame: Frame) -> dict[str, Any]:
