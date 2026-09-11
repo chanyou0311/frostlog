@@ -1,0 +1,1035 @@
+# Data contract 2: the semantic data product (frostlog semantic).
+# Open Data Contract Standard v3.2. A Kimball dimensional model of one business
+# process, "冷蔵庫の運転" (cooler operation), built from the raw data product
+# (contracts/raw.odcs.yaml) and consumed by the Slack notification application.
+apiVersion: v3.2.0
+kind: DataContract
+id: frostlog-semantic
+name: frostlog semantic
+version: 1.0.0
+status: draft
+domain: frostlog
+dataProduct: frostlog-semantic
+tenant: chanyou
+
+description:
+  purpose: >
+    Answer, from the recorded cooler messages, how the battery level relates to the
+    conditions (interior and ambient temperature, setpoint, external input, consumption),
+    what the level and the outlook are at the end of a day, how long the battery lasts
+    under given conditions, and how long the interior takes to reach the setpoint.
+  usage: >
+    Read by frostlog-notifier (Slack digests) and by ad-hoc analysis. Consumers depend
+    only on the tables and events listed here; the raw bytes are never needed downstream.
+    Estimates (next-morning level, hours left, next pull-down time) are not stored: they
+    are computed by consumers from these actuals.
+  limitations: >
+    Every table is rebuilt from raw for the affected dates on each arrival, so rows can
+    change until the raw for that day has fully arrived (late arrival after trips is
+    normal). Timestamps of records made before NTP synchronized are corrected from the
+    same boot's synced records when possible (timestamp_corrected); otherwise they are
+    left as recorded. Values are in °C, W, Wh, percent and seconds; the cooler's own
+    resolution is 1 °C and 1 W.
+
+servers:
+  - server: production
+    type: bigquery
+    environment: production
+    description: BigQuery dataset holding every table below (us-central1).
+    project: chanyou-frostlog
+    dataset: frostlog
+  - server: ci
+    type: bigquery
+    environment: ci
+    description: Dataset rebuilt in CI from sample raw chunks for contract tests.
+    project: chanyou-frostlog
+    dataset: frostlog_ci
+  - server: events
+    type: pubsub
+    environment: production
+    description: Pub/Sub topic carrying the semantic_updated and quality_report events.
+    project: chanyou-frostlog
+    topic: frostlog-semantic-updated
+
+schema:
+  # ----------------------------------------------------------------- facts
+  - name: fact_cooler_state_update
+    physicalName: fact_cooler_state_update
+    logicalType: object
+    description: >
+      Atomic fact: one row per state update received from the cooler, with the cabin
+      environment at that moment. Irregular snapshot of the cooler operation (the cooler
+      sends on every change, at least every 10 minutes, and after connecting). State
+      measures are semi-additive: aggregate them with held_seconds as the weight.
+    dataGranularityDescription: One state update message (cmd 4402) from the cooler.
+    properties:
+      - name: state_update_key
+        logicalType: string
+        physicalType: STRING
+        primaryKey: true
+        required: true
+        unique: true
+        description: Surrogate key, a stable hash of the natural key (boot_id and uptime_seconds). It does not depend on the timestamp, so correcting one never changes it.
+      - name: cooler_key
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        description: dim_cooler version in effect at updated_at.
+      - name: battery_key
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        description: dim_battery row; the "absent" row when no battery is installed.
+      - name: date_key
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        description: dim_date key (JST date of updated_at, yyyymmdd).
+      - name: partition_date
+        logicalType: date
+        physicalType: DATE
+        required: true
+        partitioned: true
+        description: The same JST date as a DATE. BigQuery partitions on a column rather than on an expression, so this is the partitioning column.
+      - name: updated_at
+        logicalType: timestamp
+        physicalType: TIMESTAMP
+        required: true
+        description: Time of the update in UTC, corrected from the boot's NTP-synced records when the Pi's clock was not yet synchronized.
+      - name: updated_at_raw
+        logicalType: timestamp
+        physicalType: TIMESTAMP
+        required: true
+        description: The timestamp as recorded by the Pi, before correction.
+      - name: timestamp_corrected
+        logicalType: boolean
+        physicalType: BOOL
+        required: true
+        description: True when updated_at was derived from a synced record of the same boot; false when it equals updated_at_raw.
+      - name: boot_id
+        logicalType: string
+        physicalType: STRING
+        required: true
+        description: Pi boot the record came from (degenerate dimension).
+      - name: uptime_seconds
+        logicalType: number
+        physicalType: FLOAT64
+        required: true
+        description: Seconds since the Pi booted; order and spacing within a boot.
+      - name: source_key
+        logicalType: string
+        physicalType: STRING
+        required: true
+        description: Raw object name the row came from, for tracing back to the collection data product.
+      - name: external_input
+        logicalType: boolean
+        physicalType: BOOL
+        required: true
+        description: True when power was being drawn from the external DC input (input_watts > 0), whatever its source (car socket, AC adapter, portable power station).
+      - name: battery_state
+        logicalType: string
+        physicalType: STRING
+        required: true
+        description: >
+          idle, charging, discharging, full or absent. `full` is charging finished:
+          the cooler on external power at 100 % with nothing flowing either way.
+        enum:
+          - value: idle
+          - value: charging
+          - value: discharging
+          - value: full
+          - value: absent
+      - name: display_unit
+        logicalType: string
+        physicalType: STRING
+        required: true
+        description: Unit shown on the cooler at the time (C or F). Temperatures below are always °C.
+      - name: protection_level
+        logicalType: string
+        physicalType: STRING
+        required: true
+        description: Battery protection level setting (L, M, H).
+      - name: brightness
+        logicalType: string
+        physicalType: STRING
+        required: true
+        description: Display brightness setting (low, mid, high).
+      - name: setpoint_celsius
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        semanticType: measure
+        description: Target temperature, °C.
+      - name: interior_temperature_celsius
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        semanticType: measure
+        description: Interior temperature, °C.
+      - name: state_of_charge_percent
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        semanticType: measure
+        description: Battery state of charge, percent. 0 when the battery is absent.
+      - name: input_watts
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        semanticType: measure
+        description: Power from the external DC input, W.
+      - name: usb_a_output_watts
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        semanticType: measure
+        description: USB-A output, W.
+      - name: usb_c_output_watts
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        semanticType: measure
+        description: USB-C output, W.
+      - name: charge_watts
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        semanticType: measure
+        description: Power into the battery, W.
+      - name: discharge_watts
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        semanticType: measure
+        description: Power out of the battery, W.
+      - name: ambient_temperature_celsius
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Cabin air temperature at the Pi, °C. Null when the sensor read failed.
+      - name: ambient_humidity_percent
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Cabin relative humidity, percent. Null when the sensor read failed.
+      - name: held_seconds
+        logicalType: number
+        physicalType: FLOAT64
+        required: true
+        semanticType: measure
+        description: >
+          Seconds this state is considered to hold: the gap to the next update of the same
+          cooler, capped at 600 (the cooler's heartbeat). Weight for Wh integration
+          (W × held_seconds / 3600) and for time-weighted averages. The last update of a
+          silent period contributes at most 600 s.
+    quality:
+      - name: identity_unique
+        type: sql
+        dimension: uniqueness
+        query: SELECT COUNT(*) - COUNT(DISTINCT CONCAT(boot_id, '/', CAST(uptime_seconds AS STRING))) FROM {model}
+        mustBe: 0
+      - name: held_seconds_in_range
+        type: sql
+        dimension: conformity
+        query: SELECT COUNT(*) FROM {model} WHERE held_seconds < 0 OR held_seconds > 600
+        mustBe: 0
+      - name: state_of_charge_in_range
+        type: sql
+        dimension: conformity
+        query: SELECT COUNT(*) FROM {model} WHERE state_of_charge_percent < 0 OR state_of_charge_percent > 100
+        mustBe: 0
+      - name: temperatures_in_range
+        type: sql
+        dimension: conformity
+        query: >
+          SELECT COUNT(*) FROM {model}
+          WHERE setpoint_celsius NOT BETWEEN -40 AND 85
+             OR interior_temperature_celsius NOT BETWEEN -40 AND 85
+             OR ambient_temperature_celsius NOT BETWEEN -40 AND 85
+        mustBe: 0
+      - name: external_input_matches_watts
+        type: sql
+        dimension: consistency
+        query: SELECT COUNT(*) FROM {model} WHERE external_input != (input_watts > 0)
+        mustBe: 0
+      - name: date_key_matches_updated_at
+        type: sql
+        dimension: consistency
+        query: SELECT COUNT(*) FROM {model} WHERE date_key != CAST(FORMAT_DATE('%Y%m%d', DATE(updated_at, 'Asia/Tokyo')) AS INT64)
+        mustBe: 0
+      - name: keys_resolve
+        type: sql
+        dimension: consistency
+        description: Every foreign key points at an existing dimension row (referential integrity).
+        query: >
+          SELECT COUNT(*) FROM {model} f
+          LEFT JOIN dim_cooler c ON c.cooler_key = f.cooler_key
+          LEFT JOIN dim_battery b ON b.battery_key = f.battery_key
+          LEFT JOIN dim_date d ON d.date_key = f.date_key
+          WHERE c.cooler_key IS NULL OR b.battery_key IS NULL OR d.date_key IS NULL
+        mustBe: 0
+      - name: row_count_matches_raw
+        type: text
+        dimension: completeness
+        description: The number of rows per date equals the number of decodable cmd 4402 messages in the raw chunks for that date (checked by the transform against the raw table it loaded).
+      - name: fresh_within_a_day
+        type: sql
+        dimension: timeliness
+        description: The newest update is not older than a day plus the raw latency (raw arrives at least daily when the car comes home).
+        query: SELECT TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(updated_at), HOUR) FROM {model}
+        mustBeLessThan: 48
+
+  - name: fact_cooler_hourly_snapshot
+    physicalName: fact_cooler_hourly_snapshot
+    logicalType: object
+    description: >
+      Periodic snapshot: one row per JST hour from the first to the last observed hour,
+      including hours with no data (covered_seconds = 0, measures null). Energy columns
+      are additive; condition columns are time-weighted averages over the covered seconds.
+    dataGranularityDescription: One JST hour of cooler operation.
+    properties:
+      - name: hour_key
+        logicalType: string
+        physicalType: STRING
+        primaryKey: true
+        required: true
+        unique: true
+        description: date_key and hour_of_day (yyyymmddhh).
+      - name: cooler_key
+        logicalType: integer
+        physicalType: INT64
+        required: false
+        description: dim_cooler version in effect at the hour's last update; null when the hour has no data.
+      - name: battery_key
+        logicalType: integer
+        physicalType: INT64
+        required: false
+        description: dim_battery row observed at the hour's last update; null when the hour has no data.
+      - name: date_key
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        description: dim_date key (JST).
+      - name: partition_date
+        logicalType: date
+        physicalType: DATE
+        required: true
+        partitioned: true
+        description: The JST date of hour_started_at as a DATE; the partitioning column.
+      - name: hour_of_day
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        description: 0–23, JST.
+      - name: hour_started_at
+        logicalType: timestamp
+        physicalType: TIMESTAMP
+        required: true
+        description: Start of the hour in UTC.
+      - name: state_of_charge_start_percent
+        logicalType: integer
+        physicalType: INT64
+        required: false
+        semanticType: measure
+        description: State of charge in effect at the start of the hour.
+      - name: state_of_charge_end_percent
+        logicalType: integer
+        physicalType: INT64
+        required: false
+        semanticType: measure
+        description: State of charge in effect at the end of the hour.
+      - name: state_of_charge_delta_percent
+        logicalType: integer
+        physicalType: INT64
+        required: false
+        semanticType: measure
+        description: End minus start; negative while discharging, positive while charging. The hourly rate used for "hours left" estimates.
+      - name: discharged_watt_hours
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Σ discharge_watts × held_seconds / 3600 within the hour.
+      - name: charged_watt_hours
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Σ charge_watts × held_seconds / 3600 within the hour.
+      - name: input_watt_hours
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Σ input_watts × held_seconds / 3600 within the hour.
+      - name: usb_a_output_watt_hours
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Σ usb_a_output_watts × held_seconds / 3600.
+      - name: usb_c_output_watt_hours
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Σ usb_c_output_watts × held_seconds / 3600.
+      - name: ambient_temperature_celsius
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Time-weighted average cabin temperature, °C.
+      - name: ambient_humidity_percent
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Time-weighted average cabin humidity, percent.
+      - name: interior_temperature_celsius
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Time-weighted average interior temperature, °C.
+      - name: setpoint_celsius
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Time-weighted average setpoint, °C (integer unless the setpoint changed within the hour).
+      - name: external_input_ratio
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Share (0–1) of the covered seconds with external input present.
+      - name: charging_ratio
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Share (0–1) of the covered seconds with battery_state = charging.
+      - name: covered_seconds
+        logicalType: number
+        physicalType: FLOAT64
+        required: true
+        semanticType: measure
+        description: Seconds of the hour covered by held state (0–3600). The denominator of the averages; 0 when nothing was observed.
+      - name: update_count
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        semanticType: measure
+        description: Number of state updates whose held interval touched the hour.
+    quality:
+      - name: one_row_per_hour
+        type: sql
+        dimension: uniqueness
+        query: SELECT COUNT(*) - COUNT(DISTINCT hour_key) FROM {model}
+        mustBe: 0
+      - name: hours_are_dense
+        type: sql
+        dimension: completeness
+        description: No hour is missing between the first and the last row.
+        query: SELECT TIMESTAMP_DIFF(MAX(hour_started_at), MIN(hour_started_at), HOUR) + 1 - COUNT(*) FROM {model}
+        mustBe: 0
+      - name: covered_seconds_in_range
+        type: sql
+        dimension: conformity
+        query: SELECT COUNT(*) FROM {model} WHERE covered_seconds < 0 OR covered_seconds > 3600
+        mustBe: 0
+      - name: ratios_in_range
+        type: sql
+        dimension: conformity
+        query: SELECT COUNT(*) FROM {model} WHERE external_input_ratio NOT BETWEEN 0 AND 1 OR charging_ratio NOT BETWEEN 0 AND 1
+        mustBe: 0
+      - name: delta_is_end_minus_start
+        type: sql
+        dimension: consistency
+        query: SELECT COUNT(*) FROM {model} WHERE state_of_charge_delta_percent != state_of_charge_end_percent - state_of_charge_start_percent
+        mustBe: 0
+      - name: energy_matches_state_updates
+        type: sql
+        dimension: consistency
+        description: >
+          Every watt-hour of fact_cooler_state_update is allocated to some hour and to
+          no more than one (within 1 Wh of rounding). Compared over the whole table,
+          not per date: a held interval that straddles midnight JST is split between
+          two dates here and belongs wholly to the update's date there.
+        query: >
+          SELECT COUNT(*) FROM (
+            SELECT
+              (SELECT SUM(discharged_watt_hours) FROM {model}) AS hourly_discharged,
+              (SELECT SUM(charged_watt_hours) FROM {model}) AS hourly_charged,
+              (SELECT SUM(input_watt_hours) FROM {model}) AS hourly_input,
+              (SELECT SUM(discharge_watts * held_seconds / 3600) FROM fact_cooler_state_update) AS atomic_discharged,
+              (SELECT SUM(charge_watts * held_seconds / 3600) FROM fact_cooler_state_update) AS atomic_charged,
+              (SELECT SUM(input_watts * held_seconds / 3600) FROM fact_cooler_state_update) AS atomic_input
+          ) WHERE ABS(hourly_discharged - atomic_discharged) > 1
+             OR ABS(hourly_charged - atomic_charged) > 1
+             OR ABS(hourly_input - atomic_input) > 1
+        mustBe: 0
+      - name: hourly_energy_plausible
+        type: sql
+        dimension: accuracy
+        description: No hour discharges more than the cooler can physically draw.
+        query: SELECT COUNT(*) FROM {model} WHERE discharged_watt_hours > 100 OR charged_watt_hours > 150
+        mustBe: 0
+
+  - name: fact_cooler_pulldown
+    physicalName: fact_cooler_pulldown
+    logicalType: object
+    description: >
+      Accumulating snapshot: one row per pull-down, i.e. one episode of the interior being
+      cooled from above the setpoint down to it. Starts when the interior exceeds the
+      setpoint by 5 °C or more (start-up, setpoint lowered, or warm load); reached when the
+      interior is within 1 °C of the setpoint. Rows for episodes in progress have null
+      reached_at, ended_at and outcome.
+    dataGranularityDescription: One pull-down episode.
+    properties:
+      - name: pulldown_key
+        logicalType: string
+        physicalType: STRING
+        primaryKey: true
+        required: true
+        unique: true
+        description: Surrogate key, the key of the state update that opened the episode (itself a stable hash of its natural key).
+      - name: cooler_key
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        description: dim_cooler version at start.
+      - name: battery_key
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        description: dim_battery at start.
+      - name: date_key
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        description: dim_date key of started_at (JST).
+      - name: partition_date
+        logicalType: date
+        physicalType: DATE
+        required: true
+        partitioned: true
+        description: The JST date of started_at as a DATE; the partitioning column.
+      - name: started_at
+        logicalType: timestamp
+        physicalType: TIMESTAMP
+        required: true
+        description: Time of the first update at or above setpoint + 5 °C.
+      - name: reached_at
+        logicalType: timestamp
+        physicalType: TIMESTAMP
+        required: false
+        description: Time of the first update at or below setpoint + 1 °C. Null until reached.
+      - name: ended_at
+        logicalType: timestamp
+        physicalType: TIMESTAMP
+        required: false
+        description: reached_at, or the last update before the battery was removed / the record stopped. Null while in progress.
+      - name: trigger
+        logicalType: string
+        physicalType: STRING
+        required: true
+        description: What started the episode.
+        enum:
+          - value: start_up
+            description: First update of a boot, after the battery was absent, or after 15 minutes without updates.
+          - value: setpoint_change
+            description: The setpoint was lowered below the interior temperature.
+          - value: rise
+            description: The interior rose above the setpoint (warm load, door, heat).
+      - name: outcome
+        logicalType: string
+        physicalType: STRING
+        required: false
+        description: reached or interrupted; null while in progress.
+        enum:
+          - value: reached
+          - value: interrupted
+      - name: interior_temperature_start_celsius
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        semanticType: measure
+        description: Interior temperature at start, °C.
+      - name: setpoint_celsius
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        semanticType: measure
+        description: Setpoint used for the reached test, °C (the value at start).
+      - name: state_of_charge_start_percent
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        semanticType: measure
+        description: State of charge at start.
+      - name: state_of_charge_delta_percent
+        logicalType: integer
+        physicalType: INT64
+        required: false
+        semanticType: measure
+        description: State of charge at end minus at start.
+      - name: duration_seconds
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: reached_at − started_at. Null unless reached.
+      - name: elapsed_seconds
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: ended_at − started_at. Null while in progress.
+      - name: discharged_watt_hours
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Battery energy discharged during the episode.
+      - name: charged_watt_hours
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Battery energy charged during the episode.
+      - name: ambient_temperature_celsius
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Time-weighted average cabin temperature during the episode.
+      - name: external_input_ratio
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Share of the episode with external input present.
+      - name: covered_seconds
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        semanticType: measure
+        description: Observed seconds within the episode.
+      - name: update_count
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        semanticType: measure
+        description: State updates in the episode.
+    quality:
+      - name: one_row_per_episode
+        type: sql
+        dimension: uniqueness
+        query: SELECT COUNT(*) - COUNT(DISTINCT pulldown_key) FROM {model}
+        mustBe: 0
+      - name: milestones_ordered
+        type: sql
+        dimension: consistency
+        query: SELECT COUNT(*) FROM {model} WHERE reached_at < started_at OR ended_at < started_at
+        mustBe: 0
+      - name: outcome_and_end_agree
+        type: sql
+        dimension: consistency
+        query: SELECT COUNT(*) FROM {model} WHERE (outcome IS NULL) != (ended_at IS NULL) OR (outcome = 'reached') != (reached_at IS NOT NULL)
+        mustBe: 0
+      - name: duration_plausible
+        type: sql
+        dimension: accuracy
+        query: SELECT COUNT(*) FROM {model} WHERE duration_seconds > 86400
+        mustBe: 0
+
+  # ------------------------------------------------------------ dimensions
+  - name: dim_cooler
+    physicalName: dim_cooler
+    logicalType: object
+    description: The cooler, with a history of its firmware (type 2 slowly changing dimension). Rebuilt from the ble_negotiated events.
+    dataGranularityDescription: One version of one cooler.
+    properties:
+      - name: cooler_key
+        logicalType: integer
+        physicalType: INT64
+        primaryKey: true
+        required: true
+        unique: true
+        description: Surrogate key, a stable hash of the natural key (serial number and version), so rebuilding the dimension never moves it under a fact that was not rebuilt.
+      - name: serial_number
+        logicalType: string
+        physicalType: STRING
+        required: true
+        description: Natural key.
+      - name: model
+        logicalType: string
+        physicalType: STRING
+        required: true
+        description: Decoder/model name (everfrost).
+      - name: bluetooth_address
+        logicalType: string
+        physicalType: STRING
+        required: true
+      - name: chip
+        logicalType: string
+        physicalType: STRING
+        required: false
+      - name: firmware_version
+        logicalType: string
+        physicalType: STRING
+        required: false
+      - name: valid_from
+        logicalType: timestamp
+        physicalType: TIMESTAMP
+        required: true
+        description: Inclusive start of validity.
+      - name: valid_to
+        logicalType: timestamp
+        physicalType: TIMESTAMP
+        required: false
+        description: Exclusive end of validity; null for the current row (dbt snapshot convention).
+      - name: is_current
+        logicalType: boolean
+        physicalType: BOOL
+        required: true
+    quality:
+      - name: one_current_row_per_cooler
+        type: sql
+        dimension: uniqueness
+        query: SELECT COUNT(*) FROM (SELECT serial_number FROM {model} WHERE is_current GROUP BY serial_number HAVING COUNT(*) != 1)
+        mustBe: 0
+      - name: validity_does_not_overlap
+        type: sql
+        dimension: consistency
+        query: >
+          SELECT COUNT(*) FROM {model} a JOIN {model} b
+            ON a.serial_number = b.serial_number AND a.cooler_key < b.cooler_key
+           AND a.valid_from < COALESCE(b.valid_to, TIMESTAMP '9999-12-31')
+           AND b.valid_from < COALESCE(a.valid_to, TIMESTAMP '9999-12-31')
+        mustBe: 0
+
+  - name: dim_battery
+    physicalName: dim_battery
+    logicalType: object
+    description: The removable battery packs seen so far, plus one row representing "no battery installed".
+    dataGranularityDescription: One battery pack (or the absent row).
+    properties:
+      - name: battery_key
+        logicalType: integer
+        physicalType: INT64
+        primaryKey: true
+        required: true
+        unique: true
+        description: Surrogate key, a stable hash of the natural key (serial number); 0 on the absent row.
+      - name: serial_number
+        logicalType: string
+        physicalType: STRING
+        required: false
+        unique: true
+        description: Natural key; null on the absent row.
+      - name: is_absent
+        logicalType: boolean
+        physicalType: BOOL
+        required: true
+        description: True only on the row used when no battery is installed.
+      - name: first_seen_at
+        logicalType: timestamp
+        physicalType: TIMESTAMP
+        required: false
+
+  - name: dim_date
+    physicalName: dim_date
+    logicalType: object
+    description: Calendar in Japan Standard Time.
+    dataGranularityDescription: One JST calendar day.
+    properties:
+      - name: date_key
+        logicalType: integer
+        physicalType: INT64
+        primaryKey: true
+        required: true
+        unique: true
+        description: yyyymmdd.
+      - name: date
+        logicalType: date
+        physicalType: DATE
+        required: true
+      - name: day_of_week
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        description: 1 = Monday … 7 = Sunday (ISO).
+      - name: iso_week
+        logicalType: integer
+        physicalType: INT64
+        required: true
+      - name: iso_year
+        logicalType: integer
+        physicalType: INT64
+        required: true
+      - name: month
+        logicalType: integer
+        physicalType: INT64
+        required: true
+      - name: is_weekend
+        logicalType: boolean
+        physicalType: BOOL
+        required: true
+      - name: is_japanese_holiday
+        logicalType: boolean
+        physicalType: BOOL
+        required: true
+
+  # ------------------------------------------------------- band dimensions
+  # Join by range: lower <= value < upper (half-open, like dbt snapshots). Band
+  # definitions are data (dbt seeds), not code; changing them never rewrites facts.
+  - name: band_setpoint
+    physicalName: band_setpoint
+    logicalType: object
+    description: Setpoint bands, half-open [lower, upper). Initial values 冷凍 (< 0 °C) and 冷蔵 (0 °C and above).
+    properties: &band_celsius
+      - name: band_key
+        logicalType: integer
+        physicalType: INT64
+        primaryKey: true
+        required: true
+        unique: true
+      - name: label
+        logicalType: string
+        physicalType: STRING
+        required: true
+      - name: lower_celsius
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        description: Inclusive lower bound; null = −∞.
+      - name: upper_celsius
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+        description: Exclusive upper bound; null = +∞.
+      - name: sort_order
+        logicalType: integer
+        physicalType: INT64
+        required: true
+  - name: band_ambient_temperature
+    physicalName: band_ambient_temperature
+    logicalType: object
+    description: Cabin temperature bands, half-open [lower, upper). Initial values < 5 / 5..10 / 10..15 / 15..20 / 20..25 / 25..30 / 30..35 / 35..40 / ≥ 40 °C.
+    properties: *band_celsius
+  - name: band_interior_temperature
+    physicalName: band_interior_temperature
+    logicalType: object
+    description: Interior temperature bands, half-open [lower, upper). Initial values < −18 / −18..−15 / −15..−5 / −5..5 / 5..15 / ≥ 15 °C.
+    properties: *band_celsius
+  - name: band_interior_delta
+    physicalName: band_interior_delta
+    logicalType: object
+    description: Bands of interior temperature minus setpoint (how far above target), half-open [lower, upper). Initial values < 0 / 0..2 / 2..5 / 5..10 / 10..20 / ≥ 20 °C.
+    properties: *band_celsius
+  - name: band_humidity
+    physicalName: band_humidity
+    logicalType: object
+    description: Humidity bands, half-open [lower, upper). Initial values < 20 / 20..40 / 40..60 / 60..80 / ≥ 80 %.
+    properties: &band_percent
+      - name: band_key
+        logicalType: integer
+        physicalType: INT64
+        primaryKey: true
+        required: true
+        unique: true
+      - name: label
+        logicalType: string
+        physicalType: STRING
+        required: true
+      - name: lower_percent
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+      - name: upper_percent
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+      - name: sort_order
+        logicalType: integer
+        physicalType: INT64
+        required: true
+  - name: band_state_of_charge
+    physicalName: band_state_of_charge
+    logicalType: object
+    description: State of charge bands, half-open [lower, upper). Initial values < 20 / 20..50 / 50..80 / 80..95 / ≥ 95 %.
+    properties: *band_percent
+  - name: band_input_power
+    physicalName: band_input_power
+    logicalType: object
+    description: External input power bands, half-open [lower, upper). Initial values < 1 (labelled 0 W, the cooler reports whole watts) / 1..10 / 10..40 / 40..70 / ≥ 70 W.
+    properties: &band_watts
+      - name: band_key
+        logicalType: integer
+        physicalType: INT64
+        primaryKey: true
+        required: true
+        unique: true
+      - name: label
+        logicalType: string
+        physicalType: STRING
+        required: true
+      - name: lower_watts
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+      - name: upper_watts
+        logicalType: number
+        physicalType: FLOAT64
+        required: false
+      - name: sort_order
+        logicalType: integer
+        physicalType: INT64
+        required: true
+  - name: band_charge_power
+    physicalName: band_charge_power
+    logicalType: object
+    description: Battery charge power bands, half-open [lower, upper). Initial values < 1 (labelled 0 W) / 1..10 / 10..30 / 30..60 / ≥ 60 W.
+    properties: *band_watts
+  - name: band_discharge_power
+    physicalName: band_discharge_power
+    logicalType: object
+    description: Battery discharge power bands, half-open [lower, upper). Initial values < 1 (labelled 0 W) / 1..10 / 10..30 / 30..50 / ≥ 50 W.
+    properties: *band_watts
+
+  # ---------------------------------------------------------------- events
+  - name: semantic_updated
+    physicalName: semantic_updated
+    logicalType: object
+    description: >
+      Event published on the Pub/Sub topic after each transform run that rebuilt tables.
+      Consumers use it to react to new data without polling.
+    dataGranularityDescription: One transform run.
+    properties:
+      - name: run_id
+        logicalType: string
+        required: true
+        description: Identifier of the transform run.
+      - name: published_at
+        logicalType: timestamp
+        required: true
+      - name: date_keys
+        logicalType: array
+        required: true
+        description: JST dates (yyyymmdd) whose partitions were rebuilt.
+        items:
+          logicalType: integer
+      - name: raw_uploaded_at_max
+        logicalType: timestamp
+        required: true
+        description: Latest raw chunk upload time processed by this run (watermark).
+      - name: build_passed
+        logicalType: boolean
+        required: true
+        description: Always true in this version (reserved). A run whose dbt build failed publishes no event at all; it answers 500 and is delivered again.
+      - name: upload_runs
+        logicalType: array
+        required: false
+        description: >
+          The collector's upload runs this event's chunk reported as finished; empty
+          unless the chunk was an events chunk. The upload_done of a run reaches the
+          bucket in the following run, so by the time it is here every cooler chunk of
+          that run is loaded. A run whose started_at is 2 h or more after
+          previous_finished_at is a return of the car: everything recorded while it was
+          away came in with it.
+        items:
+          logicalType: object
+          properties:
+            - name: finished_at
+              logicalType: timestamp
+              required: true
+              description: When the upload run finished (the upload_done event).
+            - name: started_at
+              logicalType: timestamp
+              required: false
+              description: When the same boot's upload run started (the upload_started before it).
+            - name: previous_finished_at
+              logicalType: timestamp
+              required: false
+              description: When the upload run before this one finished, whichever boot it belonged to.
+            - name: chunk_count
+              logicalType: integer
+              required: true
+              description: Chunks put in the bucket by this run.
+            - name: line_count
+              logicalType: integer
+              required: true
+              description: Lines shipped by this run.
+  - name: quality_report
+    physicalName: quality_report
+    logicalType: object
+    description: >
+      Event published on the same topic by the daily contract test run: the result of
+      testing this contract and the raw contract against production data.
+    dataGranularityDescription: One daily contract test run.
+    properties:
+      - name: run_id
+        logicalType: string
+        required: true
+      - name: published_at
+        logicalType: timestamp
+        required: true
+      - name: contract_id
+        logicalType: string
+        required: true
+        description: frostlog-raw or frostlog-semantic.
+      - name: passed
+        logicalType: boolean
+        required: true
+      - name: failed_checks
+        logicalType: array
+        required: true
+        description: Names of the quality checks that failed (empty when passed).
+        items:
+          logicalType: string
+
+slaProperties:
+  - property: latency
+    value: 24
+    unit: h
+    element: fact_cooler_state_update.updated_at
+    description: "Tables reflect a raw update within 24 hours of its upload. The transform actually runs on every arrival (target within a minute)."
+  - property: frequency
+    value: on-arrival
+    description: The transform runs when a raw chunk lands; the contract test runs daily.
+  - property: retention
+    value: unlimited
+    description: Tables are rebuildable from raw; nothing is deleted.
+  - property: availability
+    value: best-effort
+    description: Follows BigQuery.
+
+support:
+  - channel: github
+    url: https://github.com/chanyou0311/frostlog/issues
+    tool: other
+    scope: issues
+
+team:
+  name: frostlog
+  members:
+    - username: chanyou0311
+      role: owner
+
+customProperties:
+  - property: changePolicy
+    value: additive-only
+    description: Columns, tables and event fields may be added. Renaming, removing or re-typing a column, or changing its meaning, bumps the major version and is published as a new dbt model version.
+  - property: rebuildRule
+    value: by-arrived-boot
+    description: Each arrival rebuilds every row of every boot its chunks touched, and the JST dates those rows fall on now or fell on before their timestamps were corrected; a full rebuild is always possible.
+  - property: rules
+    value: "held_seconds cap 600 s; ts correction from the first NTP-synced update of the same boot; pull-down start = interior >= setpoint + 5 C, reached = interior <= setpoint + 1 C, first update after >= 15 min silence counts as start_up; hourly rows are dense over JST hours; band joins are half-open [lower, upper)"
+  - property: estimatesNotStored
+    value: true
+    description: Next-morning state of charge, hours left and next pull-down time are computed by consumers from these tables.
