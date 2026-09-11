@@ -3,7 +3,7 @@ version: 2
 models:
   - name: fact_cooler_state_update
     description: >
-      One row per state report from the cooler, with the cabin air at that moment.
+      One row per state report from the cooler, with the air around it at that moment.
       State measures are semi-additive: weight them with held_seconds.
     config:
       contract:

@@ -16,7 +16,7 @@
     )
 }}
 
--- The atomic fact: one row per state report from the cooler, with the cabin air at
+-- The atomic fact: one row per state report from the cooler, with the air around it at
 -- that moment and the seconds the state is taken to hold. Everything else in the
 -- model is an aggregate of this table.
 --

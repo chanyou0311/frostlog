@@ -18,6 +18,6 @@ sources:
         error_after: {count: 7, period: day}
     tables:
       - name: raw_cooler
-        description: One row per BLE message from the cooler, with the cabin air at that moment.
+        description: One row per BLE message from the cooler, with the air around it at that moment.
       - name: raw_events
         description: One row per operational event of the collector.
