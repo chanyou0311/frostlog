@@ -15,8 +15,10 @@ description:
   purpose: >
     Raw record of everything the Raspberry Pi observes about the Anker EverFrost 2
     cooler: every BLE state message (with its bytes, decrypted body and decoded values),
-    the cabin temperature and humidity measured at the same moment, and the operational
-    events of the collector itself. Nothing is aggregated, filtered or corrected.
+    the temperature and humidity of the air around it at the same moment, and the
+    operational events of the collector itself. The cooler is portable — a car, a tent,
+    a room — so that air is whatever surrounds it, not a car's cabin. Nothing is
+    aggregated, filtered or corrected.
   usage: >
     Read by the semantic data product (frostlog-semantics) to build the dimensional model.
     A row's original — `frames`, and `plain` where decryption verified — is never
@@ -75,7 +77,7 @@ schema:
     description: >
       One row per message received from the cooler over BLE. Rows are written when the
       cooler updates its state (on any value change, at least every 10 minutes as a
-      heartbeat, and once after each connection). The cabin environment is measured at
+      heartbeat, and once after each connection). The surrounding air is measured at
       the same moment and stored on the same row.
     dataGranularityDescription: One BLE message from the cooler, with the environment at that moment.
     properties:

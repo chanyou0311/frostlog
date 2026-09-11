@@ -52,7 +52,7 @@ schema:
     physicalName: fact_cooler_state_update
     logicalType: object
     description: >
-      Atomic fact: one row per state update received from the cooler, with the cabin
+      Atomic fact: one row per state update received from the cooler, with the ambient
       environment at that moment. Irregular snapshot of the cooler operation (the cooler
       sends on every change, at least every 10 minutes, and after connecting). State
       measures are semi-additive: aggregate them with held_seconds as the weight.
@@ -424,13 +424,13 @@ schema:
         physicalType: FLOAT64
         required: false
         semanticType: measure
-        description: Time-weighted average cabin temperature, °C.
+        description: Time-weighted average temperature of the air around the cooler, °C.
       - name: ambient_humidity_percent
         logicalType: number
         physicalType: FLOAT64
         required: false
         semanticType: measure
-        description: Time-weighted average cabin humidity, percent.
+        description: Time-weighted average humidity of the air around the cooler, percent.
       - name: interior_temperature_celsius
         logicalType: number
         physicalType: FLOAT64
@@ -649,7 +649,7 @@ schema:
         physicalType: FLOAT64
         required: false
         semanticType: measure
-        description: Time-weighted average cabin temperature during the episode.
+        description: Time-weighted average temperature of the air around the cooler during the episode.
       - name: external_input_ratio
         logicalType: number
         physicalType: FLOAT64
