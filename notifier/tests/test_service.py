@@ -156,13 +156,13 @@ def test_a_failed_contract_test_is_posted_with_its_checks(
     report = QualityReport(
         run_id="daily-1",
         published_at=RETURN,
-        contract_id="frostlog-semantic",
+        contract_id="frostlog-semantics",
         passed=False,
         failed_checks=["hours_are_dense"],
     )
     notifier = build_notifier(warehouse, slack, settings)
     [notification] = notifier.handle(report)
-    assert notification.key == "frostlog-semantic/daily-1"
+    assert notification.key == "frostlog-semantics/daily-1"
     assert "hours_are_dense" in slack.messages[0][0]
     assert slack.messages[0][1] is None  # no chart
     assert notifier.handle(report) == []
@@ -174,7 +174,7 @@ def test_a_passing_contract_test_says_nothing(
     report = QualityReport(
         run_id="daily-2",
         published_at=RETURN,
-        contract_id="frostlog-raw",
+        contract_id="frostlog-collection",
         passed=True,
         failed_checks=[],
     )

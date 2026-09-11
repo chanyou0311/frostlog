@@ -20,7 +20,7 @@ QUALITY_REPORT = {
     "event": "quality_report",
     "run_id": "2026-09-11T21:00:00Z",
     "published_at": "2026-09-11T21:00:41Z",
-    "contract_id": "frostlog-semantic",
+    "contract_id": "frostlog-semantics",
     "passed": False,
     "failed_checks": ["hours_are_dense", "fresh_within_a_day"],
 }

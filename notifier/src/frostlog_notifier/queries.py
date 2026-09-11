@@ -2,7 +2,7 @@
 
 Every statement opens with a ``-- name:`` comment; that name identifies the
 query in logs and in the tests' fake warehouse. Columns and tables are only
-those of contracts/semantic.odcs.yaml: the raw tables behind it are the semantic
+those of contracts/semantics.odcs.yaml: the raw tables behind it are the semantic
 data product's business, not this application's.
 """
 
