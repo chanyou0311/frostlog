@@ -672,7 +672,8 @@ schema:
       - name: bluetooth_address
         logicalType: string
         physicalType: STRING
-        required: true
+        required: false
+        description: Last address the cooler was seen with; null only for a cooler known from handshake events alone.
       - name: chip
         logicalType: string
         physicalType: STRING
