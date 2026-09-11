@@ -134,7 +134,7 @@ def summarize(
 
 
 def _band_drops(hours: list[HourlySnapshot], bands: list[Band]) -> list[BandDrop]:
-    """State-of-charge change per hour per cabin temperature band, unplugged hours only."""
+    """State-of-charge change per hour per ambient temperature band, unplugged hours only."""
     deltas: dict[int, list[float]] = defaultdict(list)
     covered: dict[int, float] = defaultdict(float)
     summed: dict[int, float] = defaultdict(float)

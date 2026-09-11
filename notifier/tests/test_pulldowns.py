@@ -45,7 +45,7 @@ def test_a_finished_episode_becomes_a_notification() -> None:
     assert "庫内 12 °C → -19 °C" in notification.text
     assert "設定 -20 °C" in notification.text
     assert "所要 46 分" in notification.text
-    assert "車内平均 27.3 °C" in notification.text
+    assert "周辺平均 27.3 °C" in notification.text
     assert "消費 52.1 Wh" in notification.text
     assert "SoC 100 % → 88 % (-12 pt)" in notification.text
     assert notification.image is not None

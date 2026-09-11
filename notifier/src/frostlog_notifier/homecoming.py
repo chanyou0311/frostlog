@@ -150,7 +150,7 @@ def _text(
             f"現在: SoC {formatting.percent(latest.state_of_charge_percent)}"
             f" / 庫内 {formatting.celsius(latest.interior_temperature_celsius, 0)}"
             f" / 設定 {formatting.celsius(latest.setpoint_celsius, 0)}"
-            f" / 車内 {formatting.celsius(latest.ambient_temperature_celsius)}"
+            f" / 周辺 {formatting.celsius(latest.ambient_temperature_celsius)}"
             f" / {formatting.battery_state(latest.battery_state)}"
             f" / 外部入力 {f'{latest.input_watts} W' if latest.external_input else 'なし'}",
             f"期間 {formatting.stamp(start)} → {formatting.stamp(end)}"

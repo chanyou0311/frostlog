@@ -106,7 +106,7 @@ def daily_overview(hours: list[HourlySnapshot], title: str) -> bytes:
         times,
         [hour.ambient_temperature_celsius for hour in hours],
         color=AMBIENT,
-        label="cabin (C)",
+        label="ambient (C)",
     )
     bottom.set_ylabel("temperature (C)")
     bottom.grid(alpha=0.3)
@@ -116,7 +116,7 @@ def daily_overview(hours: list[HourlySnapshot], title: str) -> bytes:
 
 
 def pulldown(updates: list[StateUpdate], setpoint_celsius: int, title: str) -> bytes:
-    """Interior temperature over one pull-down episode, with the cabin temperature."""
+    """Interior temperature over one pull-down episode, with the air around the cooler."""
     figure, axes = _pyplot().subplots(figsize=(9, 4))
     figure.suptitle(title)
     minutes = _minutes_from_start(updates)
@@ -132,7 +132,7 @@ def pulldown(updates: list[StateUpdate], setpoint_celsius: int, title: str) -> b
         minutes,
         [update.ambient_temperature_celsius for update in updates],
         color=AMBIENT,
-        label="cabin (C)",
+        label="ambient (C)",
     )
     axes.axhline(setpoint_celsius, color=SETPOINT, linestyle="--", label="setpoint (C)")
     axes.set_xlabel("minutes from start")
@@ -155,7 +155,7 @@ def weekly(
     title: str,
 ) -> bytes:
     """Energy per day (discharged against charged, with the net) and the spread of the
-    hourly state-of-charge change per cabin temperature band."""
+    hourly state-of-charge change per ambient temperature band."""
     figure, (left, right) = _pyplot().subplots(1, 2, figsize=(11, 4.5))
     figure.suptitle(title)
 
@@ -201,7 +201,7 @@ def weekly(
         right.text(0.5, 0.5, "no unplugged hours", ha="center", va="center", fontsize=9)
         right.set_xticks([])
     right.set_ylabel("state of charge change (%/h)")
-    right.set_xlabel("cabin temperature band (C)")
+    right.set_xlabel("ambient temperature band (C)")
     right.tick_params(axis="x", labelsize=8)
     right.grid(alpha=0.3, axis="y")
     return _png(figure)

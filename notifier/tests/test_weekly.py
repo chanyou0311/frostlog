@@ -92,7 +92,7 @@ def test_a_week_that_pays_for_itself_needs_no_driving() -> None:
     assert summarize(rows).balancing_hours is None
 
 
-def test_the_drop_per_hour_is_reported_per_cabin_temperature_band() -> None:
+def test_the_drop_per_hour_is_reported_per_ambient_temperature_band() -> None:
     summary = summarize()
     bands = {band.label: band for band in summary.bands}
     assert set(bands) == {"20..25 °C", "25..30 °C"}

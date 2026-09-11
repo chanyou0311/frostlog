@@ -72,7 +72,7 @@ def _text(episode: Pulldown, updates: list[StateUpdate]) -> str:
             f"庫内 {formatting.celsius(episode.interior_temperature_start_celsius, 0)}"
             f" → {formatting.celsius(ended_interior, 0)}"
             f" (設定 {formatting.celsius(episode.setpoint_celsius, 0)})",
-            f"{span} / 車内平均 {formatting.celsius(episode.ambient_temperature_celsius)}"
+            f"{span} / 周辺平均 {formatting.celsius(episode.ambient_temperature_celsius)}"
             f" / 外部入力 {formatting.percent((episode.external_input_ratio or 0.0) * 100)}",
             f"消費 {formatting.watt_hours(episode.discharged_watt_hours)} / {charge}",
         ]

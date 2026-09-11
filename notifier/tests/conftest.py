@@ -227,7 +227,7 @@ def upload_run(
 
 
 def ambient_band_rows() -> list[dict[str, Any]]:
-    """The seeded cabin temperature bands: 5 °C steps from < 5 to >= 40."""
+    """The seeded ambient temperature bands: 5 °C steps from < 5 to >= 40."""
     bands = [{"band_key": 1, "label": "< 5 °C", "lower_celsius": None, "upper_celsius": 5.0}]
     for index, lower in enumerate(range(5, 40, 5), start=2):
         bands.append(

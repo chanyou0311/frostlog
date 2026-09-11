@@ -195,7 +195,7 @@ def finished_pulldowns_between(
 
 
 def ambient_bands(warehouse: Warehouse) -> list[Band]:
-    """The cabin temperature bands, in display order."""
+    """The ambient temperature bands, in display order."""
     sql = f"""
       -- name: ambient_bands
       SELECT band_key, label, lower_celsius, upper_celsius, sort_order
