@@ -41,6 +41,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+from frostlog import store
 from frostlog.cooler.everfrost.decoder import CMD_STATE, decode_state_or_none
 from frostlog.cooler.everfrost.protocol import PATTERN_NEGOTIATION
 from frostlog.upload.cache import NAME as UPLOAD_CACHE
@@ -74,7 +75,7 @@ def read_rows(path: Path) -> Iterator[tuple[bytes, dict[str, Any] | None]]:
         for raw in file:
             if not raw.endswith(b"\n"):
                 continue  # torn by a power cut
-            if b"\0" in raw:
+            if not store.readable(raw):
                 yield raw, None
                 continue
             try:

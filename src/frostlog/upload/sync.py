@@ -34,7 +34,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Literal
 
-from frostlog.store import list_files
+from frostlog.store import list_files, readable
 from frostlog.upload.cache import OffsetCache
 from frostlog.upload.s3 import ObjectStore, Offline
 
@@ -244,14 +244,13 @@ def _chunks(data: bytes, start: int) -> Iterator[tuple[int, bytes]]:
 def _shippable(chunk: bytes) -> tuple[bytes, int]:
     """The lines of a chunk that a reader can use, and how many were left out.
 
-    A power cut can leave a line empty or filled with NUL bytes. The contract says
-    such lines never reach the bucket, and one of them fails the load of the whole
-    chunk. Which lines go depends only on the bytes of the range, so re-uploading
-    the range produces the same object; the offsets in the metadata keep counting
-    local bytes, dropped lines included.
+    One unreadable line (store.readable) fails the load of the whole chunk. Which
+    lines go depends only on the bytes of the range, so re-uploading the range
+    produces the same object; the offsets in the metadata keep counting local
+    bytes, dropped lines included.
     """
     lines = chunk.splitlines(keepends=True)
-    kept = [line for line in lines if line.strip() and b"\0" not in line]
+    kept = [line for line in lines if readable(line)]
     return b"".join(kept), len(lines) - len(kept)
 
 

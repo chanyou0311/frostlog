@@ -86,6 +86,16 @@ def append_line(root: Path, record: Record) -> None:
         os.close(descriptor)
 
 
+def readable(line: bytes) -> bool:
+    """Can a reader use this line of a record file?
+
+    A power cut can leave a line empty or filled with NUL bytes. The raw contract
+    says such lines never reach the bucket; the uploader and the migration both
+    decide with this one rule.
+    """
+    return bool(line.strip()) and b"\0" not in line
+
+
 def list_files(root: Path) -> list[Path]:
     """All record files under ``root``, in a stable order."""
     return sorted(p for p in root.rglob("*.jsonl") if p.is_file())
