@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from frostlog_notifier import service
 from frostlog_notifier.errors import Transient
@@ -46,13 +47,15 @@ async def events_semantic_updated(
         # Nothing about this message will improve on redelivery; take it off the queue.
         log.warning("dropping an unusable message: %s", exc)
         return _answer(200, {"posted": [], "dropped": str(exc)})
+    # BigQuery, matplotlib and Slack are all blocking; kept off the event loop so
+    # that /healthz still answers while a summary is being drawn and uploaded.
     try:
-        posted = notifier.handle(event)
+        posted = await run_in_threadpool(notifier.handle, event)
     except Transient as exc:
         log.warning("transient failure; asking Pub/Sub to retry: %s", exc)
         return _answer(500, {"error": str(exc)})
     except Exception as exc:  # a defect, not a hiccup: reported, then acknowledged
-        notifier.report_failure("events/semantic-updated", exc)
+        await run_in_threadpool(notifier.report_failure, "events/semantic-updated", exc)
         return _answer(200, {"error": f"{type(exc).__name__}: {exc}"})
     return _answer(200, {"posted": [notification.key for notification in posted]})
 

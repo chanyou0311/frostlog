@@ -10,6 +10,7 @@ BATTERY_STATE = {
     "idle": "待機",
     "charging": "充電中",
     "discharging": "放電中",
+    "full": "満充電",
     "absent": "バッテリーなし",
 }
 
@@ -24,24 +25,28 @@ def full_stamp(moment: datetime) -> str:
     return to_jst(moment).strftime("%Y-%m-%d %H:%M JST")
 
 
+def _quantity(value: float | None, digits: int, unit: str = "") -> str:
+    return MISSING if value is None else f"{value:.{digits}f}{unit}"
+
+
 def number(value: float | None, digits: int = 1) -> str:
-    return MISSING if value is None else f"{value:.{digits}f}"
+    return _quantity(value, digits)
 
 
 def celsius(value: float | None, digits: int = 1) -> str:
-    return MISSING if value is None else f"{value:.{digits}f} °C"
+    return _quantity(value, digits, " °C")
 
 
 def percent(value: float | None, digits: int = 0) -> str:
-    return MISSING if value is None else f"{value:.{digits}f} %"
+    return _quantity(value, digits, " %")
 
 
 def watt_hours(value: float | None) -> str:
-    return MISSING if value is None else f"{value:.1f} Wh"
+    return _quantity(value, 1, " Wh")
 
 
 def hours(value: float | None) -> str:
-    return MISSING if value is None else f"{value:.1f} h"
+    return _quantity(value, 1, " h")
 
 
 def duration(seconds: float | None) -> str:

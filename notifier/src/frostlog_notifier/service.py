@@ -7,7 +7,7 @@ message can never produce a second message.
 
 import logging
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from frostlog_notifier import clock, homecoming, pulldowns, quality, queries, weekly
 from frostlog_notifier.events import Event, QualityReport, SemanticUpdated
@@ -18,6 +18,10 @@ from frostlog_notifier.state import PostedNotifications
 from frostlog_notifier.warehouse import Warehouse
 
 log = logging.getLogger(__name__)
+
+#: How many closed weeks back a run looks for summaries it still owes. Data reaches
+#: the warehouse only when the car comes home, which can be weeks after the fact.
+WEEKLY_BACKLOG_WEEKS = 8
 
 
 class Notifier:
@@ -64,16 +68,37 @@ class Notifier:
         return self._post_all(candidates)
 
     def _weekly_if_closed(self) -> list[Notification]:
-        """The weekly summary once the week it covers is over and its data has arrived."""
+        """The weekly summaries whose weeks are over and whose data has arrived."""
         latest = queries.latest_state_update(self._warehouse)
         if latest is None:
             return []
-        return self._weekly(*weekly.due_week(latest.updated_at))
+        return self._weekly_backlog(*weekly.due_week(latest.updated_at))
 
     def run_weekly_deadline(self) -> list[Notification]:
-        """The Monday job: post last week's summary if the arrivals did not already."""
+        """The Monday job: post the summaries the arrivals did not already."""
         self._posted.ensure_table()
-        return self._post_all(self._weekly(*weekly.due_week(self._now())))
+        return self._post_all(self._weekly_backlog(*weekly.due_week(self._now())))
+
+    def _weekly_backlog(self, iso_year: int, iso_week: int) -> list[Notification]:
+        """The due week and the unposted weeks before it, oldest first.
+
+        A trip of several weeks brings several closed weeks home at once; each one
+        that has data and no summary yet gets its own message. The walk back stops
+        at the first week that yields nothing — already posted, or without data —
+        and after WEEKLY_BACKLOG_WEEKS at the latest.
+        """
+        pending: list[Notification] = []
+        year, week = iso_year, iso_week
+        for _ in range(WEEKLY_BACKLOG_WEEKS):
+            summaries = self._weekly(year, week)
+            if not summaries:
+                break
+            pending.extend(summaries)
+            year, week, _weekday = (
+                date.fromisocalendar(year, week, 1) - timedelta(days=7)
+            ).isocalendar()
+        pending.reverse()
+        return pending
 
     def _weekly(self, iso_year: int, iso_week: int) -> list[Notification]:
         key = clock.iso_week_key(iso_year, iso_week)
@@ -141,7 +166,7 @@ def build(settings: Settings | None = None) -> Notifier:
     )
     return Notifier(
         warehouse=warehouse,
-        posted=PostedNotifications(warehouse, configuration.posted_table),
+        posted=PostedNotifications(warehouse),
         slack=Slack(token, configuration.slack_channel, configuration.dry_run_directory),
         settings=configuration,
     )

@@ -24,6 +24,18 @@ from frostlog_notifier.settings import Settings
 from frostlog_notifier.slack import Slack
 from frostlog_notifier.state import PostedNotifications
 
+
+def updates_in(*weeks: tuple[int, int], count: int = 604):
+    """Answers state_update_count_between: ``count`` inside the given ISO weeks, 0 elsewhere."""
+    bounds = [iso_week_bounds(*week) for week in weeks]
+
+    def answer(given: dict) -> list[dict]:
+        inside = any(given["start"] >= start and given["end"] <= end for start, end in bounds)
+        return [{"update_count": count if inside else 0}]
+
+    return answer
+
+
 RETURN = at("2026-09-11", 12, 3)
 #: The upload run that shipped the trip, nine hours after the previous one finished.
 ARRIVAL = upload_run(
@@ -54,7 +66,7 @@ def build_notifier(
 ) -> Notifier:
     return Notifier(
         warehouse=warehouse,
-        posted=PostedNotifications(warehouse, settings.posted_table),
+        posted=PostedNotifications(warehouse),
         slack=slack,
         settings=settings,
         now=now,
@@ -68,7 +80,7 @@ def arrived() -> FakeWarehouse:
         {
             "latest_state_update": [state_update(RETURN)],
             "latest_state_update_at": [state_update(RETURN)],
-            "state_update_count_between": [{"update_count": 604}],
+            "state_update_count_between": updates_in((2026, 36), (2026, 37)),
             "energy_between": [{"discharged_watt_hours": 128.4, "charged_watt_hours": 40.2}],
             "finished_pulldowns_between": [pulldown_row(at("2026-09-11", 8, 12))],
             "state_updates_between": [state_update(at("2026-09-11", 8, 12))],
@@ -179,7 +191,7 @@ def test_the_weekly_summary_follows_the_first_data_of_the_new_week(
     warehouse = FakeWarehouse(
         {
             "latest_state_update": [state_update(monday)],
-            "state_update_count_between": [{"update_count": 604}],
+            "state_update_count_between": updates_in((2026, 37)),
             "finished_pulldowns_between": [],
             "hourly_snapshots": week_of_hours(),
             "ambient_bands": ambient_band_rows(),
@@ -199,7 +211,7 @@ def test_the_weekly_summary_covers_the_week_that_ended_not_the_running_one(
     warehouse = FakeWarehouse(
         {
             "latest_state_update": [state_update(midweek)],
-            "state_update_count_between": [{"update_count": 100}],
+            "state_update_count_between": updates_in((2026, 36), (2026, 37), count=100),
             "finished_pulldowns_between": [],
             "hourly_snapshots": [hourly(midweek, 80)],
             "ambient_bands": ambient_band_rows(),
@@ -209,6 +221,27 @@ def test_the_weekly_summary_covers_the_week_that_ended_not_the_running_one(
     notifier = build_notifier(warehouse, slack, settings, now=lambda: midweek)
     [notification] = notifier.handle(updated())
     assert notification.key == "2026-W36"
+
+
+def test_weeks_that_come_home_together_are_each_summarised_oldest_first(
+    slack: FakeSlack, settings: Settings
+) -> None:
+    start, _ = iso_week_bounds(2026, 37)
+    midweek = start + timedelta(days=3)
+    warehouse = FakeWarehouse(
+        {
+            "latest_state_update": [state_update(midweek)],
+            # Three weeks away: 35 and 36 are closed and unposted, 34 has nothing.
+            "state_update_count_between": updates_in((2026, 35), (2026, 36), (2026, 37)),
+            "finished_pulldowns_between": [],
+            "hourly_snapshots": [hourly(midweek, 80)],
+            "ambient_bands": ambient_band_rows(),
+        }
+    )
+    notifier = build_notifier(warehouse, slack, settings, now=lambda: midweek)
+    posted = notifier.handle(updated())
+    assert [notification.key for notification in posted] == ["2026-W35", "2026-W36"]
+    assert notifier.handle(updated()) == []
 
 
 def test_a_week_without_any_data_is_passed_over_in_silence(
@@ -236,7 +269,7 @@ def test_the_monday_job_posts_last_week(slack: FakeSlack, settings: Settings) ->
     warehouse = FakeWarehouse(
         {
             "hourly_snapshots": week_of_hours(),
-            "state_update_count_between": [{"update_count": 604}],
+            "state_update_count_between": updates_in((2026, 37)),
             "ambient_bands": ambient_band_rows(),
             "finished_pulldowns_between": [],
         }

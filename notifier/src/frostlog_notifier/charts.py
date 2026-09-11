@@ -4,20 +4,39 @@ Labels are ASCII on purpose: the container carries no Japanese font, and a
 missing glyph would silently become a box. Dates in titles are JST.
 """
 
+from __future__ import annotations
+
 import io
 from datetime import datetime, timedelta
-
-from matplotlib import use as use_backend
-
-use_backend("Agg")
-
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
-from matplotlib.axes import Axes
-from matplotlib.figure import Figure
+from typing import TYPE_CHECKING, Any
 
 from frostlog_notifier.clock import to_jst
 from frostlog_notifier.queries import HourlySnapshot, StateUpdate
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+
+
+def _pyplot() -> Any:
+    """matplotlib, loaded on first use.
+
+    Importing it costs a good part of a second, and most requests (health checks,
+    events that post nothing) never draw; a cold start should not pay for them.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    return plt
+
+
+def _dates() -> Any:
+    import matplotlib.dates as mdates
+
+    return mdates
+
 
 CHARGING = "#4c9be8"
 SOC = "#2b7a3d"
@@ -31,12 +50,12 @@ NET = "#333333"
 def _png(figure: Figure) -> bytes:
     buffer = io.BytesIO()
     figure.savefig(buffer, format="png", dpi=110, bbox_inches="tight")
-    plt.close(figure)
+    _pyplot().close(figure)
     return buffer.getvalue()
 
 
 def _hour_axis(axes: Axes) -> None:
-    axes.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H"))
+    axes.xaxis.set_major_formatter(_dates().DateFormatter("%m-%d %H"))
     for label in axes.get_xticklabels():
         label.set_rotation(0)
         label.set_fontsize(8)
@@ -50,7 +69,7 @@ def _local(moment: datetime) -> datetime:
 def daily_overview(hours: list[HourlySnapshot], title: str) -> bytes:
     """State of charge over the period, with the hours that had external input shaded,
     and the temperatures below it."""
-    figure, (top, bottom) = plt.subplots(2, 1, figsize=(9, 6), sharex=True)
+    figure, (top, bottom) = _pyplot().subplots(2, 1, figsize=(9, 6), sharex=True)
     figure.suptitle(title)
     times = [_local(hour.hour_started_at) for hour in hours]
 
@@ -98,7 +117,7 @@ def daily_overview(hours: list[HourlySnapshot], title: str) -> bytes:
 
 def pulldown(updates: list[StateUpdate], setpoint_celsius: int, title: str) -> bytes:
     """Interior temperature over one pull-down episode, with the cabin temperature."""
-    figure, axes = plt.subplots(figsize=(9, 4))
+    figure, axes = _pyplot().subplots(figsize=(9, 4))
     figure.suptitle(title)
     minutes = _minutes_from_start(updates)
     axes.plot(
@@ -137,7 +156,7 @@ def weekly(
 ) -> bytes:
     """Energy per day (discharged against charged, with the net) and the spread of the
     hourly state-of-charge change per cabin temperature band."""
-    figure, (left, right) = plt.subplots(1, 2, figsize=(11, 4.5))
+    figure, (left, right) = _pyplot().subplots(1, 2, figsize=(11, 4.5))
     figure.suptitle(title)
 
     labels = [label for label, _, _ in days]

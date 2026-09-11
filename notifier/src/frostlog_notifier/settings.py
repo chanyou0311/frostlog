@@ -22,8 +22,6 @@ class Settings(BaseSettings):
     gcp_project: str | None = None
     #: Dataset holding the tables of the semantic data contract.
     bigquery_dataset: str = Field(default="frostlog", validation_alias="FROSTLOG_BQ_DATASET")
-    #: Table this service keeps its posted-notification state in.
-    posted_table: str = "notifier_posted"
 
     #: The token itself; for local runs, where there is no Secret Manager.
     slack_bot_token: str | None = None
