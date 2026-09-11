@@ -40,6 +40,11 @@ schema:
       Consumers use it to react to new data without polling.
     dataGranularityDescription: One transform run.
     properties:
+      - name: event
+        logicalType: string
+        required: true
+        description: Which event this is; consumers branch on it, not on which fields are present.
+        examples: ["semantic_updated"]
       - name: run_id
         logicalType: string
         required: true
@@ -102,6 +107,11 @@ schema:
       testing this contract and the raw contract against production data.
     dataGranularityDescription: One daily contract test run.
     properties:
+      - name: event
+        logicalType: string
+        required: true
+        description: Which event this is; consumers branch on it, not on which fields are present.
+        examples: ["quality_report"]
       - name: run_id
         logicalType: string
         required: true

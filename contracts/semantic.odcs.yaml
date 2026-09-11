@@ -219,6 +219,27 @@ schema:
           cooler, capped at 600 (the cooler's heartbeat). Weight for Wh integration
           (W × held_seconds / 3600) and for time-weighted averages. The last update of a
           silent period contributes at most 600 s.
+      - name: discharged_watt_hours
+        logicalType: number
+        physicalType: FLOAT64
+        required: true
+        semanticType: measure
+        description: >
+          discharge_watts × held_seconds / 3600: the battery energy this update accounts
+          for. The one place the integration rule is written; hourly and pull-down energy
+          and any consumer's sums are built from these columns.
+      - name: charged_watt_hours
+        logicalType: number
+        physicalType: FLOAT64
+        required: true
+        semanticType: measure
+        description: charge_watts × held_seconds / 3600.
+      - name: input_watt_hours
+        logicalType: number
+        physicalType: FLOAT64
+        required: true
+        semanticType: measure
+        description: input_watts × held_seconds / 3600.
     quality:
       - name: identity_unique
         type: sql
@@ -270,14 +291,15 @@ schema:
         dimension: completeness
         description: The number of rows per date equals the number of decodable cmd 4402 messages in the raw chunks for that date (checked by the transform against the raw table it loaded).
       - name: fresh_within_a_day
-        type: text
+        type: sql
         dimension: timeliness
         description: >
-          The newest updated_at is within 48 hours of the newest raw upload the producer has
-          seen (the transform keeps up with arrivals). Checked by the producer's daily job
-          and reported in quality_report; not a SQL rule here because the CI dataset is built
-          from historical samples. Raw arrival itself is watched by the collector's
-          healthcheck (contracts/raw.odcs.yaml, timeliness).
+          The newest updated_at is within 24 hours of the newest raw upload (the transform
+          keeps up with arrivals; normally it is minutes). Relative to the raw table, not
+          to the clock, so it holds for the CI dataset too. Whether raw arrives at all is
+          the collector's healthcheck (contracts/raw.odcs.yaml, timeliness).
+        query: SELECT COALESCE(TIMESTAMP_DIFF((SELECT MAX(uploaded_at) FROM raw_cooler), MAX(updated_at), HOUR), 0) FROM {model}
+        mustBeLessThan: 24
 
   - name: fact_cooler_hourly_snapshot
     physicalName: fact_cooler_hourly_snapshot
@@ -463,9 +485,9 @@ schema:
               (SELECT SUM(discharged_watt_hours) FROM {model}) AS hourly_discharged,
               (SELECT SUM(charged_watt_hours) FROM {model}) AS hourly_charged,
               (SELECT SUM(input_watt_hours) FROM {model}) AS hourly_input,
-              (SELECT SUM(discharge_watts * held_seconds / 3600) FROM fact_cooler_state_update) AS atomic_discharged,
-              (SELECT SUM(charge_watts * held_seconds / 3600) FROM fact_cooler_state_update) AS atomic_charged,
-              (SELECT SUM(input_watts * held_seconds / 3600) FROM fact_cooler_state_update) AS atomic_input
+              (SELECT SUM(discharged_watt_hours) FROM fact_cooler_state_update) AS atomic_discharged,
+              (SELECT SUM(charged_watt_hours) FROM fact_cooler_state_update) AS atomic_charged,
+              (SELECT SUM(input_watt_hours) FROM fact_cooler_state_update) AS atomic_input
           ) WHERE ABS(hourly_discharged - atomic_discharged) > 1
              OR ABS(hourly_charged - atomic_charged) > 1
              OR ABS(hourly_input - atomic_input) > 1
