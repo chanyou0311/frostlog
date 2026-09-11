@@ -55,13 +55,28 @@
 -#}
 {% macro frostlog_batch_boot_ids() %}
   {% if execute and is_incremental() %}
-    {#- Straight from the raw table (three columns), not through the staging view,
-        which decodes and dedupes the whole history for a question about two dates. -#}
+    {#- Straight from the raw tables (three columns), not through the staging view,
+        which decodes and dedupes the whole history for a question about two dates.
+
+        Both streams, because the arriving chunk may be what finally anchors a boot's
+        clock rather than what carries its reports: stg_clock_reference takes the
+        anchor from whichever stream holds the boot's first synced record, and that is
+        often an event. The boot's own cooler rows were then shipped under the date its
+        wrong clock said, which is not a date this run was given — so without the
+        events stream here, the anchor would arrive and nothing would be placed again. -#}
     {% set query %}
       select distinct boot_id
       from {{ source('raw', 'raw_cooler') }}
       where cmd = '4402'
         and boot_id is not null
+        and date(regexp_extract(source_key, r'dt=(\d{4}-\d{2}-\d{2})'))
+            in ({{ frostlog_partitions() | join(', ') }})
+
+      union distinct
+
+      select distinct boot_id
+      from {{ source('raw', 'raw_events') }}
+      where boot_id is not null
         and date(regexp_extract(source_key, r'dt=(\d{4}-\d{2}-\d{2})'))
             in ({{ frostlog_partitions() | join(', ') }})
     {% endset %}

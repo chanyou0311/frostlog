@@ -88,6 +88,41 @@ unit_tests:
       rows:
         - {pulldown_key: 's2', trigger: 'rise', outcome: 'interrupted', started_at: '2026-09-06 00:05:00+00', reached_at: null, ended_at: '2026-09-06 00:10:00+00', duration_seconds: null, elapsed_seconds: 300.0, update_count: 2}
 
+  - name: a_wobble_over_the_threshold_does_not_cut_a_pulldown_in_two
+    model: fact_cooler_pulldown
+    description: >
+      The interior does not fall straight. It can dip below setpoint + 5 °C and come
+      back above it while the setpoint is still far off, and that report meets the
+      start rule — but an episode is already open, so it opens nothing. One pull-down
+      of fifteen minutes, not a first one left open for good and a second one of five.
+    given:
+      - input: ref('fact_cooler_state_update')
+        rows:
+          - {state_update_key: 's1', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:00:00+00', held_seconds: 300.0, setpoint_celsius: 0, interior_temperature_celsius: 10, state_of_charge_percent: 100, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's2', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:05:00+00', held_seconds: 300.0, setpoint_celsius: 0, interior_temperature_celsius: 4, state_of_charge_percent: 99, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's3', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:10:00+00', held_seconds: 300.0, setpoint_celsius: 0, interior_temperature_celsius: 6, state_of_charge_percent: 98, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's4', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:15:00+00', held_seconds: 300.0, setpoint_celsius: 0, interior_temperature_celsius: 1, state_of_charge_percent: 97, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+    expect:
+      rows:
+        - {pulldown_key: 's1', trigger: 'start_up', outcome: 'reached', started_at: '2026-09-06 00:00:00+00', reached_at: '2026-09-06 00:15:00+00', ended_at: '2026-09-06 00:15:00+00', interior_temperature_start_celsius: 10, duration_seconds: 900.0, elapsed_seconds: 900.0, state_of_charge_delta_percent: -3, covered_seconds: 900.0, update_count: 4}
+
+  - name: a_rise_after_the_setpoint_was_reached_is_its_own_pulldown
+    model: fact_cooler_pulldown
+    description: >
+      Once an episode has ended, the next report above setpoint + 5 °C opens one of
+      its own: only an open episode holds a later start off.
+    given:
+      - input: ref('fact_cooler_state_update')
+        rows:
+          - {state_update_key: 's1', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:00:00+00', held_seconds: 300.0, setpoint_celsius: 0, interior_temperature_celsius: 10, state_of_charge_percent: 100, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's2', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:05:00+00', held_seconds: 300.0, setpoint_celsius: 0, interior_temperature_celsius: 1, state_of_charge_percent: 99, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's3', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:10:00+00', held_seconds: 300.0, setpoint_celsius: 0, interior_temperature_celsius: 8, state_of_charge_percent: 98, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's4', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:15:00+00', held_seconds: 300.0, setpoint_celsius: 0, interior_temperature_celsius: 0, state_of_charge_percent: 97, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+    expect:
+      rows:
+        - {pulldown_key: 's1', trigger: 'start_up', outcome: 'reached', started_at: '2026-09-06 00:00:00+00', reached_at: '2026-09-06 00:05:00+00', duration_seconds: 300.0, update_count: 2}
+        - {pulldown_key: 's3', trigger: 'rise', outcome: 'reached', started_at: '2026-09-06 00:10:00+00', reached_at: '2026-09-06 00:15:00+00', duration_seconds: 300.0, update_count: 2}
+
   - name: a_corrected_report_is_placed_on_the_date_it_really_happened
     model: fact_cooler_state_update
     overrides:

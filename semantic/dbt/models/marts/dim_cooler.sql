@@ -118,7 +118,12 @@ opened as (
 )
 
 select
-    {{ frostlog_integer_key("concat(o.serial_number, '|', cast(o.version_index as string))") }}
+    -- The key is made of when the version opened, never of how many came before it:
+    -- a handshake that arrives late, or one whose time a clock anchor has just
+    -- corrected, inserts a version in the middle and would renumber every version
+    -- after it. The facts are rebuilt a batch of boots at a time, so the ones left
+    -- alone would keep a key that had come to mean another firmware.
+    {{ frostlog_integer_key("concat(o.serial_number, '|', cast(o.observed_at as string))") }}
         as cooler_key,
     o.serial_number,
     coalesce(n.model, 'everfrost') as model,

@@ -16,6 +16,12 @@
 -- of an hour — interrupted. An episode whose end has not been recorded yet is in
 -- progress and keeps its milestones null.
 --
+-- A report that meets the start rule while an episode is still open does not begin a
+-- second one. The interior does not fall straight: it can dip under setpoint + 5 °C
+-- and come back above it long before it is anywhere near the setpoint, and every such
+-- wobble would otherwise cut the pull-down in two — leaving the first half open for
+-- good and the second half answering "how long did it take" with a few minutes.
+--
 -- The whole fact table is read and the whole table is written: whether a report
 -- starts an episode depends on the one before it and where the episode ends may be
 -- on the day after, so the query has to look at everything anyway. Writing only the
@@ -83,13 +89,53 @@ flagged as (
 
 ),
 
+candidates as (
+
+    select
+        *,
+        above and (discontinuous or not coalesce(previous_above, false)) as opens,
+        at_setpoint or coalesce(breaks_after, false) as terminal
+    from flagged
+
+),
+
+-- Everything from one candidate up to just before the next.
+stretches as (
+
+    select
+        *,
+        countif(opens) over (
+            order by updated_at, state_update_key
+            rows between unbounded preceding and current row
+        ) as stretch
+    from candidates
+
+),
+
+ended as (
+
+    select
+        *,
+        countif(terminal) over (partition by stretch) > 0 as ends_in_stretch
+    from stretches
+
+),
+
+-- A candidate only opens an episode when none is open. An episode was open when the
+-- stretch before this one began — the one its own candidate opened, or an older one
+-- that candidate was not allowed to replace — so whether it ended within that stretch
+-- is the whole question, and it is the same question either way.
 started as (
 
     select
         *,
-        above and (discontinuous or not coalesce(previous_above, false)) as starts_episode,
-        at_setpoint or coalesce(breaks_after, false) as terminal
-    from flagged
+        opens and (
+            stretch = 1
+            or coalesce(
+                lag(ends_in_stretch) over (order by updated_at, state_update_key), false
+            )
+        ) as starts_episode
+    from ended
 
 ),
 

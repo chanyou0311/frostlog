@@ -8,6 +8,15 @@
         tags=['partitioned'],
         on_schema_change='fail',
         contract={'enforced': true},
+        post_hook="""
+            delete from {{ this }} h
+            where not exists (
+                select 1
+                from ({{ frostlog_observed_hours(ref('fact_cooler_state_update')) }}) o
+                where o.first_hour is null
+                   or h.hour_started_at between o.first_hour and o.last_hour
+            )
+        """,
     )
 }}
 
@@ -24,15 +33,14 @@
 -- to another date since the last run (timestamp correction), a day on which nothing
 -- was recorded appears in no chunk at all, and the day before a rebuilt one holds
 -- the reports that reach into it.
+--
+-- What a correction empties is a different matter: a run replaces the partitions its
+-- result has rows for, and a date left with none keeps the rows it had. The post-hook
+-- drops whatever a rebuild has put outside the observed span.
 
 with observed as (
 
-    select
-        min(updated_at) as first_at,
-        max(timestamp_add(
-            updated_at, interval cast(round(held_seconds * 1000) as int64) millisecond
-        )) as last_at
-    from {{ ref('fact_cooler_state_update') }}
+    {{ frostlog_observed_hours(ref('fact_cooler_state_update')) }}
 
 ),
 
@@ -72,6 +80,16 @@ target_days as (
         (select max(day) from wanted_days)
     )) as day
 
+    union distinct
+
+    -- The same the other way, for a chunk of a day the table has already moved past:
+    -- what lies between it and the earliest day there is would otherwise be a hole.
+    select day
+    from unnest(generate_date_array(
+        (select min(day) from wanted_days),
+        (select min(partition_date) from {{ this }})
+    )) as day
+
 ),
 
 {% else %}
@@ -100,13 +118,7 @@ hours as (
     -- The table starts at the first hour observed and stops at the hour the last
     -- held interval runs into, so that the tail of that interval is allocated too.
     cross join observed
-    where hour_started_at between timestamp_trunc(first_at, hour)
-                              and greatest(
-                                      timestamp_trunc(first_at, hour),
-                                      timestamp_trunc(
-                                          timestamp_sub(last_at, interval 1 millisecond), hour
-                                      )
-                                  )
+    where hour_started_at between observed.first_hour and observed.last_hour
 
 ),
 
