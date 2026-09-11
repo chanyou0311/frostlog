@@ -26,7 +26,7 @@ dev = [
 # (and datacontract-cli's duckdb/pyarrow) alongside the service itself.
 transform = [
   "dbt-bigquery>=1.11",
-  "datacontract-cli[s3]>=0.10.38",
+  "datacontract-cli[s3,bigquery]>=0.10.38",
 ]
 
 [build-system]

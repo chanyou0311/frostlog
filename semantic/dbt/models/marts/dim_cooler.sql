@@ -8,22 +8,34 @@
 -- handshake event for it arrived in a chunk that is not here yet — still gets a
 -- row, with an unknown firmware, so that no fact is left without a cooler.
 
-with negotiated as (
-
-    select
-        serial_number,
-        bluetooth_address,
-        chip,
-        firmware_version,
-        negotiated_at as observed_at
-    from {{ ref('stg_cooler_negotiation') }}
-
-),
-
-updates as (
+with updates as (
 
     select serial_number, address as bluetooth_address, model, updated_at
     from {{ ref('stg_cooler_state_update') }}
+
+),
+
+-- The address a cooler was last seen with. Handshake events recorded before the
+-- collector named the address on them take it from here, so an address that was
+-- merely unrecorded does not open a new version.
+addresses as (
+
+    select serial_number, bluetooth_address
+    from updates
+    qualify row_number() over (partition by serial_number order by updated_at desc) = 1
+
+),
+
+negotiated as (
+
+    select
+        n.serial_number,
+        coalesce(n.bluetooth_address, a.bluetooth_address) as bluetooth_address,
+        n.chip,
+        n.firmware_version,
+        n.negotiated_at as observed_at
+    from {{ ref('stg_cooler_negotiation') }} n
+    left join addresses a using (serial_number)
 
 ),
 

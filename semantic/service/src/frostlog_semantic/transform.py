@@ -12,13 +12,13 @@ with concurrency 1 and max-instances 1, which makes Cloud Run the lock.
 
 import json
 import logging
-import os
-import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Protocol
+
+from frostlog_semantic import shell
 
 log = logging.getLogger(__name__)
 
@@ -69,15 +69,7 @@ class DbtTransform:
         ]
         if self._select:
             command += ["--select", self._select]
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=BUILD_TIMEOUT_SECONDS,
-            env={**os.environ, **self._environment},
-            check=False,
-        )
-        output = completed.stdout + completed.stderr
-        if completed.returncode != 0:
-            log.error("dbt build failed (%s)\n%s", completed.returncode, output)
-        return BuildResult(passed=completed.returncode == 0, command=command, output=output)
+        completed = shell.run(command, timeout=BUILD_TIMEOUT_SECONDS, environment=self._environment)
+        if not completed.ok:
+            log.error("dbt build failed (%s)\n%s", completed.returncode, completed.output)
+        return BuildResult(passed=completed.ok, command=command, output=completed.output)

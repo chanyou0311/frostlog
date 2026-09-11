@@ -25,6 +25,7 @@ class FakeWarehouse:
         self.already_loaded = False
         self.runs: list[UploadRun] = []
         self.asked_for_runs: list[str] = []
+        self.lag_hours: float | None = 0.0
 
     def load(self, chunk: RawObject, uploaded_at: datetime) -> LoadResult:
         self.loaded.append((chunk.name, uploaded_at))
@@ -33,6 +34,9 @@ class FakeWarehouse:
     def upload_runs(self, chunk: RawObject) -> list[UploadRun]:
         self.asked_for_runs.append(chunk.name)
         return self.runs
+
+    def transform_lag_hours(self) -> float | None:
+        return self.lag_hours
 
 
 class FakeMetadata:

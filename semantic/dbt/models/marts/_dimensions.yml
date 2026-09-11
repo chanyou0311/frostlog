@@ -21,7 +21,7 @@ models:
         constraints: [{type: not_null}]
       - name: bluetooth_address
         data_type: string
-        constraints: [{type: not_null}]
+        description: Last address seen; null only for a cooler known from handshakes alone.
       - name: chip
         data_type: string
       - name: firmware_version

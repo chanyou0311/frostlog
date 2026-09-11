@@ -53,11 +53,3 @@ class SecretManagerReader:
             return
         self._reported.add(name)
         log.warning("secret %s could not be read (%s)", name, type(exc).__name__)
-
-
-class NoSecrets:
-    """Used where no secret may be read (local runs, tests): everything is missing."""
-
-    def read(self, name: str) -> str | None:
-        log.info("no secret reader configured; %s treated as unset", name)
-        return None

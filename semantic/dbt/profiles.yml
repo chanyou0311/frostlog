@@ -11,7 +11,7 @@
 frostlog:
   target: prod
   outputs:
-    prod:
+    prod: &bigquery
       type: bigquery
       method: oauth
       project: "{{ env_var('FROSTLOG_BQ_PROJECT', 'project-not-set') }}"
@@ -21,13 +21,7 @@ frostlog:
       priority: interactive
       job_retries: 1
       job_execution_timeout_seconds: 600
+    # The CI dataset, otherwise the same connection.
     ci:
-      type: bigquery
-      method: oauth
-      project: "{{ env_var('FROSTLOG_BQ_PROJECT', 'project-not-set') }}"
+      <<: *bigquery
       dataset: "{{ env_var('FROSTLOG_BQ_DATASET_CI', 'frostlog_ci') }}"
-      location: "{{ env_var('FROSTLOG_BQ_LOCATION', 'us-central1') }}"
-      threads: 4
-      priority: interactive
-      job_retries: 1
-      job_execution_timeout_seconds: 600

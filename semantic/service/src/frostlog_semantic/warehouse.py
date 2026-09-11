@@ -56,6 +56,8 @@ class Warehouse(Protocol):
 
     def upload_runs(self, chunk: RawObject) -> list[UploadRun]: ...
 
+    def transform_lag_hours(self) -> float | None: ...
+
 
 def append_job_id(object_name: str, attempt: int = 1) -> str:
     """Id of the job that appends ``object_name`` to its raw table.
@@ -79,21 +81,23 @@ def _digest(object_name: str) -> str:
 class BigQueryWarehouse:
     """:class:`Warehouse` over google-cloud-bigquery."""
 
-    def __init__(self, client: bigquery.Client, project: str, dataset: str, location: str) -> None:
+    def __init__(
+        self,
+        client: bigquery.Client,
+        project: str,
+        dataset: str,
+        location: str,
+        semantic_dataset: str | None = None,
+    ) -> None:
         self._client = client
         self._project = project
         self._dataset = dataset
+        self._semantic_dataset = semantic_dataset or dataset
         self._location = location
 
     def load(self, chunk: RawObject, uploaded_at: datetime) -> LoadResult:
         """A chunk from the raw bucket, loaded once however often it is delivered."""
-        schema = raw_schema.SCHEMAS[chunk.table]
-        target = self._ensure_table(chunk.table, schema)
-        stage = self._table(stage_table_name(chunk.table, chunk.name))
-        rows = self._stage(stage, chunk.table, uri=chunk.uri)
-        already_loaded = self._append(target, stage, chunk.name, uploaded_at, schema)
-        self._client.delete_table(stage, not_found_ok=True)
-        return LoadResult(table=chunk.table, rows=rows, already_loaded=already_loaded)
+        return self._load(chunk.table, chunk.name, uploaded_at, uri=chunk.uri)
 
     def load_file(
         self, path: Path, table: str, source_key: str, uploaded_at: datetime
@@ -103,13 +107,43 @@ class BigQueryWarehouse:
         Nothing redelivers a local file, so the append gets a fresh job id and the
         table can be rebuilt from the samples as often as one likes.
         """
+        return self._load(table, source_key, uploaded_at, path=path, idempotent=False)
+
+    def _load(
+        self,
+        table: str,
+        source_key: str,
+        uploaded_at: datetime,
+        *,
+        uri: str | None = None,
+        path: Path | None = None,
+        idempotent: bool = True,
+    ) -> LoadResult:
         schema = raw_schema.SCHEMAS[table]
         target = self._ensure_table(table, schema)
         stage = self._table(stage_table_name(table, source_key))
-        rows = self._stage(stage, table, path=path)
-        self._append(target, stage, source_key, uploaded_at, schema, idempotent=False)
+        rows = self._stage(stage, table, uri=uri, path=path)
+        already_loaded = self._append(
+            target, stage, source_key, uploaded_at, schema, idempotent=idempotent
+        )
         self._client.delete_table(stage, not_found_ok=True)
-        return LoadResult(table=table, rows=rows, already_loaded=False)
+        return LoadResult(table=table, rows=rows, already_loaded=already_loaded)
+
+    def transform_lag_hours(self) -> float | None:
+        """Hours between the newest raw upload and the newest state update the tables hold.
+
+        Large when chunks landed but the transform did not follow; ``None`` while either
+        table is still empty.
+        """
+        sql = (
+            "SELECT TIMESTAMP_DIFF("
+            f"(SELECT MAX(uploaded_at) FROM `{self._table('raw_cooler')}`), "
+            f"(SELECT MAX(updated_at) FROM `{self._semantic_table('fact_cooler_state_update')}`), "
+            "MINUTE) / 60"
+        )
+        rows = list(self._client.query(sql, location=self._location).result())
+        value = rows[0][0] if rows else None
+        return None if value is None else float(value)
 
     def reset_table(self, table: str) -> None:
         """Drop a raw table and create it empty (the CI dataset is rebuilt, not added to)."""
@@ -139,6 +173,9 @@ class BigQueryWarehouse:
 
     def _table(self, name: str) -> str:
         return f"{self._project}.{self._dataset}.{name}"
+
+    def _semantic_table(self, name: str) -> str:
+        return f"{self._project}.{self._semantic_dataset}.{name}"
 
     def _ensure_table(self, name: str, schema: list[bigquery.SchemaField]) -> str:
         """Create the raw table if it is not there yet; return its full name."""

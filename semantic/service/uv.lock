@@ -376,6 +376,9 @@ wheels = [
 ]
 
 [package.optional-dependencies]
+bigquery = [
+    { name = "ibis-framework", extra = ["bigquery"] },
+]
 s3 = [
     { name = "duckdb" },
     { name = "duckdb-extension-aws" },
@@ -676,7 +679,7 @@ dev = [
     { name = "ty" },
 ]
 transform = [
-    { name = "datacontract-cli", extra = ["s3"] },
+    { name = "datacontract-cli", extra = ["bigquery", "s3"] },
     { name = "dbt-bigquery" },
 ]
 
@@ -700,7 +703,7 @@ dev = [
     { name = "ty", specifier = ">=0.0.78" },
 ]
 transform = [
-    { name = "datacontract-cli", extras = ["s3"], specifier = ">=0.10.38" },
+    { name = "datacontract-cli", extras = ["s3", "bigquery"], specifier = ">=0.10.38" },
     { name = "dbt-bigquery", specifier = ">=1.11" },
 ]
 
@@ -859,6 +862,22 @@ pandas = [
     { name = "pandas" },
     { name = "pandas-gbq" },
     { name = "pyarrow" },
+]
+
+[[package]]
+name = "google-cloud-bigquery-storage"
+version = "2.41.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/45/de/d499a74cad60fe548986504da00e20177cb1d3c8bfbb1fc2347e518f8cbd/google_cloud_bigquery_storage-2.41.0.tar.gz", hash = "sha256:b999295f08ce7e2d6a260d245b5b9843ba1603f6164515c9f0cb5d81ee71a5d2", size = 315252, upload-time = "2026-08-25T19:18:34.837Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b2/c9/1dc5941062fd196959ab343174d91f132cb2308cc3c80deb7dd194543977/google_cloud_bigquery_storage-2.41.0-py3-none-any.whl", hash = "sha256:a7511f05aedb533e01f029e30b26ff073ca66d672f701bb736024553697b589c", size = 308013, upload-time = "2026-08-24T21:55:17.697Z" },
 ]
 
 [[package]]
@@ -1130,6 +1149,18 @@ wheels = [
 ]
 
 [package.optional-dependencies]
+bigquery = [
+    { name = "db-dtypes" },
+    { name = "google-cloud-bigquery" },
+    { name = "google-cloud-bigquery-storage" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pandas-gbq" },
+    { name = "pyarrow" },
+    { name = "pyarrow-hotfix" },
+    { name = "pydata-google-auth" },
+    { name = "rich" },
+]
 duckdb = [
     { name = "duckdb" },
     { name = "numpy" },

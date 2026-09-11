@@ -8,12 +8,12 @@ per-arrival guarantees (types, not-null, uniqueness) are enforced by dbt itself.
 
 import json
 import logging
-import os
-import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
+
+from frostlog_semantic import shell
 
 log = logging.getLogger(__name__)
 
@@ -86,15 +86,12 @@ class DatacontractTester:
                 "--output-format",
                 "json",
             ]
-            completed = subprocess.run(
+            completed = shell.run(
                 command,
-                capture_output=True,
-                text=True,
                 timeout=TEST_TIMEOUT_SECONDS,
-                env={**os.environ, **self._environment, **(environment or {})},
-                check=False,
+                environment={**self._environment, **(environment or {})},
             )
-            output = completed.stdout + completed.stderr
+            output = completed.output
             failed = failed_checks(report.read_text()) if report.exists() else None
         if failed is None:
             log.error("datacontract test %s (%s) produced no report\n%s", contract, server, output)
@@ -103,7 +100,7 @@ class DatacontractTester:
             log.error("%s failed %d check(s): %s", contract_id, len(failed), ", ".join(failed))
         return ContractTestResult(
             contract_id=contract_id,
-            passed=completed.returncode == 0 and not failed,
+            passed=completed.ok and not failed,
             failed_checks=failed,
             output=output,
         )

@@ -20,7 +20,6 @@ with negotiated as (
       and uptime_seconds is not null
       and ts is not null
       and serial is not null
-      and address is not null
 
 ),
 

@@ -17,7 +17,7 @@ Neither endpoint authenticates: only Cloud Run IAM (OIDC) may call them.
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -39,7 +39,7 @@ from frostlog_semantic.events import (
     QualityReport,
     SemanticUpdated,
 )
-from frostlog_semantic.secret_manager import NoSecrets, SecretManagerReader, SecretReader
+from frostlog_semantic.secret_manager import SecretManagerReader, SecretReader
 from frostlog_semantic.settings import Settings, resolve_project, topic_path
 from frostlog_semantic.transform import DbtTransform, Transform
 from frostlog_semantic.warehouse import (
@@ -50,6 +50,10 @@ from frostlog_semantic.warehouse import (
 )
 
 log = logging.getLogger(__name__)
+
+#: contracts/semantic.odcs.yaml, fact_cooler_state_update.quality.fresh_within_a_day.
+FRESHNESS_CHECK = "fresh_within_a_day"
+FRESHNESS_HOURS = 48
 
 
 @dataclass
@@ -62,7 +66,7 @@ class Services:
     transform: Transform
     publisher: Publisher
     tester: ContractTester
-    secrets: SecretReader = field(default_factory=NoSecrets)
+    secrets: SecretReader
     ping: Callable[[str], None] = healthcheck.ping
 
 
@@ -87,7 +91,9 @@ def build_services(settings: Settings | None = None) -> Services:
     )
     return Services(
         settings=settings,
-        warehouse=BigQueryWarehouse(client, project, settings.raw_dataset, settings.bq_location),
+        warehouse=BigQueryWarehouse(
+            client, project, settings.raw_dataset, settings.bq_location, settings.bq_dataset
+        ),
         metadata=StorageObjectMetadata(storage.Client(project=project)),
         transform=DbtTransform(
             project_dir=settings.dbt_project_dir,
@@ -201,9 +207,13 @@ def contract_test(services: Services) -> dict[str, Any]:
             {},
         ),
     ]
+    results = [
+        _test_contract(services, contract_id, path, server, environment)
+        for contract_id, path, server, environment in wanted
+    ]
+    results[1] = _with_currency(services, results[1])
     reports = []
-    for contract_id, path, server, environment in wanted:
-        result = _test_contract(services, contract_id, path, server, environment)
+    for result in results:
         _publish_report(services, run_id, result)
         reports.append(
             {
@@ -238,6 +248,27 @@ def _test_contract(
         return ContractTestResult(
             contract_id, passed=False, failed_checks=[f"not tested: {type(exc).__name__}"]
         )
+
+
+def _with_currency(services: Services, result: ContractTestResult) -> ContractTestResult:
+    """The semantic contract's timeliness rule: the tables keep up with raw arrivals.
+
+    It is a text rule in the contract rather than SQL because the CI dataset is built
+    from historical samples; here, against production, it is checked like the others.
+    """
+    try:
+        lag = services.warehouse.transform_lag_hours()
+    except Exception:
+        log.exception("measuring the transform lag failed")
+        lag = None
+    if lag is not None and lag <= FRESHNESS_HOURS:
+        return result
+    return ContractTestResult(
+        result.contract_id,
+        passed=False,
+        failed_checks=[*result.failed_checks, FRESHNESS_CHECK],
+        output=result.output,
+    )
 
 
 def _publish_report(services: Services, run_id: str, result: ContractTestResult) -> None:
