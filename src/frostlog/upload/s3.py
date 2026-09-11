@@ -1,11 +1,14 @@
 """The S3 operations the uploader needs: LIST under a prefix, HEAD and PUT of one object."""
 
+import logging
 from typing import Protocol
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from botocore.exceptions import ConnectionError as TransportError
+
+log = logging.getLogger(__name__)
 
 
 class Offline(Exception):
@@ -86,3 +89,13 @@ class S3ObjectStore:
             )
         except TransportError as exc:
             raise Offline(str(exc)) from exc
+        except ClientError as exc:
+            # The key may only create objects, never overwrite them. A PUT whose
+            # response was lost is retried by the client, and the retry is refused:
+            # if the object is there with the same end offset, the first PUT landed.
+            if exc.response.get("Error", {}).get("Code") != "AccessDenied":
+                raise
+            existing = self.head(key)
+            if existing is None or existing.get("end") != metadata.get("end"):
+                raise
+            log.info("%s: already in the bucket; the refused PUT was a resend", key)
