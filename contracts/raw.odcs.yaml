@@ -19,8 +19,11 @@ description:
     events of the collector itself. Nothing is aggregated, filtered or corrected.
   usage: >
     Read by the semantic data product (frostlog-semantic) to build the dimensional model.
-    Rows are immutable facts; interpretation errors are fixed downstream by re-reading
-    `frames`/`plain`, never by rewriting raw.
+    A row's original — `frames`, and `plain` where decryption verified — is never
+    rewritten. What a row means may be revised: an interpretation error is fixed
+    downstream by reading those bytes again, and a message type that becomes decodable
+    later may have its `payload` filled in. Filling it in rewrites the object and has to
+    load it again, so it takes a migration rather than the arrival path.
   limitations: >
     Data only arrives while the Pi is on the home Wi-Fi (evenings indoors and mornings
     during pre-cooling). Records made right after a reboot may carry a wrong `ts` until
