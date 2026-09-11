@@ -294,12 +294,18 @@ schema:
         type: sql
         dimension: timeliness
         description: >
-          The newest updated_at is within 24 hours of the newest raw upload (the transform
-          keeps up with arrivals; normally it is minutes). Relative to the raw table, not
-          to the clock, so it holds for the CI dataset too. Whether raw arrives at all is
-          the collector's healthcheck (contracts/raw.odcs.yaml, timeliness).
-        query: SELECT COALESCE(TIMESTAMP_DIFF((SELECT MAX(uploaded_at) FROM raw_cooler), MAX(updated_at), HOUR), 0) FROM {model}
-        mustBeLessThan: 24
+          Every raw chunk that arrived more than 24 hours ago is reflected here: no chunk
+          with decodable state reports is missing from this table's source_key values. The
+          rule is about arrival and reflection, not about how old the observations are —
+          a trip's data arrives days after it was recorded and must still pass once loaded.
+          Whether raw arrives at all is the collector's healthcheck
+          (contracts/raw.odcs.yaml, timeliness).
+        query: >
+          SELECT COUNT(DISTINCT r.source_key) FROM raw_cooler r
+          WHERE r.cmd = '4402' AND r.payload IS NOT NULL
+            AND r.uploaded_at < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+            AND NOT EXISTS (SELECT 1 FROM {model} f WHERE f.source_key = r.source_key)
+        mustBe: 0
 
   - name: fact_cooler_hourly_snapshot
     physicalName: fact_cooler_hourly_snapshot
