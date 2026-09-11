@@ -57,7 +57,7 @@ line-length = 100
 target-version = "py313"
 # The cloud services under semantics/ are their own uv project with their own
 # dependencies; the ci workflow checks them from there.
-extend-exclude = ["semantics"]
+extend-exclude = ["semantics", "notifier"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
@@ -68,7 +68,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 [tool.ty.src]
 # The cloud services have their own project, environment and checks; the Pi's
 # environment does not contain their dependencies.
-exclude = ["semantics"]
+exclude = ["notifier", "semantics"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

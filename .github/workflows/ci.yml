@@ -15,7 +15,6 @@ env:
   DATACONTRACT_CLI: "datacontract-cli[s3]==1.2.0"
 
 jobs:
-
   # The collector: the Pi's package at the repository root.
   collector:
     runs-on: ubuntu-latest
@@ -76,6 +75,24 @@ jobs:
       - run: make -C semantics install
       - run: make -C semantics check
 
+  # The Slack data application.
+  notifier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: notifier
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run ty check
+      - run: uv run pytest
+
   # The container images must at least build; deploy.yml pushes them from main.
   images:
     runs-on: ubuntu-latest
@@ -86,6 +103,8 @@ jobs:
         include:
           - dockerfile: semantics/Dockerfile
             context: . # bakes in contracts/
+          - dockerfile: notifier/Dockerfile
+            context: notifier
     steps:
       - uses: actions/checkout@v7
       - run: docker build -f ${{ matrix.dockerfile }} ${{ matrix.context }}

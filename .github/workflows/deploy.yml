@@ -12,6 +12,7 @@ on:
     branches: [main]
     paths:
       - "semantics/**"
+      - "notifier/**"
       - "contracts/**"
       - ".github/workflows/deploy.yml"
   workflow_dispatch:
@@ -34,11 +35,16 @@ jobs:
       matrix:
         include:
           # semantics builds from the repository root (it bakes in contracts/), and its
-          # image is what the contract-test job runs too.
+          # image is what the contract-test job runs too; notifier is self-contained in
+          # its own directory.
           - service: frostlog-semantics
             dockerfile: semantics/Dockerfile
             context: .
             job: frostlog-contracts
+          - service: frostlog-notifier
+            dockerfile: notifier/Dockerfile
+            context: notifier
+            job: ""
     steps:
       - uses: actions/checkout@v7
 
