@@ -1,0 +1,95 @@
+version: 2
+
+# Band dimensions are joined by range, lower <= value < upper, an empty bound
+# meaning infinity. They are data (a seed), not code: changing a band changes how
+# the facts are read, never the facts themselves.
+
+models:
+  - name: band_setpoint
+    description: Setpoint bands, 冷凍 and 冷蔵.
+    config: {contract: {enforced: true}}
+    columns: &celsius
+      - name: band_key
+        data_type: int64
+        constraints: [{type: not_null}]
+        data_tests: [unique]
+      - name: label
+        data_type: string
+        constraints: [{type: not_null}]
+      - name: lower_celsius
+        data_type: float64
+        description: Inclusive lower bound; null is minus infinity.
+      - name: upper_celsius
+        data_type: float64
+        description: Exclusive upper bound; null is plus infinity.
+      - name: sort_order
+        data_type: int64
+        constraints: [{type: not_null}]
+
+  - name: band_ambient_temperature
+    description: Cabin temperature bands, 5 °C steps.
+    config: {contract: {enforced: true}}
+    columns: *celsius
+
+  - name: band_interior_temperature
+    description: Interior temperature bands.
+    config: {contract: {enforced: true}}
+    columns: *celsius
+
+  - name: band_interior_delta
+    description: Bands of interior temperature minus setpoint, i.e. how far above target.
+    config: {contract: {enforced: true}}
+    columns: *celsius
+
+  - name: band_humidity
+    description: Humidity bands, 20 % steps.
+    config: {contract: {enforced: true}}
+    columns: &percent
+      - name: band_key
+        data_type: int64
+        constraints: [{type: not_null}]
+        data_tests: [unique]
+      - name: label
+        data_type: string
+        constraints: [{type: not_null}]
+      - name: lower_percent
+        data_type: float64
+      - name: upper_percent
+        data_type: float64
+      - name: sort_order
+        data_type: int64
+        constraints: [{type: not_null}]
+
+  - name: band_state_of_charge
+    description: State of charge bands.
+    config: {contract: {enforced: true}}
+    columns: *percent
+
+  - name: band_input_power
+    description: External input power bands.
+    config: {contract: {enforced: true}}
+    columns: &watts
+      - name: band_key
+        data_type: int64
+        constraints: [{type: not_null}]
+        data_tests: [unique]
+      - name: label
+        data_type: string
+        constraints: [{type: not_null}]
+      - name: lower_watts
+        data_type: float64
+      - name: upper_watts
+        data_type: float64
+      - name: sort_order
+        data_type: int64
+        constraints: [{type: not_null}]
+
+  - name: band_charge_power
+    description: Battery charge power bands.
+    config: {contract: {enforced: true}}
+    columns: *watts
+
+  - name: band_discharge_power
+    description: Battery discharge power bands.
+    config: {contract: {enforced: true}}
+    columns: *watts

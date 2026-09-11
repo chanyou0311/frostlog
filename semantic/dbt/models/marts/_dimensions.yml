@@ -1,0 +1,93 @@
+version: 2
+
+models:
+  - name: dim_cooler
+    description: The cooler, with a history of its firmware (type 2 slowly changing dimension).
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: cooler_key
+        data_type: int64
+        constraints: [{type: not_null}]
+        data_tests: [unique]
+      - name: serial_number
+        data_type: string
+        description: Natural key.
+        constraints: [{type: not_null}]
+      - name: model
+        data_type: string
+        description: Decoder that read the cooler's messages.
+        constraints: [{type: not_null}]
+      - name: bluetooth_address
+        data_type: string
+        constraints: [{type: not_null}]
+      - name: chip
+        data_type: string
+      - name: firmware_version
+        data_type: string
+      - name: valid_from
+        data_type: timestamp
+        description: Inclusive start of validity.
+        constraints: [{type: not_null}]
+      - name: valid_to
+        data_type: timestamp
+        description: Exclusive end of validity; null for the current row.
+      - name: is_current
+        data_type: bool
+        constraints: [{type: not_null}]
+
+  - name: dim_battery
+    description: The removable battery packs seen so far, plus the "no battery" row.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: battery_key
+        data_type: int64
+        description: 0 on the absent row.
+        constraints: [{type: not_null}]
+        data_tests: [unique]
+      - name: serial_number
+        data_type: string
+        description: Natural key; null on the absent row.
+        data_tests: [unique]
+      - name: is_absent
+        data_type: bool
+        constraints: [{type: not_null}]
+      - name: first_seen_at
+        data_type: timestamp
+
+  - name: dim_date
+    description: Calendar in Japan Standard Time.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: date_key
+        data_type: int64
+        description: yyyymmdd.
+        constraints: [{type: not_null}]
+        data_tests: [unique]
+      - name: date
+        data_type: date
+        constraints: [{type: not_null}]
+      - name: day_of_week
+        data_type: int64
+        description: 1 = Monday ... 7 = Sunday (ISO).
+        constraints: [{type: not_null}]
+      - name: iso_week
+        data_type: int64
+        constraints: [{type: not_null}]
+      - name: iso_year
+        data_type: int64
+        constraints: [{type: not_null}]
+      - name: month
+        data_type: int64
+        constraints: [{type: not_null}]
+      - name: is_weekend
+        data_type: bool
+        constraints: [{type: not_null}]
+      - name: is_japanese_holiday
+        data_type: bool
+        constraints: [{type: not_null}]

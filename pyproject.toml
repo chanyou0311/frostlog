@@ -55,12 +55,20 @@ dbus-fast = { SKIP_CYTHON = "1" }
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+# The cloud services under semantic/ are their own uv project with their own
+# dependencies; the ci workflow checks them from there.
+extend-exclude = ["semantic"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E501"]  # captured byte sequences are long
+
+[tool.ty.src]
+# The cloud services have their own project, environment and checks; the Pi's
+# environment does not contain their dependencies.
+exclude = ["semantic"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

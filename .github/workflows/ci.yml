@@ -63,3 +63,60 @@ jobs:
           done
       - name: datacontract test (collection contract vs sample chunks)
         run: uvx --python 3.13 --from "$DATACONTRACT_CLI" datacontract test contracts/collection.odcs.yaml --server samples
+
+  # The semantic data product without a warehouse: service checks and dbt parse.
+  semantic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: make -C semantic install
+      - run: make -C semantic check
+
+  # The container images must at least build; deploy.yml pushes them from main.
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dockerfile: semantic/Dockerfile
+            context: . # bakes in contracts/
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -f ${{ matrix.dockerfile }} ${{ matrix.context }}
+
+  # What needs BigQuery: the sample chunks are loaded into the CI dataset, the
+  # dbt project is built and unit-tested there, and the semantic contract is
+  # tested against the result. Runs only once the GCP project is wired up
+  # (repository variable FROSTLOG_GCP_PROJECT_NUMBER), as frostlog-ci via
+  # Workload Identity Federation; one run at a time because the dataset is shared.
+  warehouse:
+    if: ${{ vars.FROSTLOG_GCP_PROJECT_NUMBER != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: frostlog-ci-warehouse
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      FROSTLOG_GCP_PROJECT: chanyou-frostlog # the service's settings (sample load)
+      FROSTLOG_BQ_PROJECT: chanyou-frostlog  # dbt's profiles.yml (build, unit tests)
+      FROSTLOG_BQ_DATASET_CI: frostlog_ci
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ vars.FROSTLOG_GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: frostlog-ci@${{ env.FROSTLOG_GCP_PROJECT }}.iam.gserviceaccount.com
+      - run: make -C semantic install
+      - run: make -C semantic ci-warehouse
