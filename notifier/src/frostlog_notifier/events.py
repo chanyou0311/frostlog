@@ -36,6 +36,9 @@ class UploadRun(BaseModel):
 
 
 class SemanticUpdated(BaseModel):
+    """The producer keeps its own copy (semantic/service/src/frostlog_semantic/events.py);
+    the contract in contracts/semantic-events.odcs.yaml is what both must match."""
+
     model_config = ConfigDict(extra="ignore")
 
     #: The contract's discriminator; parse() branches on it.

@@ -48,6 +48,20 @@ class PostedNotifications:
         )
         return bool(rows) and int(rows[0]["posted_count"]) > 0
 
+    def posted_keys(self, kind: str, keys: list[str]) -> set[str]:
+        """Which of ``keys`` were posted as ``kind``: one query for the whole batch."""
+        if not keys:
+            return set()
+        rows = self._warehouse.rows(
+            f"""
+              -- name: posted_keys
+              SELECT key FROM {self._table}
+              WHERE kind = @kind AND key IN UNNEST(@keys)
+            """,
+            {"kind": kind, "keys": keys},
+        )
+        return {str(row["key"]) for row in rows}
+
     def latest_coverage_end(self, kind: str) -> datetime | None:
         """How far the notifications of ``kind`` have covered so far."""
         rows = self._warehouse.rows(

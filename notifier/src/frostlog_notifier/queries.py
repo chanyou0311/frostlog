@@ -28,13 +28,10 @@ class StateUpdate(_Row):
     charge_watts: int
     discharge_watts: int
     ambient_temperature_celsius: float | None = None
-    ambient_humidity_percent: float | None = None
 
 
 class HourlySnapshot(_Row):
     hour_started_at: datetime
-    date_key: int
-    hour_of_day: int
     covered_seconds: float
     state_of_charge_start_percent: int | None = None
     state_of_charge_end_percent: int | None = None
@@ -83,7 +80,7 @@ class Energy(_Row):
 _STATE_UPDATE_COLUMNS = """
   updated_at, setpoint_celsius, interior_temperature_celsius, state_of_charge_percent,
   battery_state, external_input, input_watts, charge_watts, discharge_watts,
-  ambient_temperature_celsius, ambient_humidity_percent
+  ambient_temperature_celsius
 """
 
 _PULLDOWN_COLUMNS = """
@@ -169,7 +166,7 @@ def hourly_snapshots(warehouse: Warehouse, start: datetime, end: datetime) -> li
     sql = f"""
       -- name: hourly_snapshots
       SELECT
-        hour_started_at, date_key, hour_of_day, covered_seconds,
+        hour_started_at, covered_seconds,
         state_of_charge_start_percent, state_of_charge_end_percent,
         state_of_charge_delta_percent, discharged_watt_hours, charged_watt_hours,
         interior_temperature_celsius, setpoint_celsius, ambient_temperature_celsius,

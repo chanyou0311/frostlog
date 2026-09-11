@@ -26,12 +26,13 @@ OUTCOME = {"reached": "到達", "interrupted": "中断"}
 
 def build_all(
     warehouse: Warehouse,
-    is_posted: Callable[[str, str], bool],
+    posted_keys: Callable[[str, list[str]], set[str]],
     now: datetime,
 ) -> list[Notification]:
     """A notification for each finished episode not yet posted, oldest first."""
     finished = queries.finished_pulldowns_between(warehouse, now - LOOKBACK, now)
-    pending = [episode for episode in finished if not is_posted(PULLDOWN, episode.pulldown_key)]
+    already = posted_keys(PULLDOWN, [episode.pulldown_key for episode in finished])
+    pending = [episode for episode in finished if episode.pulldown_key not in already]
     if len(pending) > PER_RUN:
         log.info("%d pull-downs pending; posting the oldest %d", len(pending), PER_RUN)
     return [_notification(warehouse, episode) for episode in pending[:PER_RUN]]

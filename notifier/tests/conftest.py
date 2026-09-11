@@ -48,6 +48,12 @@ class FakeWarehouse:
                 if row["kind"] == given["kind"] and row["key"] == given["key"]
             ]
             return [{"posted_count": len(matched)}]
+        if name == "posted_keys":
+            return [
+                {"key": row["key"]}
+                for row in self.posted
+                if row["kind"] == given["kind"] and row["key"] in given["keys"]
+            ]
         if name == "latest_coverage_end":
             ends = [
                 row["coverage_end"]
@@ -136,7 +142,6 @@ def state_update(updated_at: datetime, **overrides: Any) -> dict[str, Any]:
         "charge_watts": 0,
         "discharge_watts": 32,
         "ambient_temperature_celsius": 24.5,
-        "ambient_humidity_percent": 51.0,
     }
     return row | overrides
 
@@ -149,8 +154,6 @@ def hourly(
 ) -> dict[str, Any]:
     row = {
         "hour_started_at": hour_started_at,
-        "date_key": int(hour_started_at.strftime("%Y%m%d")),
-        "hour_of_day": hour_started_at.hour,
         "covered_seconds": 3600.0,
         "state_of_charge_start_percent": state_of_charge_end_percent - delta,
         "state_of_charge_end_percent": state_of_charge_end_percent,
@@ -169,8 +172,6 @@ def hourly(
 def empty_hour(hour_started_at: datetime) -> dict[str, Any]:
     return {
         "hour_started_at": hour_started_at,
-        "date_key": int(hour_started_at.strftime("%Y%m%d")),
-        "hour_of_day": hour_started_at.hour,
         "covered_seconds": 0.0,
         "state_of_charge_start_percent": None,
         "state_of_charge_end_percent": None,

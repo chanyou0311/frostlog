@@ -68,7 +68,6 @@ def build_notifier(
         warehouse=warehouse,
         posted=PostedNotifications(warehouse),
         slack=slack,
-        settings=settings,
         now=now,
     )
 

@@ -73,6 +73,10 @@ class BigQueryWarehouse:
 
         given = []
         for name, value in parameters.items():
+            if isinstance(value, list):
+                # The only arrays passed are lists of keys.
+                given.append(bigquery.ArrayQueryParameter(name, "STRING", [str(v) for v in value]))
+                continue
             # bool before int: bool is a subclass of int and BOOL is the narrower type.
             kind = next(
                 (t for t in self._parameter_types if isinstance(value, t)),

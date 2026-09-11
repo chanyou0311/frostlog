@@ -30,13 +30,11 @@ class Notifier:
         warehouse: Warehouse,
         posted: PostedNotifications,
         slack: Poster,
-        settings: Settings,
         now: Callable[[], datetime] = clock.now,
     ) -> None:
         self._warehouse = warehouse
         self._posted = posted
         self._slack = slack
-        self._settings = settings
         self._now = now
 
     def handle(self, event: Event) -> list[Notification]:
@@ -63,7 +61,9 @@ class Notifier:
             event.upload_runs,
             self._posted.latest_coverage_end(HOMECOMING),
         )
-        candidates.extend(pulldowns.build_all(self._warehouse, self._posted.is_posted, self._now()))
+        candidates.extend(
+            pulldowns.build_all(self._warehouse, self._posted.posted_keys, self._now())
+        )
         candidates.extend(self._weekly_if_closed())
         return self._post_all(candidates)
 
@@ -163,5 +163,4 @@ def build(settings: Settings | None = None) -> Notifier:
         warehouse=warehouse,
         posted=PostedNotifications(warehouse),
         slack=Slack(token, configuration.slack_channel, configuration.dry_run_directory),
-        settings=configuration,
     )

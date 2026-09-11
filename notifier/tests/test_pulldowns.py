@@ -32,8 +32,8 @@ def warehouse_with(*episodes: dict) -> FakeWarehouse:
     )
 
 
-def never_posted(kind: str, key: str) -> bool:
-    return False
+def never_posted(kind: str, keys: list[str]) -> set[str]:
+    return set()
 
 
 def test_a_finished_episode_becomes_a_notification() -> None:
@@ -61,7 +61,7 @@ def test_an_interrupted_episode_says_how_long_it_ran() -> None:
 
 def test_an_episode_already_posted_is_left_alone() -> None:
     warehouse = warehouse_with(pulldown_row(START))
-    assert pulldowns.build_all(warehouse, lambda kind, key: key == "pd-202609110812", NOW) == []
+    assert pulldowns.build_all(warehouse, lambda kind, keys: {"pd-202609110812"}, NOW) == []
 
 
 def test_a_backlog_drains_oldest_first() -> None:
