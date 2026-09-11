@@ -26,8 +26,9 @@ description:
     during pre-cooling). Records made right after a reboot may carry a wrong `ts` until
     NTP has synchronized (see `ts_synced`); `boot_id` + `uptime_seconds` give the exact
     order and spacing regardless. Environment readings exist only while the Pi is
-    connected to the cooler over BLE. Lines torn by a power cut are dropped by the
-    uploader; NUL-filled lines may exist in the Pi's local files but are never shipped.
+    connected to the cooler over BLE. A line the uploader cannot read as one JSON
+    object — torn by a power cut, left empty or filled with NUL bytes — may exist in
+    the Pi's local files but is never shipped.
 
 servers:
   - server: gcs
