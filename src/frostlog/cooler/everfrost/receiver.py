@@ -22,7 +22,7 @@ from frostlog import clock, records
 from frostlog.ambient.sampler import EnvironmentSampler
 from frostlog.cooler.base import Sink
 from frostlog.cooler.everfrost import MODEL, ble, handshake
-from frostlog.cooler.everfrost.decoder import CMD_STATE, decode_state
+from frostlog.cooler.everfrost.decoder import CMD_STATE, decode_state_or_none
 from frostlog.cooler.everfrost.protocol import (
     PATTERN_NEGOTIATION,
     FragmentError,
@@ -174,7 +174,7 @@ class EverfrostReceiver:
         if plain is not None:
             info["plain"] = plain.hex()
             if frame.cmd.hex() == CMD_STATE:
-                info["payload"] = _decoded(plain)
+                info["payload"] = decode_state_or_none(plain)
         await self._message(session.address, _hex(notifications), **info)
         if frame.pattern == PATTERN_NEGOTIATION:
             await self._negotiate(frame, session, state)
@@ -193,6 +193,7 @@ class EverfrostReceiver:
             device = state.handshake.device
             self._event(
                 "ble_negotiated",
+                address=session.address,
                 variant=state.handshake.variant,
                 mtu=state.handshake.mtu,
                 chip=device.chip,
@@ -216,15 +217,6 @@ def _plain(frame: Frame, state: "_SessionState") -> bytes | None:
     except (ProtocolError, ValueError):
         return None
     return plain if verified else None
-
-
-def _decoded(plain: bytes) -> records.CoolerPayload | None:
-    try:
-        return decode_state(plain)
-    except (ProtocolError, ValueError) as exc:
-        # The bytes are kept; a decoder that learns to read them can be run over them later.
-        log.warning("state report not decoded: %s", exc)
-        return None
 
 
 def _header(frame: Frame) -> dict[str, Any]:

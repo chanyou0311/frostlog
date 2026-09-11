@@ -41,8 +41,8 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
-from frostlog.cooler.everfrost.decoder import CMD_STATE, decode_state
-from frostlog.cooler.everfrost.protocol import PATTERN_NEGOTIATION, ProtocolError
+from frostlog.cooler.everfrost.decoder import CMD_STATE, decode_state_or_none
+from frostlog.cooler.everfrost.protocol import PATTERN_NEGOTIATION
 from frostlog.upload.cache import NAME as UPLOAD_CACHE
 
 log = logging.getLogger("migrate")
@@ -209,11 +209,8 @@ def _sent_in_the_clear(old: dict[str, Any]) -> bool:
 
 
 def _decoded(plain: str) -> dict[str, Any] | None:
-    try:
-        return decode_state(bytes.fromhex(plain)).model_dump(exclude_none=True)
-    except (ProtocolError, ValueError) as exc:
-        log.warning("state report not decoded: %s", exc)
-        return None
+    payload = decode_state_or_none(bytes.fromhex(plain))
+    return None if payload is None else payload.model_dump(exclude_none=True)
 
 
 def migrate_event(row: dict[str, Any]) -> dict[str, Any]:

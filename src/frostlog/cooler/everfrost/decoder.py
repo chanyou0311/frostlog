@@ -11,6 +11,7 @@ next unknown message type: it splits a payload into its parameters and shows
 each in several readings, without deciding what any of them mean.
 """
 
+import logging
 import math
 import struct
 from typing import Any
@@ -23,6 +24,8 @@ from frostlog.cooler.everfrost.protocol import (
     parse_parameters,
     payload_from_notifications,
 )
+
+log = logging.getLogger(__name__)
 
 #: The state report; the only command whose body is decoded.
 CMD_STATE = "4402"
@@ -51,6 +54,19 @@ _DISPLAY_UNITS = {0: "C", 1: "F"}
 _BATTERY_STATES = {0: "idle", 1: "charging", 2: "discharging", 3: "full", 4: "absent"}
 _PROTECTION_LEVELS = {0: "L", 1: "M", 2: "H"}
 _BRIGHTNESS_LEVELS = {0: "low", 1: "mid", 2: "high"}
+
+
+def decode_state_or_none(plain: bytes) -> records.CoolerPayload | None:
+    """``decode_state`` for a message that may not be a readable state report.
+
+    The bytes are kept by the caller either way; a decoder that learns to read them
+    can be run over them later.
+    """
+    try:
+        return decode_state(plain)
+    except (ProtocolError, ValueError) as exc:
+        log.warning("state report not decoded: %s", exc)
+        return None
 
 
 def decode_state(plain: bytes) -> records.CoolerPayload:

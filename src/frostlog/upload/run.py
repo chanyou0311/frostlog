@@ -36,9 +36,7 @@ class Upload:
         self._root = root
         self._store = object_store
         self.counts: Counter[str] = Counter()
-        self.chunk_count = 0
         self.line_count = 0
-        self.reached = False
 
     def run(self) -> Iterator[Action]:
         cache = OffsetCache.load(self._root, self._store.location)
@@ -60,6 +58,15 @@ class Upload:
             )
 
     @property
+    def chunk_count(self) -> int:
+        return self.counts["upload"]
+
+    @property
+    def reached(self) -> bool:
+        """The bucket answered this run (a cached skip does not count)."""
+        return any(self.counts[name] for name in REACHED)
+
+    @property
     def failed(self) -> int:
         return self.counts["failed"]
 
@@ -75,10 +82,7 @@ class Upload:
     def _counted(self, actions: Iterator[Action]) -> Iterator[Action]:
         for action in actions:
             self.counts[action.action] += 1
-            if action.action in REACHED:
-                self.reached = True
             if action.action == "upload":
-                self.chunk_count += 1
                 self.line_count += action.line_count
             yield action
 
