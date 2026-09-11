@@ -176,26 +176,6 @@ def test_a_failing_check_is_reported_and_the_switch_is_not_pinged(fakes: Fakes) 
     assert len(fakes.publisher.published) == 2
 
 
-def test_tables_that_fell_behind_the_raw_arrivals_fail_the_semantic_contract(
-    fakes: Fakes,
-) -> None:
-    fakes.warehouse.lag_hours = 49.5
-
-    result = contract_test(fakes.services)
-
-    assert result["passed"] is False
-    assert result["contracts"][1]["failed_checks"] == ["fresh_within_a_day"]
-    assert fakes.pinged == []
-
-
-def test_an_empty_warehouse_is_not_fresh_yet(fakes: Fakes) -> None:
-    fakes.warehouse.lag_hours = None
-
-    result = contract_test(fakes.services)
-
-    assert result["contracts"][1]["failed_checks"] == ["fresh_within_a_day"]
-
-
 def test_a_contract_test_that_crashes_is_a_finding_not_a_broken_request(fakes: Fakes) -> None:
     # A timeout used to escape as a 500, and the second contract was never tested.
     fakes.tester.raises["frostlog-raw"] = TimeoutError("datacontract test took too long")

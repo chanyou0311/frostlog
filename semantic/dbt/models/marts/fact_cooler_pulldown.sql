@@ -38,8 +38,8 @@ with updates as (
         state_of_charge_percent,
         battery_state,
         external_input,
-        discharge_watts,
-        charge_watts,
+        discharged_watt_hours,
+        charged_watt_hours,
         ambient_temperature_celsius
     from {{ ref('fact_cooler_state_update') }}
 
@@ -161,10 +161,8 @@ episodes as (
         -- The report that ended the episode is the moment it ended, so it holds for
         -- no time within it.
         sum(if(position = end_position, 0.0, held_seconds)) as covered_seconds,
-        sum(if(position = end_position, 0.0, discharge_watts * held_seconds / 3600))
-            as discharged_watt_hours,
-        sum(if(position = end_position, 0.0, charge_watts * held_seconds / 3600))
-            as charged_watt_hours,
+        sum(if(position = end_position, 0.0, discharged_watt_hours)) as discharged_watt_hours,
+        sum(if(position = end_position, 0.0, charged_watt_hours)) as charged_watt_hours,
         safe_divide(
             sum(if(position = end_position, 0.0,
                    ambient_temperature_celsius * held_seconds)),

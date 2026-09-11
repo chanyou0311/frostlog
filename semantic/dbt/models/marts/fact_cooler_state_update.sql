@@ -69,7 +69,11 @@ select
     u.discharge_watts,
     u.ambient_temperature_celsius,
     u.ambient_humidity_percent,
-    u.held_seconds
+    u.held_seconds,
+    -- The one place the integration rule is written (contract: watts × held_seconds / 3600).
+    u.discharge_watts * u.held_seconds / 3600 as discharged_watt_hours,
+    u.charge_watts * u.held_seconds / 3600 as charged_watt_hours,
+    u.input_watts * u.held_seconds / 3600 as input_watt_hours
 from updates u
 left join {{ ref('dim_cooler') }} c
     on c.serial_number = u.serial_number

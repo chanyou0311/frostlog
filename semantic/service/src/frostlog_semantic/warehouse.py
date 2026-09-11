@@ -56,8 +56,6 @@ class Warehouse(Protocol):
 
     def upload_runs(self, chunk: RawObject) -> list[UploadRun]: ...
 
-    def transform_lag_hours(self) -> float | None: ...
-
 
 def append_job_id(object_name: str, attempt: int = 1) -> str:
     """Id of the job that appends ``object_name`` to its raw table.
@@ -81,18 +79,10 @@ def _digest(object_name: str) -> str:
 class BigQueryWarehouse:
     """:class:`Warehouse` over google-cloud-bigquery."""
 
-    def __init__(
-        self,
-        client: bigquery.Client,
-        project: str,
-        dataset: str,
-        location: str,
-        semantic_dataset: str | None = None,
-    ) -> None:
+    def __init__(self, client: bigquery.Client, project: str, dataset: str, location: str) -> None:
         self._client = client
         self._project = project
         self._dataset = dataset
-        self._semantic_dataset = semantic_dataset or dataset
         self._location = location
 
     def load(self, chunk: RawObject, uploaded_at: datetime) -> LoadResult:
@@ -129,22 +119,6 @@ class BigQueryWarehouse:
         self._client.delete_table(stage, not_found_ok=True)
         return LoadResult(table=table, rows=rows, already_loaded=already_loaded)
 
-    def transform_lag_hours(self) -> float | None:
-        """Hours between the newest raw upload and the newest state update the tables hold.
-
-        Large when chunks landed but the transform did not follow; ``None`` while either
-        table is still empty.
-        """
-        sql = (
-            "SELECT TIMESTAMP_DIFF("
-            f"(SELECT MAX(uploaded_at) FROM `{self._table('raw_cooler')}`), "
-            f"(SELECT MAX(updated_at) FROM `{self._semantic_table('fact_cooler_state_update')}`), "
-            "MINUTE) / 60"
-        )
-        rows = list(self._client.query(sql, location=self._location).result())
-        value = rows[0][0] if rows else None
-        return None if value is None else float(value)
-
     def reset_table(self, table: str) -> None:
         """Drop a raw table and create it empty (the CI dataset is rebuilt, not added to)."""
         self._client.delete_table(self._table(table), not_found_ok=True)
@@ -173,9 +147,6 @@ class BigQueryWarehouse:
 
     def _table(self, name: str) -> str:
         return f"{self._project}.{self._dataset}.{name}"
-
-    def _semantic_table(self, name: str) -> str:
-        return f"{self._project}.{self._semantic_dataset}.{name}"
 
     def _ensure_table(self, name: str, schema: list[bigquery.SchemaField]) -> str:
         """Create the raw table if it is not there yet; return its full name."""

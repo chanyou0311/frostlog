@@ -115,6 +115,18 @@ models:
         data_type: float64
         description: Seconds this state is taken to hold, capped at the 600 s heartbeat.
         constraints: [{type: not_null}]
+      - name: discharged_watt_hours
+        data_type: float64
+        description: discharge_watts × held_seconds / 3600 — the integration rule, written once.
+        constraints: [{type: not_null}]
+      - name: charged_watt_hours
+        data_type: float64
+        description: charge_watts × held_seconds / 3600.
+        constraints: [{type: not_null}]
+      - name: input_watt_hours
+        data_type: float64
+        description: input_watts × held_seconds / 3600.
+        constraints: [{type: not_null}]
 
   - name: fact_cooler_hourly_snapshot
     description: >

@@ -7,7 +7,7 @@ contract's schemas describe the message body itself.
 
 import logging
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -32,6 +32,8 @@ class UploadRun(BaseModel):
 class SemanticUpdated(BaseModel):
     """Published after a transform run that rebuilt date partitions."""
 
+    #: The contract's discriminator: consumers branch on this, not on field presence.
+    event: Literal["semantic_updated"] = "semantic_updated"
     run_id: str
     published_at: datetime
     date_keys: list[int]
@@ -49,6 +51,7 @@ class SemanticUpdated(BaseModel):
 class QualityReport(BaseModel):
     """Published once per contract by the daily contract test run."""
 
+    event: Literal["quality_report"] = "quality_report"
     run_id: str
     published_at: datetime
     contract_id: str

@@ -14,7 +14,7 @@ import argparse
 import json
 import logging
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
 from frostlog_semantic import raw_objects
@@ -41,6 +41,17 @@ def source_key(path: Path, stream: str) -> str:
     return f"v1/{stream}/dt={path.stem}/{0:012d}.jsonl"
 
 
+def uploaded_at(path: Path) -> datetime:
+    """When this sample would have been uploaded: just after its UTC day closed.
+
+    Real chunks are uploaded minutes after they are recorded; the contract's
+    currency rule compares uploads with updates, so the samples keep that shape
+    instead of claiming to have been uploaded at test time.
+    """
+    day = date.fromisoformat(path.stem)
+    return datetime.combine(day + timedelta(days=1), time(0, 5), tzinfo=UTC)
+
+
 def target_dates(chunks: list[tuple[Path, str]]) -> list[str]:
     """The JST dates the samples touch, as dbt's ``target_dates`` variable wants them."""
     days: set[str] = set()
@@ -64,13 +75,12 @@ def load(settings: Settings) -> None:
         settings.bq_dataset_ci,
         settings.bq_location,
     )
-    uploaded_at = datetime.now(UTC)
     for table in sorted({raw_objects.TABLES[stream] for _, stream in chunks}):
         warehouse.reset_table(table)
         log.info("%s.%s: emptied", settings.bq_dataset_ci, table)
     for path, stream in chunks:
         result = warehouse.load_file(
-            path, raw_objects.TABLES[stream], source_key(path, stream), uploaded_at
+            path, raw_objects.TABLES[stream], source_key(path, stream), uploaded_at(path)
         )
         log.info("%s: %d row(s) into %s", path.name, result.rows, result.table)
 
