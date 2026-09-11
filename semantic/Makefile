@@ -26,8 +26,9 @@ lint:
 	cd service && uv run ruff format --check .
 	cd service && uv run ty check
 
+# The contract-rule tests transpile the contract SQL and run it on DuckDB (transform group).
 test:
-	cd service && uv run pytest
+	cd service && uv run --group transform pytest
 
 parse:
 	$(DBT) parse $(DIRS)
