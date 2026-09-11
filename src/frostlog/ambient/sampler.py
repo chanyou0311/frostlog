@@ -1,7 +1,7 @@
 """Measure the air around the Pi at the moment a cooler message arrives.
 
 The environment belongs to the message it was measured with: what matters is
-the cabin temperature while the cooler was drawing the power it reported, not a
+how warm it was around the cooler while it drew the power it reported, not a
 reading taken at some other second. The I2C read blocks for about 0.1 s, so it
 runs in a thread and the event loop keeps taking notifications meanwhile.
 

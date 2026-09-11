@@ -5,7 +5,7 @@ Raspberry Pi で記録し、クラウドのバケットへ送るデータロガ�
 `contracts/collection.odcs.yaml`（収集データプロダクトのデータ契約）。
 
 - `frostlog read cooler` — 冷蔵庫のメッセージを受け取り、生のバイト列・復号した本文・意味づけした値、
-  そのときの車内の温湿度（DHT20）を 1 行に記録する
+  そのときの周辺の温湿度（DHT20）を 1 行に記録する
 - `frostlog upload DIR` — 溜めた JSONL を S3 互換 API 経由で GCS へ送る。再実行しても同じ結果になる
 - `frostlog read ambient` — 温湿度センサーだけを読む（配線確認用）
 - `frostlog decode` — 未知のメッセージをパラメータに分解して眺める（開発用）

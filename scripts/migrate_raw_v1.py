@@ -48,7 +48,7 @@ from frostlog.upload.cache import NAME as UPLOAD_CACHE
 
 log = logging.getLogger("migrate")
 
-#: How far a cabin reading may be from a message and still describe its moment.
+#: How far an environment reading may be from a message and still describe its moment.
 ENVIRONMENT_WINDOW_SECONDS = 15.0
 
 #: The device's replies while the Solix negotiation is still in the clear: up to
@@ -127,7 +127,7 @@ def address_at(
 def environment_at(
     index: dict[str, list[tuple[float, dict[str, Any]]]], boot_id: str, uptime: float
 ) -> dict[str, Any] | None:
-    """The cabin reading nearest to the message, if one was taken close enough to it."""
+    """The environment reading nearest to the message, if one was taken close enough to it."""
     readings = index.get(boot_id, [])
     position = bisect.bisect_left(readings, uptime, key=lambda reading: reading[0])
     candidates = readings[max(0, position - 1) : position + 1]
