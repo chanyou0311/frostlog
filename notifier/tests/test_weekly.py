@@ -95,17 +95,17 @@ def test_a_week_that_pays_for_itself_needs_no_driving() -> None:
 def test_the_drop_per_hour_is_reported_per_cabin_temperature_band() -> None:
     summary = summarize()
     bands = {band.label: band for band in summary.bands}
-    assert set(bands) == {"20-25", "25-30"}
-    assert bands["20-25"].percent_per_hour == -1.0
-    assert bands["25-30"].percent_per_hour == -2.0
+    assert set(bands) == {"20..25 °C", "25..30 °C"}
+    assert bands["20..25 °C"].percent_per_hour == -1.0
+    assert bands["25..30 °C"].percent_per_hour == -2.0
     # The plugged-in hours are left out of the bands entirely.
-    assert bands["20-25"].hours == 24 * 7 - 5 - 7 - 6 * 7
+    assert bands["20..25 °C"].hours == 24 * 7 - 5 - 7 - 6 * 7
 
 
 def test_the_hours_from_full_use_the_band_with_the_most_hours() -> None:
     summary = summarize()
     assert summary.most_common_band is not None
-    assert summary.most_common_band.label == "20-25"
+    assert summary.most_common_band.label == "20..25 °C"
     assert summary.hours_from_full == 100.0
 
 
@@ -136,12 +136,6 @@ def test_pulldowns_are_counted_and_averaged_by_trigger() -> None:
     assert triggers["start_up"].mean_duration_seconds == (46 * 60 + 1800) / 2
     assert triggers["rise"].count == 1
     assert triggers["rise"].mean_duration_seconds == 600.0
-
-
-def test_the_band_label_comes_from_the_bounds_not_the_seed() -> None:
-    assert weekly.band_label(BANDS[0]) == "<5"
-    assert weekly.band_label(BANDS[-1]) == ">=40"
-    assert weekly.band_label(BANDS[1]) == "5-10"
 
 
 def test_the_week_to_summarise_is_the_one_that_just_ended() -> None:

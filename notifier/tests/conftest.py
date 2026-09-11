@@ -227,17 +227,15 @@ def upload_run(
 
 def ambient_band_rows() -> list[dict[str, Any]]:
     """The seeded cabin temperature bands: 5 °C steps from < 5 to >= 40."""
-    bands = [{"band_key": 1, "label": "5 °C 未満", "lower_celsius": None, "upper_celsius": 5.0}]
+    bands = [{"band_key": 1, "label": "< 5 °C", "lower_celsius": None, "upper_celsius": 5.0}]
     for index, lower in enumerate(range(5, 40, 5), start=2):
         bands.append(
             {
                 "band_key": index,
-                "label": f"{lower}-{lower + 5} °C",
+                "label": f"{lower}..{lower + 5} °C",
                 "lower_celsius": float(lower),
                 "upper_celsius": float(lower + 5),
             }
         )
-    bands.append(
-        {"band_key": 10, "label": "40 °C 以上", "lower_celsius": 40.0, "upper_celsius": None}
-    )
+    bands.append({"band_key": 9, "label": ">= 40 °C", "lower_celsius": 40.0, "upper_celsius": None})
     return [band | {"sort_order": band["band_key"]} for band in bands]

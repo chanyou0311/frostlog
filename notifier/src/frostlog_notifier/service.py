@@ -7,7 +7,7 @@ message can never produce a second message.
 
 import logging
 from collections.abc import Callable
-from datetime import date, datetime, timedelta
+from datetime import datetime
 
 from frostlog_notifier import clock, homecoming, pulldowns, quality, queries, weekly
 from frostlog_notifier.events import Event, QualityReport, SemanticUpdated
@@ -82,21 +82,16 @@ class Notifier:
     def _weekly_backlog(self, iso_year: int, iso_week: int) -> list[Notification]:
         """The due week and the unposted weeks before it, oldest first.
 
-        A trip of several weeks brings several closed weeks home at once; each one
-        that has data and no summary yet gets its own message. The walk back stops
-        at the first week that yields nothing — already posted, or without data —
-        and after WEEKLY_BACKLOG_WEEKS at the latest.
+        A trip of several weeks brings several closed weeks home at once, and a
+        week's data can arrive after a later week was already posted; so every one
+        of the last WEEKLY_BACKLOG_WEEKS closed weeks that has data and no summary
+        yet gets its own message.
         """
         pending: list[Notification] = []
         year, week = iso_year, iso_week
         for _ in range(WEEKLY_BACKLOG_WEEKS):
-            summaries = self._weekly(year, week)
-            if not summaries:
-                break
-            pending.extend(summaries)
-            year, week, _weekday = (
-                date.fromisocalendar(year, week, 1) - timedelta(days=7)
-            ).isocalendar()
+            pending.extend(self._weekly(year, week))
+            year, week = clock.previous_iso_week(clock.iso_week_bounds(year, week)[0])
         pending.reverse()
         return pending
 

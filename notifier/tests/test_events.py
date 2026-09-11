@@ -8,6 +8,7 @@ import pytest
 from frostlog_notifier.events import QualityReport, SemanticUpdated, Undecodable, parse
 
 SEMANTIC_UPDATED = {
+    "event": "semantic_updated",
     "run_id": "2026-09-11T12:03:00Z/17",
     "published_at": "2026-09-11T12:03:07Z",
     "date_keys": [20260910, 20260911],
@@ -16,6 +17,7 @@ SEMANTIC_UPDATED = {
 }
 
 QUALITY_REPORT = {
+    "event": "quality_report",
     "run_id": "2026-09-11T21:00:00Z",
     "published_at": "2026-09-11T21:00:41Z",
     "contract_id": "frostlog-semantic",
@@ -76,7 +78,7 @@ def test_an_upload_run_without_a_start_falls_back_to_its_end() -> None:
     assert event.upload_runs[0].began_at == datetime(2026, 9, 11, 12, 3, 2, tzinfo=UTC)
 
 
-def test_a_quality_report_is_told_apart_by_its_fields() -> None:
+def test_a_quality_report_is_told_apart_by_its_event_field() -> None:
     event = parse(envelope(QUALITY_REPORT))
     assert isinstance(event, QualityReport)
     assert event.failed_checks == ["hours_are_dense", "fresh_within_a_day"]
@@ -94,7 +96,8 @@ def test_unknown_fields_are_ignored() -> None:
         {"message": {"data": "not base64 at all !!"}},
         {"message": {"data": base64.b64encode(b"[1, 2]").decode()}},
         {"message": {"data": base64.b64encode(b"{}").decode()}},
-        envelope({"build_passed": True}),
+        envelope({"build_passed": True}),  # no event field
+        envelope(SEMANTIC_UPDATED | {"event": "something_else"}),
     ],
 )
 def test_a_message_that_is_not_a_known_event_is_refused(body: dict[str, Any]) -> None:

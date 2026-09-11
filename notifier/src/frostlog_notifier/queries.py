@@ -134,12 +134,12 @@ def state_update_count_between(warehouse: Warehouse, start: datetime, end: datet
 
 
 def energy_between(warehouse: Warehouse, start: datetime, end: datetime) -> Energy:
-    """Battery energy discharged and charged in (start, end], integrated over held time."""
+    """Battery energy discharged and charged in (start, end] (the fact's own Wh columns)."""
     sql = f"""
       -- name: energy_between
       SELECT
-        COALESCE(SUM(discharge_watts * held_seconds / 3600), 0.0) AS discharged_watt_hours,
-        COALESCE(SUM(charge_watts * held_seconds / 3600), 0.0) AS charged_watt_hours
+        COALESCE(SUM(discharged_watt_hours), 0.0) AS discharged_watt_hours,
+        COALESCE(SUM(charged_watt_hours), 0.0) AS charged_watt_hours
       FROM {warehouse.table("fact_cooler_state_update")}
       WHERE updated_at > @start AND updated_at <= @end
     """

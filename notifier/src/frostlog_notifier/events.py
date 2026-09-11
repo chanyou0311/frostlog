@@ -8,7 +8,7 @@ import base64
 import binascii
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -38,6 +38,8 @@ class UploadRun(BaseModel):
 class SemanticUpdated(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    #: The contract's discriminator; parse() branches on it.
+    event: Literal["semantic_updated"] = "semantic_updated"
     run_id: str
     published_at: datetime
     date_keys: list[int]
@@ -50,6 +52,7 @@ class SemanticUpdated(BaseModel):
 class QualityReport(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    event: Literal["quality_report"] = "quality_report"
     run_id: str
     published_at: datetime
     contract_id: str
@@ -90,11 +93,11 @@ def parse(body: Any) -> Event:
         raise Undecodable(f"not a Pub/Sub push envelope: {exc}") from exc
     if not isinstance(payload, dict):
         raise Undecodable(f"event is {type(payload).__name__}, not an object")
+    kind = payload.get("event")
+    model = {"semantic_updated": SemanticUpdated, "quality_report": QualityReport}.get(kind)
+    if model is None:
+        raise Undecodable(f"unknown event {kind!r}")
     try:
-        if "contract_id" in payload:
-            return QualityReport.model_validate(payload)
-        if "build_passed" in payload:
-            return SemanticUpdated.model_validate(payload)
+        return model.model_validate(payload)
     except ValidationError as exc:
         raise Undecodable(f"event does not match the contract: {exc}") from exc
-    raise Undecodable(f"unknown event with fields {sorted(payload)}")

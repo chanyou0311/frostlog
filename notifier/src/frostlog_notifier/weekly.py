@@ -68,22 +68,6 @@ class Summary:
         return self.charged_watt_hours - self.discharged_watt_hours
 
 
-def band_label(band: Band) -> str:
-    """An ASCII label from the band's bounds; the seeded labels may be Japanese."""
-    low, high = band.lower_celsius, band.upper_celsius
-    if low is None and high is None:
-        return "all"
-    if low is None:
-        return f"<{_bound(high)}"
-    if high is None:
-        return f">={_bound(low)}"
-    return f"{_bound(low)}-{_bound(high)}"
-
-
-def _bound(value: float | None) -> str:
-    return "" if value is None else f"{value:g}"
-
-
 def _band_of(bands: list[Band], value: float) -> Band | None:
     """The band a value falls in; bounds are half-open, [lower, upper)."""
     for band in bands:
@@ -173,7 +157,7 @@ def _band_drops(hours: list[HourlySnapshot], bands: list[Band]) -> list[BandDrop
         deltas[band.band_key].append(hour.state_of_charge_delta_percent / span)
     return [
         BandDrop(
-            label=band_label(band),
+            label=band.label,
             percent_per_hour=summed[key] / covered[key],
             hours=covered[key],
             samples=deltas[key],
@@ -254,14 +238,14 @@ def _text(summary: Summary, key: str, days: list[date]) -> str:
     ]
     if summary.bands:
         drops = " / ".join(
-            f"{band.label} °C {formatting.number(band.percent_per_hour)} %/h"
+            f"{band.label} {formatting.number(band.percent_per_hour)} %/h"
             f" ({formatting.hours(band.hours)})"
             for band in summary.bands
         )
         lines.append(f"外気温帯別 SoC 変化 (外部入力なし): {drops}")
     if summary.most_common_band:
         lines.append(
-            f"100 % からの持ち時間 (最頻帯 {summary.most_common_band.label} °C):"
+            f"100 % からの持ち時間 (最頻帯 {summary.most_common_band.label}):"
             f" {formatting.hours(summary.hours_from_full)}"
         )
     if summary.triggers:
