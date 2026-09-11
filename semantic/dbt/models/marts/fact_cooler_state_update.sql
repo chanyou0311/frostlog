@@ -1,4 +1,4 @@
-{% set batch_boots = frostlog_batch_boot_ids(ref('stg_cooler_state_update')) %}
+{% set batch_boots = frostlog_batch_boot_ids() %}
 
 {{
     config(

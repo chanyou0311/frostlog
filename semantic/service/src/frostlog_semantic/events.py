@@ -30,7 +30,12 @@ class UploadRun(BaseModel):
 
 
 class SemanticUpdated(BaseModel):
-    """Published after a transform run that rebuilt date partitions."""
+    """Published after a transform run that rebuilt date partitions.
+
+    The consumer keeps its own copy of these models (notifier/src/frostlog_notifier/
+    events.py): the two services deploy separately, and the contract in
+    contracts/semantic-events.odcs.yaml is what both must match.
+    """
 
     #: The contract's discriminator: consumers branch on this, not on field presence.
     event: Literal["semantic_updated"] = "semantic_updated"

@@ -27,10 +27,7 @@ deduplicated as (
 
     select *
     from negotiated
-    qualify row_number() over (
-        partition by boot_id, uptime_seconds
-        order by uploaded_at desc, source_key desc
-    ) = 1
+    {{ frostlog_latest_arrival() }}
 
 )
 

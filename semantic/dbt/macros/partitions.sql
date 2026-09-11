@@ -53,12 +53,17 @@
   table, or nothing is pruned. So the ids are fetched once and written into the
   SQL as literals. Parsing and unit tests never query — there is no run to batch.
 -#}
-{% macro frostlog_batch_boot_ids(relation) %}
+{% macro frostlog_batch_boot_ids() %}
   {% if execute and is_incremental() %}
+    {#- Straight from the raw table (three columns), not through the staging view,
+        which decodes and dedupes the whole history for a question about two dates. -#}
     {% set query %}
       select distinct boot_id
-      from {{ relation }}
-      where chunk_date in ({{ frostlog_partitions() | join(', ') }})
+      from {{ source('raw', 'raw_cooler') }}
+      where cmd = '4402'
+        and boot_id is not null
+        and date(regexp_extract(source_key, r'dt=(\d{4}-\d{2}-\d{2})'))
+            in ({{ frostlog_partitions() | join(', ') }})
     {% endset %}
     {% do return(frostlog_checked_ids(run_query(query).columns[0].values())) %}
   {% endif %}
@@ -88,3 +93,13 @@
     ({% for value in values %}'{{ value }}'{{ ", " if not loop.last }}{% endfor %})
   {%- endif -%}
 {%- endmacro %}
+
+
+{#- A chunk re-cut after a partial upload can deliver the same record twice; the
+    copy that arrived last wins. Both staging models dedupe with this. -#}
+{% macro frostlog_latest_arrival() %}
+    qualify row_number() over (
+        partition by boot_id, uptime_seconds
+        order by uploaded_at desc, source_key desc
+    ) = 1
+{% endmacro %}
