@@ -3,14 +3,16 @@
 Every line is handed to the kernel as soon as it is written, so readers (and
 ``tail -f``) see it at once and the OS puts it on disk within seconds. A power
 cut can lose those seconds and tear the final line; the next run continues on
-a fresh line, so a torn line stays a line of its own that does not parse, and
-readers skip it (see :func:`read_lines`).
+a fresh line. The uploader and migration accept only one JSON object per line
+(see :func:`parse_line`), so a torn fragment stays local even after a later run
+terminates it with a newline.
 """
 
+import json
 import os
 from collections.abc import Iterator
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 from frostlog import records
 from frostlog.records import Record
@@ -86,14 +88,28 @@ def append_line(root: Path, record: Record) -> None:
         os.close(descriptor)
 
 
-def readable(line: bytes) -> bool:
-    """Can a reader use this line of a record file?
+def parse_line(line: bytes) -> dict[str, Any] | None:
+    """The record a line holds, or ``None`` when it is not one JSON object.
 
-    A power cut can leave a line empty or filled with NUL bytes. The raw contract
-    says such lines never reach the bucket; the uploader and the migration both
-    decide with this one rule.
+    One line that does not parse fails the load of the whole chunk downstream, so
+    the uploader and the migration decide with the same parser rather than with
+    two spellings of "looks fine".
     """
-    return bool(line.strip()) and b"\0" not in line
+    try:
+        row = json.loads(line)
+    except ValueError:
+        return None
+    return row if isinstance(row, dict) else None
+
+
+def readable(line: bytes) -> bool:
+    """Can this line of a record file reach the bucket?
+
+    The raw contract shipping rule is one JSON object per line, which leaves
+    behind the empty line, the NUL-filled line and the fragment a power cut tore
+    off — including one a later run has since terminated with a newline.
+    """
+    return parse_line(line) is not None
 
 
 def list_files(root: Path) -> list[Path]:

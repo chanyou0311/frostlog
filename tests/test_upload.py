@@ -133,11 +133,14 @@ def test_a_torn_final_line_is_never_shipped(tmp_path: Path) -> None:
     store = FakeStore()
     list(sync(tmp_path, store))
     assert _lines(store, COOLER_PREFIX) == ['{"a":1}', '{"a":2}']
-    # Once the recorder has started a fresh line, the torn one stays behind for good.
+    # The recorder terminates the fragment to start a fresh line of its own. That
+    # makes it a complete line, not a shippable one: the bucket never sees it,
+    # because one line that does not parse fails the load of the whole chunk and
+    # the object cannot be rewritten.
     with (tmp_path / f"cooler/{DAY}.jsonl").open("a", encoding="utf-8") as file:
         file.write('\n{"a":3}\n')
     list(sync(tmp_path, store))
-    assert _lines(store, COOLER_PREFIX) == ['{"a":1}', '{"a":2}', '{"a"', '{"a":3}']
+    assert _lines(store, COOLER_PREFIX) == ['{"a":1}', '{"a":2}', '{"a":3}']
 
 
 def test_lines_a_power_cut_left_unreadable_are_left_out_of_the_chunk(tmp_path: Path) -> None:
@@ -312,15 +315,37 @@ def test_a_file_only_the_cache_calls_complete_is_never_deleted(tmp_path: Path) -
     day = _day(sync_module.KEEP_DAYS + 1)
     _populate(tmp_path, day)
     store = FakeStore()
+    store.fail_on = {f"v1/cooler/dt={day}/000000000000.jsonl.gz"}
     cache = OffsetCache.load(tmp_path, store.location)
     cooler = tmp_path / f"cooler/{day}.jsonl"
     cache.set(tmp_path, cooler, cooler.stat().st_size)
     actions = {action.key: action.action for action in sync(tmp_path, store, cache)}
-    assert actions[f"v1/cooler/dt={day}/"] == "cached"
+    assert actions[f"v1/cooler/dt={day}/"] == "failed"
     assert cooler.exists()
     # The events file of the same day went to the bucket, so it may go.
     assert actions[f"events/{day}.jsonl"] == "delete"
     assert not (tmp_path / f"events/{day}.jsonl").exists()
+
+
+def test_a_file_the_cache_skips_is_asked_about_again_once_it_may_be_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A day file stops growing, so the cache would otherwise hide it from retention.
+
+    Skipping it for good would leave the bucket's answer unasked, and only that
+    answer lets the file go: the Pi would keep every day it has ever recorded.
+    """
+    _populate(tmp_path)
+    store = FakeStore()
+    cache = OffsetCache.load(tmp_path, store.location)
+    list(sync(tmp_path, store, cache))
+    cooler = tmp_path / f"cooler/{DAY}.jsonl"
+    assert cooler.exists()  # yesterday's: uploaded, too young to go
+    monkeypatch.setattr(sync_module, "KEEP_DAYS", 0)
+    actions = {action.key: action.action for action in sync(tmp_path, store, cache)}
+    assert actions[COOLER_PREFIX] == "skip"
+    assert actions[f"cooler/{DAY}.jsonl"] == "delete"
+    assert not cooler.exists()
 
 
 # --- the run around sync: its own events, the exit status, the watchdog ----------------
@@ -375,6 +400,29 @@ def test_a_run_that_never_reached_the_bucket_records_nothing(tmp_path: Path) -> 
     run = Upload(tmp_path, store)
     list(run.run())
     assert [event["kind"] for event in _events(tmp_path)] == ["x"]
+    assert not run.clean
+
+
+def test_a_run_that_lost_the_bucket_part_way_is_not_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bucket answered for the files the run got to before it went away.
+
+    That is not a clean run: it stopped where it was, and the watchdog would hear
+    that everything is up to date while a file is still waiting to be sent.
+    """
+    _populate(tmp_path)
+    store = FakeStore()
+    list(sync(tmp_path, store))
+    _write(tmp_path, "cooler", DAY, '{"a":1}\n{"a":2}\n')
+
+    def gone(*_args: object, **_kwargs: object) -> None:
+        raise Offline("no route to host")
+
+    monkeypatch.setattr(store, "put", gone)
+    run = Upload(tmp_path, store)
+    list(run.run())
+    assert run.reached
     assert not run.clean
 
 

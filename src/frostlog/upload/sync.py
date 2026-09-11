@@ -7,10 +7,11 @@ starts at, e.g. ``v1/cooler/dt=2026-09-06/000000122880.jsonl.gz``. An object
 records the offsets it covers in its metadata (``start``, ``end``) and is never
 rewritten with different bytes: the same start always means the same lines, so
 resending after a failure just puts the same object again. What an object holds
-are the whole lines of that byte range that a reader can use: a line torn by a
-power cut is never in a range to begin with, and one left empty or filled with
-NUL bytes is dropped from the object while the range keeps covering it, because
-a single NUL line fails the load of the whole chunk downstream.
+are the whole lines of that byte range that parse as one JSON object. A final
+line without a newline is not in a range yet; a torn fragment later terminated
+by a newline, an empty or NUL-filled line, or any other unreadable line is
+dropped while the range keeps covering it, because a single unreadable line
+fails the load of the whole chunk downstream.
 
 The bucket is the record of what has been uploaded. Nothing that matters is kept
 locally: a run lists the prefix, reads the ``end`` of the last chunk and continues
@@ -117,7 +118,11 @@ class Sync:
             prefix = f"{PREFIX}/{stream}/dt={day}/"
             try:
                 size = _complete_size(path)
-                if self._cache is not None and self._cache.get(self.root, path) == size:
+                if (
+                    self._cache is not None
+                    and self._cache.get(self.root, path) == size
+                    and self._prune_reason(date.fromisoformat(day)) is None
+                ):
                     yield Action(prefix, "cached", size)
                     continue
                 uploaded = _uploaded_end(self._store, prefix)
@@ -172,13 +177,12 @@ class Sync:
 
     def prune(self) -> Iterator[Action]:
         """Delete files the bucket confirmed that are old, and more while the disk is low."""
-        today = datetime.now(UTC).date()
-        for path, day in sorted((p for p in self._confirmed if p[1] < today), key=lambda p: p[1]):
-            low = shutil.disk_usage(self.root).free < MIN_FREE_BYTES
-            if (today - day).days <= KEEP_DAYS and not low:
+        for path, day in sorted(self._confirmed, key=lambda p: p[1]):
+            reason = self._prune_reason(day)
+            if reason is None:
                 continue
             path.unlink()
-            log.info("%s: deleted locally (%s)", path, "disk low" if low else "uploaded, old")
+            log.info("%s: deleted locally (%s)", path, reason)
             yield Action(path.relative_to(self.root).as_posix(), "delete")
 
     def save_cache(self) -> None:
@@ -190,6 +194,14 @@ class Sync:
         self._confirmed.append((path, day))
         if self._cache is not None:
             self._cache.set(self.root, path, size)
+
+    def _prune_reason(self, day: date) -> str | None:
+        today = datetime.now(UTC).date()
+        if day >= today:
+            return None
+        if shutil.disk_usage(self.root).free < MIN_FREE_BYTES:
+            return "disk low"
+        return "uploaded, old" if (today - day).days > KEEP_DAYS else None
 
 
 def sync(root: Path, store: ObjectStore, cache: OffsetCache | None = None) -> Iterator[Action]:
@@ -244,10 +256,11 @@ def _chunks(data: bytes, start: int) -> Iterator[tuple[int, bytes]]:
 def _shippable(chunk: bytes) -> tuple[bytes, int]:
     """The lines of a chunk that a reader can use, and how many were left out.
 
-    One unreadable line (store.readable) fails the load of the whole chunk. Which
-    lines go depends only on the bytes of the range, so re-uploading the range
-    produces the same object; the offsets in the metadata keep counting local
-    bytes, dropped lines included.
+    Every line must parse as one JSON object (store.readable), because one
+    unreadable line fails the load of the whole chunk. Which lines go depends
+    only on the bytes of the range, so re-uploading the range produces the same
+    object; the offsets in the metadata keep counting local bytes, dropped
+    lines included.
     """
     lines = chunk.splitlines(keepends=True)
     kept = [line for line in lines if readable(line)]

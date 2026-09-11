@@ -75,15 +75,7 @@ def read_rows(path: Path) -> Iterator[tuple[bytes, dict[str, Any] | None]]:
         for raw in file:
             if not raw.endswith(b"\n"):
                 continue  # torn by a power cut
-            if not store.readable(raw):
-                yield raw, None
-                continue
-            try:
-                row = json.loads(raw)
-            except ValueError:
-                yield raw, None
-                continue
-            yield raw, row if isinstance(row, dict) else None
+            yield raw, store.parse_line(raw)
 
 
 def connection_index(root: Path) -> dict[str, list[tuple[float, str]]]:

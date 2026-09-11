@@ -72,8 +72,14 @@ class Upload:
 
     @property
     def clean(self) -> bool:
-        """The bucket answered and nothing was left behind: worth telling the watchdog."""
-        return self.reached and not (self.failed or self.counts["conflict"])
+        """The bucket answered and nothing was left behind: worth telling the watchdog.
+
+        A run that lost the bucket part way stopped where it was, so it left files
+        unsent however many it had already shipped.
+        """
+        return self.reached and not (
+            self.failed or self.counts["conflict"] or self.counts["offline"]
+        )
 
     @property
     def summary(self) -> str:
