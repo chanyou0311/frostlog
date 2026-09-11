@@ -1,0 +1,150 @@
+# Data contract for the events the semantic data product publishes on Pub/Sub.
+# Same product as contracts/semantic.odcs.yaml (the BigQuery tables); kept in its own
+# file because datacontract-cli tests every schema object of a contract against the
+# selected server, and events are not tables.
+apiVersion: v3.2.0
+kind: DataContract
+id: frostlog-semantic-events
+name: frostlog semantic events
+version: 1.0.0
+status: draft
+domain: frostlog
+dataProduct: frostlog-semantic
+tenant: chanyou
+
+description:
+  purpose: >
+    Tell consumers when the semantic tables changed (semantic_updated) and what the daily
+    contract tests found (quality_report), so they react to new data without polling.
+  usage: >
+    Consumed by frostlog-notifier through a Pub/Sub push subscription. Message bodies are
+    JSON objects with the fields below; unknown fields must be ignored.
+  limitations: >
+    Delivery is at-least-once: consumers deduplicate on run_id. Events are published only
+    for runs whose build passed.
+
+servers:
+  - server: events
+    type: pubsub
+    environment: production
+    description: Pub/Sub topic carrying the semantic_updated and quality_report events.
+    project: chanyou-frostlog
+    topic: frostlog-semantic-updated
+
+schema:
+  - name: semantic_updated
+    physicalName: semantic_updated
+    logicalType: object
+    description: >
+      Event published on the Pub/Sub topic after each transform run that rebuilt tables.
+      Consumers use it to react to new data without polling.
+    dataGranularityDescription: One transform run.
+    properties:
+      - name: run_id
+        logicalType: string
+        required: true
+        description: Identifier of the transform run.
+      - name: published_at
+        logicalType: timestamp
+        required: true
+      - name: date_keys
+        logicalType: array
+        required: true
+        description: JST dates (yyyymmdd) whose partitions were rebuilt.
+        items:
+          logicalType: integer
+      - name: raw_uploaded_at_max
+        logicalType: timestamp
+        required: true
+        description: Latest raw chunk upload time processed by this run (watermark).
+      - name: build_passed
+        logicalType: boolean
+        required: true
+        description: Always true in this version (reserved). A run whose dbt build failed publishes no event at all; it answers 500 and is delivered again.
+      - name: upload_runs
+        logicalType: array
+        required: false
+        description: >
+          The collector's upload runs this event's chunk reported as finished; empty
+          unless the chunk was an events chunk. The upload_done of a run reaches the
+          bucket in the following run, so by the time it is here every cooler chunk of
+          that run is loaded. A run whose started_at is 2 h or more after
+          previous_finished_at is a return of the car: everything recorded while it was
+          away came in with it.
+        items:
+          logicalType: object
+          properties:
+            - name: finished_at
+              logicalType: timestamp
+              required: true
+              description: When the upload run finished (the upload_done event).
+            - name: started_at
+              logicalType: timestamp
+              required: false
+              description: When the same boot's upload run started (the upload_started before it).
+            - name: previous_finished_at
+              logicalType: timestamp
+              required: false
+              description: When the upload run before this one finished, whichever boot it belonged to.
+            - name: chunk_count
+              logicalType: integer
+              required: true
+              description: Chunks put in the bucket by this run.
+            - name: line_count
+              logicalType: integer
+              required: true
+              description: Lines shipped by this run.
+  - name: quality_report
+    physicalName: quality_report
+    logicalType: object
+    description: >
+      Event published on the same topic by the daily contract test run: the result of
+      testing this contract and the raw contract against production data.
+    dataGranularityDescription: One daily contract test run.
+    properties:
+      - name: run_id
+        logicalType: string
+        required: true
+      - name: published_at
+        logicalType: timestamp
+        required: true
+      - name: contract_id
+        logicalType: string
+        required: true
+        description: frostlog-raw or frostlog-semantic.
+      - name: passed
+        logicalType: boolean
+        required: true
+      - name: failed_checks
+        logicalType: array
+        required: true
+        description: Names of the quality checks that failed (empty when passed).
+        items:
+          logicalType: string
+
+slaProperties:
+  - property: latency
+    value: 1
+    unit: m
+    element: semantic_updated.published_at
+    description: Published right after the transform run that rebuilt tables; the notifier receives it within about a minute.
+  - property: frequency
+    value: on-arrival
+    description: semantic_updated on every raw chunk that lands; quality_report daily.
+
+support:
+  - channel: github
+    url: https://github.com/chanyou0311/frostlog/issues
+    tool: other
+    scope: issues
+
+team:
+  name: frostlog
+  members:
+    - username: chanyou0311
+      role: owner
+
+customProperties:
+  - property: changePolicy
+    value: additive-only
+    description: Fields may be added; renaming, removing or re-typing a field bumps the major version and is published as a new event name.

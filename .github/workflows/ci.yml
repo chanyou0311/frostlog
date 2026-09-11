@@ -46,18 +46,17 @@ jobs:
           version: ${{ env.UV_VERSION }}
       - name: datacontract lint
         run: |
-          for contract in raw semantic; do
-            uvx --python 3.13 --from "$DATACONTRACT_CLI" datacontract lint "contracts/$contract.odcs.yaml"
+          for path in contracts/*.odcs.yaml; do
+            uvx --python 3.13 --from "$DATACONTRACT_CLI" datacontract lint "$path"
           done
       - name: datacontract breaking (against main)
         run: |
           git fetch --depth=1 origin main
-          for contract in raw semantic; do
-            path="contracts/$contract.odcs.yaml"
+          for path in contracts/*.odcs.yaml; do
             if git cat-file -e "origin/main:$path" 2>/dev/null; then
-              git show "origin/main:$path" > "$RUNNER_TEMP/$contract.odcs.yaml"
+              git show "origin/main:$path" > "$RUNNER_TEMP/$(basename "$path")"
               uvx --python 3.13 --from "$DATACONTRACT_CLI" datacontract breaking \
-                "$RUNNER_TEMP/$contract.odcs.yaml" "$path"
+                "$RUNNER_TEMP/$(basename "$path")" "$path"
             else
               echo "$path is not on main yet; nothing to compare against"
             fi

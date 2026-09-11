@@ -20,7 +20,8 @@ description:
     under given conditions, and how long the interior takes to reach the setpoint.
   usage: >
     Read by frostlog-notifier (Slack digests) and by ad-hoc analysis. Consumers depend
-    only on the tables and events listed here; the raw bytes are never needed downstream.
+    only on the tables listed here and on the events of contracts/semantic-events.odcs.yaml
+    (the same data product, published on Pub/Sub); the raw bytes are never needed downstream.
     Estimates (next-morning level, hours left, next pull-down time) are not stored: they
     are computed by consumers from these actuals.
   limitations: >
@@ -44,12 +45,6 @@ servers:
     description: Dataset rebuilt in CI from sample raw chunks for contract tests.
     project: chanyou-frostlog
     dataset: frostlog_ci
-  - server: events
-    type: pubsub
-    environment: production
-    description: Pub/Sub topic carrying the semantic_updated and quality_report events.
-    project: chanyou-frostlog
-    topic: frostlog-semantic-updated
 
 schema:
   # ----------------------------------------------------------------- facts
@@ -275,11 +270,14 @@ schema:
         dimension: completeness
         description: The number of rows per date equals the number of decodable cmd 4402 messages in the raw chunks for that date (checked by the transform against the raw table it loaded).
       - name: fresh_within_a_day
-        type: sql
+        type: text
         dimension: timeliness
-        description: The newest update is not older than a day plus the raw latency (raw arrives at least daily when the car comes home).
-        query: SELECT TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(updated_at), HOUR) FROM {model}
-        mustBeLessThan: 48
+        description: >
+          The newest updated_at is within 48 hours of the newest raw upload the producer has
+          seen (the transform keeps up with arrivals). Checked by the producer's daily job
+          and reported in quality_report; not a SQL rule here because the CI dataset is built
+          from historical samples. Raw arrival itself is watched by the collector's
+          healthcheck (contracts/raw.odcs.yaml, timeliness).
 
   - name: fact_cooler_hourly_snapshot
     physicalName: fact_cooler_hourly_snapshot
@@ -434,7 +432,7 @@ schema:
         type: sql
         dimension: completeness
         description: No hour is missing between the first and the last row.
-        query: SELECT TIMESTAMP_DIFF(MAX(hour_started_at), MIN(hour_started_at), HOUR) + 1 - COUNT(*) FROM {model}
+        query: SELECT COALESCE(TIMESTAMP_DIFF(MAX(hour_started_at), MIN(hour_started_at), HOUR) + 1 - COUNT(*), 0) FROM {model}
         mustBe: 0
       - name: covered_seconds_in_range
         type: sql
@@ -639,7 +637,7 @@ schema:
       - name: outcome_and_end_agree
         type: sql
         dimension: consistency
-        query: SELECT COUNT(*) FROM {model} WHERE (outcome IS NULL) != (ended_at IS NULL) OR (outcome = 'reached') != (reached_at IS NOT NULL)
+        query: SELECT COUNT(*) FROM {model} WHERE (outcome IS NULL) != (ended_at IS NULL) OR COALESCE(outcome = 'reached', FALSE) != (reached_at IS NOT NULL)
         mustBe: 0
       - name: duration_plausible
         type: sql
@@ -903,96 +901,6 @@ schema:
     properties: *band_watts
 
   # ---------------------------------------------------------------- events
-  - name: semantic_updated
-    physicalName: semantic_updated
-    logicalType: object
-    description: >
-      Event published on the Pub/Sub topic after each transform run that rebuilt tables.
-      Consumers use it to react to new data without polling.
-    dataGranularityDescription: One transform run.
-    properties:
-      - name: run_id
-        logicalType: string
-        required: true
-        description: Identifier of the transform run.
-      - name: published_at
-        logicalType: timestamp
-        required: true
-      - name: date_keys
-        logicalType: array
-        required: true
-        description: JST dates (yyyymmdd) whose partitions were rebuilt.
-        items:
-          logicalType: integer
-      - name: raw_uploaded_at_max
-        logicalType: timestamp
-        required: true
-        description: Latest raw chunk upload time processed by this run (watermark).
-      - name: build_passed
-        logicalType: boolean
-        required: true
-        description: Always true in this version (reserved). A run whose dbt build failed publishes no event at all; it answers 500 and is delivered again.
-      - name: upload_runs
-        logicalType: array
-        required: false
-        description: >
-          The collector's upload runs this event's chunk reported as finished; empty
-          unless the chunk was an events chunk. The upload_done of a run reaches the
-          bucket in the following run, so by the time it is here every cooler chunk of
-          that run is loaded. A run whose started_at is 2 h or more after
-          previous_finished_at is a return of the car: everything recorded while it was
-          away came in with it.
-        items:
-          logicalType: object
-          properties:
-            - name: finished_at
-              logicalType: timestamp
-              required: true
-              description: When the upload run finished (the upload_done event).
-            - name: started_at
-              logicalType: timestamp
-              required: false
-              description: When the same boot's upload run started (the upload_started before it).
-            - name: previous_finished_at
-              logicalType: timestamp
-              required: false
-              description: When the upload run before this one finished, whichever boot it belonged to.
-            - name: chunk_count
-              logicalType: integer
-              required: true
-              description: Chunks put in the bucket by this run.
-            - name: line_count
-              logicalType: integer
-              required: true
-              description: Lines shipped by this run.
-  - name: quality_report
-    physicalName: quality_report
-    logicalType: object
-    description: >
-      Event published on the same topic by the daily contract test run: the result of
-      testing this contract and the raw contract against production data.
-    dataGranularityDescription: One daily contract test run.
-    properties:
-      - name: run_id
-        logicalType: string
-        required: true
-      - name: published_at
-        logicalType: timestamp
-        required: true
-      - name: contract_id
-        logicalType: string
-        required: true
-        description: frostlog-raw or frostlog-semantic.
-      - name: passed
-        logicalType: boolean
-        required: true
-      - name: failed_checks
-        logicalType: array
-        required: true
-        description: Names of the quality checks that failed (empty when passed).
-        items:
-          logicalType: string
-
 slaProperties:
   - property: latency
     value: 24
