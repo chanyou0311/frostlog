@@ -12,7 +12,7 @@ from pathlib import Path
 from frostlog import records
 
 ROOT = Path(__file__).resolve().parent.parent
-SAMPLES = ROOT / "contracts" / "samples" / "raw"
+SAMPLES = ROOT / "contracts" / "samples" / "collection"
 
 _SPEC = importlib.util.spec_from_file_location(
     "build_samples", ROOT / "scripts" / "build_samples.py"

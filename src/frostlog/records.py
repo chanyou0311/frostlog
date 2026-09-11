@@ -7,7 +7,7 @@ the cooler, or one event of the collector itself. All records share ``ts``
 belongs to. ``ts_synced`` is ``None`` only in records migrated from before it
 was recorded.
 
-The shapes here are the ones the ``frostlog-raw`` data contract describes:
+The shapes here are the ones the ``frostlog-collection`` data contract describes:
 what is written is what the bucket, and therefore the semantic data product,
 receives. Optional fields are left out of the JSON rather than written as
 ``null``.

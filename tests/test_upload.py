@@ -17,7 +17,7 @@ from frostlog.upload.run import Upload
 from frostlog.upload.s3 import Offline
 from frostlog.upload.sync import sync
 
-BUCKET = "https://storage.googleapis.com/chanyou-frostlog-raw"
+BUCKET = "https://storage.googleapis.com/chanyou-frostlog-collection"
 
 
 class FakeStore:
@@ -266,9 +266,9 @@ def test_the_cache_forgets_files_that_are_gone(tmp_path: Path) -> None:
 def test_another_bucket_is_not_described_by_this_bucket_s_cache(tmp_path: Path) -> None:
     """The bucket was renamed (or emptied): the run must find that out, not trust the cache."""
     _populate(tmp_path)
-    old = FakeStore("https://storage.googleapis.com/frostlog-raw")
+    old = FakeStore("https://storage.googleapis.com/frostlog-collection")
     list(sync(tmp_path, old, OffsetCache.load(tmp_path, old.location)))
-    new = FakeStore("https://storage.googleapis.com/chanyou-frostlog-raw")
+    new = FakeStore("https://storage.googleapis.com/chanyou-frostlog-collection")
     actions = [
         action.action for action in sync(tmp_path, new, OffsetCache.load(tmp_path, new.location))
     ]

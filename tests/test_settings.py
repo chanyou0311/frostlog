@@ -12,7 +12,7 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings()
     assert settings.i2c_bus == 1
     assert settings.cooler_model == "everfrost"
-    assert settings.s3_bucket == "chanyou-frostlog-raw"
+    assert settings.s3_bucket == "chanyou-frostlog-collection"
     assert settings.s3_endpoint == "https://storage.googleapis.com"
     assert settings.healthcheck_url is None
 

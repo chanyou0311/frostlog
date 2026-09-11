@@ -25,7 +25,7 @@ from frostlog import records  # noqa: E402
 from frostlog.cooler.everfrost.decoder import decode_state  # noqa: E402
 from frostlog.cooler.everfrost.protocol import parse_frame  # noqa: E402
 
-SAMPLES = ROOT / "contracts" / "samples" / "raw"
+SAMPLES = ROOT / "contracts" / "samples" / "collection"
 DAY = datetime(2026, 9, 6, 11, 2, 10, 719777, tzinfo=UTC)
 UPTIME = 867.1
 MODEL = "everfrost"

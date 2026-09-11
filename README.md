@@ -2,7 +2,7 @@
 
 ポータブル冷蔵庫（Anker EverFrost 2）が Bluetooth で送ってくるメッセージと、その周囲の温湿度を
 Raspberry Pi で記録し、クラウドのバケットへ送るデータロガー。スキーマの正は
-`contracts/raw.odcs.yaml`（収集データプロダクトのデータ契約）。
+`contracts/collection.odcs.yaml`（収集データプロダクトのデータ契約）。
 
 - `frostlog read cooler` — 冷蔵庫のメッセージを受け取り、生のバイト列・復号した本文・意味づけした値、
   そのときの車内の温湿度（DHT20）を 1 行に記録する
