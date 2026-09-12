@@ -1,16 +1,18 @@
-# Data contract for the Pub/Sub topic the frostlog components announce themselves on.
+# Data contract for the Pub/Sub topic the frostlog components signal each other on.
 # Not one product's output: `semantic_updated` comes from the semantics transform,
 # `quality_report` from the contract-test job, and one consumer reads both off one
-# subscription. Its own file because datacontract-cli tests every schema object of a
-# contract against the selected server, and events are not tables.
+# subscription. Signals rather than events, because the collection product already has
+# an `events` stream — the Pi's own operational records — and the two are not the same
+# thing. Its own file because datacontract-cli tests every schema object of a contract
+# against the selected server, and messages are not tables.
 apiVersion: v3.2.0
 kind: DataContract
-id: frostlog-events
-name: frostlog events
+id: frostlog-signals
+name: frostlog signals
 version: 1.0.0
 status: draft
 domain: frostlog
-dataProduct: frostlog-events
+dataProduct: frostlog-signals
 tenant: chanyou
 
 description:
@@ -25,12 +27,12 @@ description:
     for runs whose build passed.
 
 servers:
-  - server: events
+  - server: signals
     type: pubsub
     environment: production
-    description: Pub/Sub topic carrying the semantic_updated and quality_report events.
+    description: Pub/Sub topic carrying the semantic_updated and quality_report messages.
     project: chanyou-frostlog
-    topic: frostlog-events
+    topic: frostlog-signals
 
 schema:
   - name: semantic_updated

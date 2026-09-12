@@ -21,7 +21,7 @@ description:
   usage: >
     Read by frostlog-notifier (Slack digests) and by ad-hoc analysis. Consumers depend
     only on the tables listed here and, to hear when they changed, on the topic of
-    contracts/events.odcs.yaml — a channel of its own, which this product publishes
+    contracts/signals.odcs.yaml — a channel of its own, which this product publishes
     `semantic_updated` to and the contract-test job publishes `quality_report` to. The
     raw bytes are never needed downstream.
     Estimates (next-morning level, hours left, next pull-down time) are not stored: they
