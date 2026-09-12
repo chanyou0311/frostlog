@@ -45,6 +45,8 @@ SETPOINT = "#8a8a8a"
 AMBIENT = "#d1701a"
 DISCHARGED = "#c0504d"
 NET = "#333333"
+#: An hour nothing was recorded in.
+SILENT = "#9aa0a6"
 
 
 def _png(figure: Figure) -> bytes:
@@ -67,27 +69,27 @@ def _local(moment: datetime) -> datetime:
 
 
 def daily_overview(hours: list[HourlySnapshot], title: str) -> bytes:
-    """State of charge over the period, with the hours that had external input shaded,
-    and the temperatures below it."""
+    """State of charge over the period, with external input and silence shaded.
+
+    Every hour of the period is on the axis whether it holds a reading or not.
+    The cooler is often unplugged and out of range for hours at a time, and a
+    chart that quietly narrowed to the hours it heard from would show a calm
+    line over a night nothing was recorded in.
+    """
     figure, (top, bottom) = _pyplot().subplots(2, 1, figsize=(9, 6), sharex=True)
     figure.suptitle(title)
     times = [_local(hour.hour_started_at) for hour in hours]
+    step = times[1] - times[0] if len(times) > 1 else timedelta(hours=1)
 
     charge = [hour.state_of_charge_end_percent for hour in hours]
     top.plot(times, charge, color=SOC, marker="o", markersize=2.5, label="state of charge (%)")
     top.set_ylabel("state of charge (%)")
     top.set_ylim(0, 105)
-    for hour, start in zip(hours, times, strict=True):
-        if (hour.external_input_ratio or 0.0) > 0:
-            top.axvspan(
-                start,
-                start + (times[1] - times[0] if len(times) > 1 else timedelta(hours=1)),
-                color=CHARGING,
-                alpha=0.18,
-                linewidth=0,
-            )
-    top.grid(alpha=0.3)
-    top.legend(loc="lower left", fontsize=8)
+    for axes in (top, bottom):
+        _shade_hours(axes, hours, times, step)
+        axes.set_xlim(times[0], times[-1] + step)
+        axes.grid(alpha=0.3)
+    _legend(top, extra=_shading_key())
 
     bottom.plot(
         times,
@@ -109,10 +111,57 @@ def daily_overview(hours: list[HourlySnapshot], title: str) -> bytes:
         label="ambient (C)",
     )
     bottom.set_ylabel("temperature (C)")
-    bottom.grid(alpha=0.3)
-    bottom.legend(loc="upper left", fontsize=8)
+    _legend(bottom)
     _hour_axis(bottom)
     return _png(figure)
+
+
+def _shade_hours(
+    axes: Axes, hours: list[HourlySnapshot], times: list[datetime], step: timedelta
+) -> None:
+    """Grey an hour nothing was recorded in; tint one by how much of it was plugged in.
+
+    An hour is rarely all or nothing — the cooler goes on the car socket for the
+    drive and comes off at the door — so the tint follows the share of the hour
+    rather than marking the whole of it.
+    """
+    # axvspan wants numbers, and the axis is in matplotlib's own date units.
+    to_number = _dates().date2num
+    for hour, start in zip(hours, times, strict=True):
+        left, right = to_number(start), to_number(start + step)
+        if hour.covered_seconds <= 0:
+            axes.axvspan(left, right, color=SILENT, alpha=0.35, linewidth=0)
+            continue
+        plugged = hour.external_input_ratio or 0.0
+        if plugged > 0:
+            axes.axvspan(left, right, color=CHARGING, alpha=0.30 * plugged, linewidth=0)
+
+
+def _shading_key() -> list[Any]:
+    """Legend entries for the two shadings, which no plotted line would explain."""
+    from matplotlib.patches import Patch
+
+    return [
+        Patch(facecolor=CHARGING, alpha=0.30, label="plugged in (deeper = more of the hour)"),
+        Patch(facecolor=SILENT, alpha=0.35, label="nothing recorded"),
+    ]
+
+
+def _legend(axes: Axes, extra: list[Any] | None = None) -> None:
+    """Above the axes: inside it, the box lands on the data often enough to matter."""
+    handles, labels = axes.get_legend_handles_labels()
+    for patch in extra or []:
+        handles.append(patch)
+        labels.append(patch.get_label())
+    axes.legend(
+        handles,
+        labels,
+        loc="lower left",
+        bbox_to_anchor=(0, 1.01),
+        ncols=3,
+        frameon=False,
+        fontsize=8,
+    )
 
 
 def pulldown(updates: list[StateUpdate], setpoint_celsius: int, title: str) -> bytes:
