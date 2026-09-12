@@ -44,6 +44,21 @@ def day_of_hours(end: datetime, first_charge: int = 86, plugged: range = range(0
     return rows
 
 
+def steps_of(end: datetime, count: int = 18, step: timedelta = timedelta(minutes=30)) -> list[dict]:
+    """What the warehouse rolls up for the chart: one row per step, newest last."""
+    return [
+        {
+            "started_at": end - step * (count - index),
+            "covered_seconds": step.total_seconds(),
+            "state_of_charge_end_percent": 80 - index,
+            "interior_temperature_celsius": -18.5,
+            "ambient_temperature_celsius": 24.5,
+            "external_input_ratio": 0.0,
+        }
+        for index in range(count)
+    ]
+
+
 def warehouse_with(**overrides) -> FakeWarehouse:
     answers = {
         "latest_state_update_at": [state_update(RETURN, state_of_charge_percent=62)],
@@ -52,6 +67,7 @@ def warehouse_with(**overrides) -> FakeWarehouse:
         ],
         "finished_pulldowns_between": [pulldown_row(at("2026-09-11", 0, 30))],
         "hourly_snapshots": day_of_hours(RETURN),
+        "snapshots": steps_of(RETURN),
     }
     return FakeWarehouse(answers | overrides)
 

@@ -11,7 +11,7 @@ from conftest import (
     state_update,
     upload_run,
 )
-from test_homecoming import day_of_hours
+from test_homecoming import day_of_hours, steps_of
 from test_weekly import week_of_hours
 
 from frostlog_notifier.clock import iso_week_bounds
@@ -83,6 +83,7 @@ def arrived() -> FakeWarehouse:
             "finished_pulldowns_between": [pulldown_row(at("2026-09-11", 8, 12))],
             "state_updates_between": [state_update(at("2026-09-11", 8, 12))],
             "hourly_snapshots": day_of_hours(RETURN),
+            "snapshots": steps_of(RETURN),
             "ambient_bands": ambient_band_rows(),
         }
     )
