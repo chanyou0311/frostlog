@@ -13,11 +13,19 @@ the free tier does not have.
 A contract that fails, and one that could not be tested at all, are findings:
 they are reported, and they make the run exit non-zero so the execution itself
 is marked failed. Nothing is retried — tomorrow's run is the retry.
+
+``--contract`` narrows the run to the ones named; without it every contract is
+tested, which is what the daily schedule does. The two data products go live at
+different times and are fixed one at a time, so being able to ask about one of
+them alone is worth an option. A narrowed run still reports what it found, but it
+never pings the dead man's switch: that switch says every contract passed, and a
+run that did not look at every contract cannot say so.
 """
 
+import argparse
 import logging
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -64,33 +72,44 @@ def build_services(settings: Settings | None = None) -> Services:
     )
 
 
-def run(services: Services) -> bool:
-    """Test both contracts, report what failed, and say whether everything passed."""
+#: The contracts this job can test, by the name --contract takes. The order is the
+#: order they are tested in, and it is the order they depend on each other: what the
+#: semantics product says is only as good as what the collection product gave it.
+CONTRACTS = ("collection", "semantics")
+
+
+def run(services: Services, contracts: Sequence[str] = CONTRACTS) -> bool:
+    """Test the contracts named, report what failed, and say whether they all passed."""
     settings = services.settings
     run_id = uuid4().hex
-    wanted = [
-        (
+    wanted = {
+        "collection": (
             "frostlog-collection",
             settings.contracts_dir / "collection.odcs.yaml",
             settings.collection_contract_server,
-            _collection_test_environment(services),
+            _collection_test_environment,
         ),
-        (
+        "semantics": (
             "frostlog-semantics",
             settings.contracts_dir / "semantics.odcs.yaml",
             settings.semantics_contract_server,
-            {},
+            lambda _: {},
         ),
-    ]
-    results = [
-        _test_contract(services, contract_id, path, server, environment)
-        for contract_id, path, server, environment in wanted
-    ]
+    }
+    chosen = [name for name in CONTRACTS if name in contracts]
+    results = []
+    for name in chosen:
+        contract_id, path, server, environment_for = wanted[name]
+        results.append(
+            _test_contract(services, contract_id, path, server, environment_for(services))
+        )
     for result in results:
         _publish_report(services, run_id, result)
     passed = all(result.passed for result in results)
-    if passed:
+    if passed and len(chosen) == len(CONTRACTS):
         _ping(services)
+    elif passed:
+        log.info("only %s tested; the dead man's switch is left alone", ", ".join(chosen))
     log.info("run %s: %s", run_id, "all contracts passed" if passed else "a contract did not pass")
     return passed
 
@@ -162,9 +181,18 @@ def _ping(services: Services) -> None:
         log.exception("pinging the dead man's switch failed")
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="frostlog-contracts", description=__doc__)
+    parser.add_argument(
+        "--contract",
+        action="append",
+        choices=CONTRACTS,
+        metavar="NAME",
+        help=f"test only this contract ({', '.join(CONTRACTS)}); repeatable. Default: all.",
+    )
+    arguments = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
-    return 0 if run(build_services()) else 1
+    return 0 if run(build_services(), arguments.contract or CONTRACTS) else 1
 
 
 if __name__ == "__main__":

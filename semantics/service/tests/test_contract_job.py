@@ -35,6 +35,21 @@ def test_a_clean_run_reports_both_contracts_and_pings(job: ContractFakes) -> Non
     }
 
 
+def test_one_contract_can_be_asked_about_on_its_own(job: ContractFakes) -> None:
+    """The two products go live at different times; the first is held to its word first."""
+    assert run(job.services, ["collection"]) is True
+
+    assert job.tester.tested == [("collection.odcs.yaml", "gcs")]
+    assert [report.contract_id for report in _reports(job)] == ["frostlog-collection"]
+
+
+def test_a_narrowed_run_leaves_the_dead_mans_switch_alone(job: ContractFakes) -> None:
+    """The switch says every contract passed; a run that looked at one cannot say that."""
+    assert run(job.services, ["collection"]) is True
+
+    assert job.pinged == []
+
+
 def test_a_failing_check_is_reported_and_the_switch_is_not_pinged(job: ContractFakes) -> None:
     job.tester.results["frostlog-semantics"] = ContractTestResult(
         "frostlog-semantics", passed=False, failed_checks=["hours_are_dense"]
