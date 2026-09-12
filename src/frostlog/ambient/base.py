@@ -9,8 +9,8 @@ from frostlog.ambient.i2c import Bus
 
 
 class Reading(BaseModel):
-    temp_c: float
-    humidity_pct: float
+    temperature_celsius: float
+    humidity_percent: float
 
 
 class SensorError(Exception):

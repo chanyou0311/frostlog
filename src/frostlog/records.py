@@ -1,9 +1,16 @@
 """The records frostlog writes, one JSON object per line.
 
-A record is one thing that happened at one source: one sensor reading, one
-message received from the cooler, or one event. All records share ``ts``
-(wall clock, UTC), ``uptime`` and ``boot_id`` (see :mod:`frostlog.clock`) and
-``type``, which selects the stream the record belongs to.
+A record is one thing that happened at one source: one message received from
+the cooler, or one event of the collector itself. All records share ``ts``
+(wall clock, UTC), ``uptime_seconds``, ``boot_id`` and ``ts_synced`` (see
+:mod:`frostlog.clock`) and ``type``, which selects the stream the record
+belongs to. ``ts_synced`` is ``None`` only in records migrated from before it
+was recorded.
+
+The shapes here are the ones the ``frostlog-collection`` data contract describes:
+what is written is what the bucket, and therefore the semantic data product,
+receives. Optional fields are left out of the JSON rather than written as
+``null``.
 """
 
 from datetime import datetime
@@ -16,21 +23,68 @@ from frostlog import clock
 
 class _Common(BaseModel):
     ts: datetime
-    uptime: float
+    uptime_seconds: float
     boot_id: str
+    ts_synced: bool | None = None
+
+
+class Environment(BaseModel):
+    """The air around the Pi at the moment a record was made."""
+
+    sensor: str
+    temperature_celsius: float
+    humidity_percent: float
+
+
+class CoolerPayload(BaseModel):
+    """The decoded body of a cooler state report (cmd 4402).
+
+    Temperatures are in °C whatever the cooler was displaying; ``display_unit``
+    keeps what it displayed, because the setpoint is a whole number in that unit.
+    """
+
+    setpoint_celsius: int
+    interior_temperature_celsius: int
+    display_unit: Literal["C", "F"]
+    input_watts: int
+    usb_a_output_watts: int
+    usb_c_output_watts: int
+    charge_watts: int
+    discharge_watts: int
+    battery_state: Literal["idle", "charging", "discharging", "full", "absent"]
+    state_of_charge_percent: int
+    protection_level: Literal["L", "M", "H"]
+    brightness: Literal["low", "mid", "high"]
+    serial_number: str
+    battery_serial_number: str | None = None
 
 
 class Ambient(_Common):
+    """One sensor reading on its own; written by ``frostlog read ambient`` only.
+
+    Production data carries the environment on the cooler record it belongs to
+    (:class:`Environment`); this record exists for checking the wiring by hand.
+    """
+
     type: Literal["ambient"] = "ambient"
     sensor: str
-    temp_c: float
-    humidity_pct: float
+    temperature_celsius: float
+    humidity_percent: float
 
 
 class Cooler(_Common):
+    """One message received from the cooler, with the environment at that moment."""
+
     type: Literal["cooler"] = "cooler"
     model: str
-    payload: dict[str, Any]
+    address: str
+    pattern: str | None = None
+    cmd: str | None = None
+    frames: list[str]
+    plain: str | None = None
+    payload: CoolerPayload | None = None
+    environment: Environment | None = None
+    error: str | None = None
 
 
 class Event(_Common):
@@ -49,15 +103,25 @@ _adapter: TypeAdapter[Record] = TypeAdapter(Record)
 
 def stamp() -> dict[str, Any]:
     """The common fields for a record created right now."""
-    return {"ts": clock.now(), "uptime": clock.uptime(), "boot_id": clock.boot_id()}
+    return {
+        "ts": clock.now(),
+        "uptime_seconds": clock.uptime(),
+        "boot_id": clock.boot_id(),
+        "ts_synced": clock.synced(),
+    }
 
 
-def ambient(sensor: str, temp_c: float, humidity_pct: float) -> Ambient:
-    return Ambient(sensor=sensor, temp_c=temp_c, humidity_pct=humidity_pct, **stamp())
+def ambient(sensor: str, temperature_celsius: float, humidity_percent: float) -> Ambient:
+    return Ambient(
+        sensor=sensor,
+        temperature_celsius=temperature_celsius,
+        humidity_percent=humidity_percent,
+        **stamp(),
+    )
 
 
-def cooler(model: str, payload: dict[str, Any]) -> Cooler:
-    return Cooler(model=model, payload=payload, **stamp())
+def cooler(model: str, address: str, frames: list[str], **fields: Any) -> Cooler:
+    return Cooler(model=model, address=address, frames=frames, **fields, **stamp())
 
 
 def event(kind: str, **fields: Any) -> Event:
@@ -65,7 +129,7 @@ def event(kind: str, **fields: Any) -> Event:
 
 
 def to_json(record: Record) -> str:
-    return record.model_dump_json()
+    return record.model_dump_json(exclude_none=True)
 
 
 def line(record: Record) -> str:

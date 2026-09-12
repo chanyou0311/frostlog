@@ -50,8 +50,8 @@ def test_dht20_read(monkeypatch: pytest.MonkeyPatch) -> None:
     bus = FakeBus([_dht20_frame(2**19, int(75 / 200 * 2**20))])
     reading = dht20.DHT20(bus).read()
     assert bus.writes == [(0x38, bytes([0xAC, 0x33, 0x00]))]
-    assert reading.humidity_pct == pytest.approx(50.0, abs=0.01)
-    assert reading.temp_c == pytest.approx(25.0, abs=0.01)
+    assert reading.humidity_percent == pytest.approx(50.0, abs=0.01)
+    assert reading.temperature_celsius == pytest.approx(25.0, abs=0.01)
 
 
 def test_dht20_bad_crc() -> None:
@@ -76,8 +76,8 @@ def test_am2320_read(monkeypatch: pytest.MonkeyPatch) -> None:
     bus = FakeBus([_am2320_frame(452, -105)])
     reading = am2320.AM2320(bus, 0x5C).read()
     assert bus.writes == [(0x5C, b"\x00"), (0x5C, bytes([0x03, 0x00, 0x04]))]
-    assert reading.humidity_pct == pytest.approx(45.2)
-    assert reading.temp_c == pytest.approx(-10.5)
+    assert reading.humidity_percent == pytest.approx(45.2)
+    assert reading.temperature_celsius == pytest.approx(-10.5)
 
 
 def test_am2320_ignores_wakeup_nack(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -90,7 +90,7 @@ def test_am2320_ignores_wakeup_nack(monkeypatch: pytest.MonkeyPatch) -> None:
                 raise OSError(121, "Remote I/O error")
 
     reading = am2320.AM2320(NackBus([_am2320_frame(500, 250)])).read()
-    assert reading.temp_c == pytest.approx(25.0)
+    assert reading.temperature_celsius == pytest.approx(25.0)
 
 
 def test_registry() -> None:
@@ -109,5 +109,5 @@ def test_read_loop_emits_records_and_failures(monkeypatch: pytest.MonkeyPatch) -
     assert list(read_loop(sensor, interval=10, count=0, sleep=slept.append)) == []
     out = list(read_loop(sensor, interval=10, count=3, sleep=slept.append))
     assert [r.type for r in out] == ["ambient", "event", "ambient"]
-    assert isinstance(out[1], records.Event) and out[1].kind == "ambient_read_failed"
+    assert isinstance(out[1], records.Event) and out[1].kind == "environment_read_failed"
     assert slept == [10, 10]  # between reads, not after the last one
