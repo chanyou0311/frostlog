@@ -150,7 +150,7 @@ def test_one_return_is_summarised_once_however_many_chunks_it_took(
         ]
     )
     assert [n for n in notifier.handle(quiet) if n.kind == HOMECOMING] == []
-    assert len([text for text, _ in slack.messages if "戻ってきた時点の残量" in text]) == 1
+    assert len([text for text, _ in slack.messages if "残量" in text]) == 1
 
 
 def test_the_next_summary_starts_where_the_last_one_stopped(

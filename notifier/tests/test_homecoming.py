@@ -91,7 +91,9 @@ def test_a_gap_of_two_hours_makes_one_summary() -> None:
     assert notification.key == RETURN.isoformat()
     assert notification.coverage_end == RETURN
     assert "ポータブル冷蔵庫のバッテリー" in notification.text
-    assert "直前の記録中断 9.0 h" in notification.text
+    assert "前回のアップロードから 9.0 h" in notification.text
+    # The reading is dated, so nobody reads an hours-old number as now.
+    assert "残量 62 % (09-11 21:03 時点)" in notification.text
     assert "残量 62 %" in notification.text
     assert "消費 128.4 Wh" in notification.text
     assert "充電 40.2 Wh" in notification.text
@@ -153,7 +155,10 @@ def test_the_outlook_follows_the_slope_of_the_last_unplugged_hours() -> None:
     # One percent an hour down, and 9.95 hours from 21:03 JST to 07:00 the next morning.
     morning = datetime(2026, 9, 11, 22, 0, tzinfo=UTC)
     assert homecoming.slope_percent_per_hour(hours) == -1.0
-    assert homecoming.projected_state_of_charge(latest, hours, morning) == pytest.approx(52.05)
+    assert homecoming.projected_state_of_charge(latest, hours, morning) == (
+        pytest.approx(52.05),
+        None,
+    )
 
 
 def test_a_partly_covered_slot_weighs_less_in_the_slope() -> None:
@@ -174,19 +179,25 @@ def test_there_is_no_outlook_while_charging() -> None:
         state_update(RETURN, battery_state="charging", external_input=True, input_watts=58)
     )
     morning = datetime(2026, 9, 11, 22, 0, tzinfo=UTC)
-    assert homecoming.projected_state_of_charge(charging, hours, morning) is None
+    assert homecoming.projected_state_of_charge(charging, hours, morning) == (
+        None,
+        homecoming.PLUGGED_IN,
+    )
 
     [notification] = homecoming.build_all(
         warehouse_with(latest_state_update_at=[dict(charging.model_dump())]), [ARRIVAL], None
     )
-    assert "翌朝の見込みはなし" in notification.text
+    assert "外部電源につながっているので翌朝の見込みはなし" in notification.text
 
 
 def test_there_is_no_outlook_without_an_unplugged_hour() -> None:
     hours = [Snapshot.model_validate(row) for row in day_of_slots(RETURN, plugged=range(24))]
     latest = StateUpdate.model_validate(state_update(RETURN))
     assert homecoming.slope_percent_per_hour(hours) is None
-    assert homecoming.projected_state_of_charge(latest, hours, RETURN + timedelta(hours=10)) is None
+    assert homecoming.projected_state_of_charge(latest, hours, RETURN + timedelta(hours=10)) == (
+        None,
+        homecoming.NO_SLOPE,
+    )
 
 
 def test_the_outlook_never_leaves_the_scale() -> None:
@@ -194,7 +205,10 @@ def test_the_outlook_never_leaves_the_scale() -> None:
         Snapshot.model_validate(slot(RETURN - timedelta(hours=1), 2, delta=-30)),
     ]
     latest = StateUpdate.model_validate(state_update(RETURN, state_of_charge_percent=2))
-    assert homecoming.projected_state_of_charge(latest, hours, RETURN + timedelta(hours=10)) == 0.0
+    assert homecoming.projected_state_of_charge(latest, hours, RETURN + timedelta(hours=10)) == (
+        0.0,
+        None,
+    )
 
 
 @pytest.mark.parametrize("hours_recorded", [0.25, 0.5, 1, 2, 3, 5, 9, 12, 20, 24, 36, 48, 72, 168])

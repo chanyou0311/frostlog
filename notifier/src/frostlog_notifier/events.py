@@ -14,11 +14,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 class UploadRun(BaseModel):
-    """One upload run of the collector that shipped cooler data.
+    """One upload run of the collector, as its own events chunk reported it.
 
-    The collector's own ``upload_done`` reaches BigQuery in the run that follows
-    it, so an entry appears here only once every cooler chunk it announced is
-    loaded; that is what makes it safe to summarise a return of the car from it.
+    A report that the run ended, and no more: the contract does not promise that
+    the run's other chunks are loaded, or that the run shipped everything it had.
+    A summary built from it covers what the model held at the time.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -37,7 +37,7 @@ class UploadRun(BaseModel):
 
 class SemanticUpdated(BaseModel):
     """The producer keeps its own copy (semantics/service/src/frostlog_semantics/events.py);
-    the contract in contracts/events.odcs.yaml is what both must match."""
+    the contract in contracts/signals.odcs.yaml is what both must match."""
 
     model_config = ConfigDict(extra="ignore")
 

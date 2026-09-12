@@ -1,12 +1,16 @@
-"""帰宅の要約: what happened while the car was away, and how the night looks.
+"""帰宅の要約: what the cooler did while it was out, and how the night looks.
 
-The car coming home is recognised in the data rather than in a clock: chunks
-only reach the bucket from the home Wi-Fi, so an upload run that begins two
-hours or more after the previous one finished is a return. Those runs are
-carried by the ``semantic_updated`` event (``upload_runs``), which reports a run
-only once every cooler chunk it announced is loaded — so one return produces one
-summary, whatever the chunks were split into. The summary then covers everything
-since the previous summary's coverage end.
+Coming home is recognised in the data rather than in a clock: chunks only reach
+the bucket from the home Wi-Fi, so an upload run that begins two hours or more
+after the previous one finished is a return. That reading is this module's, not
+the contract's — a long gap between runs is equally a cooler switched off or a Pi
+that could not reach the bucket.
+
+What arrives with a return is not guaranteed to be all of it: chunks are
+processed independently and a failed one comes back later, so a summary says what
+the model held when it was written. It is written once per return and not
+revisited, which means a chunk that lands afterwards is missed by it. The summary
+covers everything since the previous summary's coverage end.
 """
 
 import logging
@@ -63,21 +67,28 @@ def slope_percent_per_hour(hours: list[Snapshot]) -> float | None:
     return sum(hour.state_of_charge_delta_percent or 0 for hour in recent) / covered
 
 
-def projected_state_of_charge(
-    latest: StateUpdate, hours: list[Snapshot], target: datetime
-) -> float | None:
-    """State of charge expected at ``target`` if the recent slope holds.
+#: Why there is no outlook. They read differently to someone deciding whether to
+#: plug the cooler in, so the message says which it was rather than one phrase for all.
+PLUGGED_IN = "plugged_in"
+NO_SLOPE = "no_slope"
 
-    None while the battery is charging or plugged in, and when no unplugged hour
-    is available to take a slope from: an outlook would be made up.
+
+def projected_state_of_charge(
+    latest: StateUpdate, slots: list[Snapshot], target: datetime
+) -> tuple[float | None, str | None]:
+    """State of charge expected at ``target`` if the recent slope holds, and why not.
+
+    An outlook while the cooler is on external power would be a guess about when it
+    comes off; one without a stretch of unplugged running behind it would be a guess
+    about how fast it drains. Both are refused, and the caller is told which.
     """
     if latest.battery_state == "charging" or latest.external_input:
-        return None
-    slope = slope_percent_per_hour(hours)
+        return None, PLUGGED_IN
+    slope = slope_percent_per_hour(slots)
     if slope is None:
-        return None
+        return None, NO_SLOPE
     span = (target - latest.updated_at).total_seconds() / 3600
-    return min(100.0, max(0.0, latest.state_of_charge_percent + slope * span))
+    return min(100.0, max(0.0, latest.state_of_charge_percent + slope * span)), None
 
 
 def build_all(
@@ -121,14 +132,17 @@ def _build(
     recorded = _recorded_run(slots)
 
     morning = next_morning(end)
-    projected = projected_state_of_charge(latest, recorded, morning)
-    gap = run.began_at - run.previous_finished_at if run.previous_finished_at else None
+    projected, refused = projected_state_of_charge(latest, recorded, morning)
+    # The gap between upload runs, which is how the return was recognised — not a gap
+    # in the recording. The cooler goes on recording the whole time it is away; what
+    # stops is the sending. The stretch that was recorded says where the holes are.
+    away = run.began_at - run.previous_finished_at if run.previous_finished_at else None
     return Notification(
         kind=HOMECOMING,
         # The run, not the data: the key must not move when a later chunk of the same return lands.
         key=run.began_at.isoformat(),
-        text=_text(latest, start, end, energy, pulldowns, morning, projected, gap),
-        blocks=_blocks(latest, energy, pulldowns, morning, projected, gap, recorded),
+        text=_text(latest, start, end, energy, pulldowns, morning, projected, refused, away),
+        blocks=_blocks(latest, energy, pulldowns, morning, projected, refused, away, recorded),
         coverage_end=end,
     )
 
@@ -199,7 +213,8 @@ def _blocks(
     pulldowns: list[queries.Pulldown],
     morning: datetime,
     projected: float | None,
-    gap: timedelta | None,
+    refused: str | None,
+    away: timedelta | None,
     recorded: list[Snapshot],
 ) -> list[dict]:
     """The message as Block Kit: what it means, then what it looked like."""
@@ -212,7 +227,10 @@ def _blocks(
                 "emoji": True,
             },
         },
-        {"type": "section", "text": {"type": "mrkdwn", "text": _lead(latest, morning, projected)}},
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": _lead(latest, morning, projected, refused)},
+        },
         {
             "type": "section",
             "fields": [
@@ -256,7 +274,7 @@ def _blocks(
             "text": {"type": "mrkdwn", "text": _period(energy, pulldowns, recorded)},
         }
     )
-    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": _footnote(gap)}]})
+    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": _footnote(away)}]})
     return blocks
 
 
@@ -270,15 +288,27 @@ def _power(latest: StateUpdate) -> str:
     return "つないでいない"
 
 
-def _lead(latest: StateUpdate, morning: datetime, projected: float | None) -> str:
-    """What the reader came for, in the first two lines."""
-    now = f"*戻ってきた時点の残量は {formatting.percent(latest.state_of_charge_percent)} です。*"
-    if projected is None:
-        return f"{now}\nいま充電できる状態なので、翌朝の見込みは出していません。"
-    return (
-        f"{now}\nこのまま充電しなければ、翌朝 {to_jst(morning):%-H:%M} には"
-        f" {formatting.percent(projected)} の見込みです。"
+def _lead(
+    latest: StateUpdate, morning: datetime, projected: float | None, refused: str | None
+) -> str:
+    """What the reader came for, in the first two lines.
+
+    The reading is dated. It is the last one that arrived, which after a trip is
+    usually a moment ago and after a silence may be hours old, and a number stated
+    without its time would be read as now.
+    """
+    now = (
+        f"*残量 {formatting.percent(latest.state_of_charge_percent)}"
+        f" ({formatting.stamp(latest.updated_at)} 時点)*"
     )
+    if projected is not None:
+        return (
+            f"{now}\nこのまま充電しなければ、翌朝 {to_jst(morning):%-H:%M} には"
+            f" {formatting.percent(projected)} の見込みです。"
+        )
+    if refused == PLUGGED_IN:
+        return f"{now}\nいま外部電源につながっているので、翌朝の見込みは出していません。"
+    return f"{now}\n電源につないでいない時間の記録が足りないので、翌朝の見込みは出していません。"
 
 
 def _period(
@@ -310,11 +340,11 @@ def _period(
     return "\n".join(lines)
 
 
-def _footnote(gap: timedelta | None) -> str:
+def _footnote(away: timedelta | None) -> str:
     device = "Anker Solix EverFrost 2"
-    if gap is None:
+    if away is None:
         return device
-    return f"直前の記録中断 {formatting.hours(gap.total_seconds() / 3600)} ・ {device}"
+    return f"前回のアップロードから {formatting.hours(away.total_seconds() / 3600)} ・ {device}"
 
 
 def _text(
@@ -325,22 +355,27 @@ def _text(
     pulldowns: list[queries.Pulldown],
     morning: datetime,
     projected: float | None,
-    gap: timedelta | None,
+    refused: str | None,
+    away: timedelta | None,
 ) -> str:
     """The same thing in one paragraph, for whoever does not get the blocks.
 
     A notification on a locked phone, a screen reader, a search result: Slack
     shows this and nothing else, so it has to stand on its own.
     """
-    outlook = (
-        f"翌朝 {to_jst(morning):%-H:%M} には {formatting.percent(projected)} の見込み"
-        if projected is not None
-        else "いま充電できる状態なので翌朝の見込みはなし"
+    if projected is not None:
+        outlook = f"翌朝 {to_jst(morning):%-H:%M} には {formatting.percent(projected)} の見込み"
+    elif refused == PLUGGED_IN:
+        outlook = "外部電源につながっているので翌朝の見込みはなし"
+    else:
+        outlook = "記録が足りないので翌朝の見込みはなし"
+    since = (
+        f" (前回のアップロードから {formatting.hours(away.total_seconds() / 3600)})" if away else ""
     )
-    since = f" (直前の記録中断 {formatting.hours(gap.total_seconds() / 3600)})" if gap else ""
     return (
         f"ポータブル冷蔵庫のバッテリー {formatting.full_stamp(end)}{since}"
-        f" — 戻ってきた時点の残量 {formatting.percent(latest.state_of_charge_percent)}、{outlook}。"
+        f" — 残量 {formatting.percent(latest.state_of_charge_percent)}"
+        f" ({formatting.stamp(latest.updated_at)} 時点)、{outlook}。"
         f" 庫内 {formatting.celsius(latest.interior_temperature_celsius, 0)}"
         f" (設定 {formatting.celsius(latest.setpoint_celsius, 0)})、"
         f"周辺 {formatting.celsius(latest.ambient_temperature_celsius)}。"
