@@ -228,7 +228,7 @@ schema:
         semanticType: measure
         description: >
           discharge_watts × held_seconds / 3600: the battery energy this update accounts
-          for. The one place the integration rule is written; hourly and pull-down energy
+          for. The one place the integration rule is written; the snapshot and pull-down energy
           and any consumer's sums are built from these columns.
       - name: charged_watt_hours
         logicalType: number
@@ -348,32 +348,35 @@ schema:
               )
           )
         mustBe: 0
-  - name: fact_cooler_hourly_snapshot
-    physicalName: fact_cooler_hourly_snapshot
+  - name: fact_cooler_snapshot
+    physicalName: fact_cooler_snapshot
     logicalType: object
     description: >
-      Periodic snapshot: one row per JST hour from the first to the last observed hour,
-      including hours with no data (covered_seconds = 0, measures null). Energy columns
-      are additive; condition columns are time-weighted averages over the covered seconds.
-    dataGranularityDescription: One JST hour of cooler operation.
+      Periodic snapshot: one row per quarter hour (JST) from the first to the last
+      observed slot, including slots with no data (covered_seconds = 0, measures null).
+      Energy columns are additive; condition columns are time-weighted averages over the
+      covered seconds. A quarter hour rather than an hour because this is the grain
+      consumers present at: four of these fold into an hour exactly — sums add, averages
+      weight by covered_seconds — while nothing can take an hour apart again.
+    dataGranularityDescription: One quarter hour (JST) of cooler operation.
     properties:
-      - name: hour_key
+      - name: slot_key
         logicalType: string
         physicalType: STRING
         primaryKey: true
         required: true
         unique: true
-        description: date_key and hour_of_day (yyyymmddhh).
+        description: date_key, hour and minute of the slot's start (yyyymmddhhmm).
       - name: cooler_key
         logicalType: integer
         physicalType: INT64
         required: false
-        description: dim_cooler version in effect at the hour's last update; null when the hour has no data.
+        description: dim_cooler version in effect at the slot's last update; null when the slot has no data.
       - name: battery_key
         logicalType: integer
         physicalType: INT64
         required: false
-        description: dim_battery row observed at the hour's last update; null when the hour has no data.
+        description: dim_battery row observed at the slot's last update; null when the slot has no data.
       - name: date_key
         logicalType: integer
         physicalType: INT64
@@ -384,53 +387,58 @@ schema:
         physicalType: DATE
         required: true
         partitioned: true
-        description: The JST date of hour_started_at as a DATE; the partitioning column.
+        description: The JST date of slot_started_at as a DATE; the partitioning column.
       - name: hour_of_day
         logicalType: integer
         physicalType: INT64
         required: true
-        description: 0–23, JST.
-      - name: hour_started_at
+        description: 0–23, JST. Kept alongside the finer grain because how a day goes is asked by the hour.
+      - name: minute_of_hour
+        logicalType: integer
+        physicalType: INT64
+        required: true
+        description: 0, 15, 30 or 45.
+      - name: slot_started_at
         logicalType: timestamp
         physicalType: TIMESTAMP
         required: true
-        description: Start of the hour in UTC.
+        description: Start of the slot in UTC.
       - name: state_of_charge_start_percent
         logicalType: integer
         physicalType: INT64
         required: false
         semanticType: measure
-        description: State of charge in effect at the start of the hour.
+        description: State of charge in effect at the start of the slot.
       - name: state_of_charge_end_percent
         logicalType: integer
         physicalType: INT64
         required: false
         semanticType: measure
-        description: State of charge in effect at the end of the hour.
+        description: State of charge in effect at the end of the slot.
       - name: state_of_charge_delta_percent
         logicalType: integer
         physicalType: INT64
         required: false
         semanticType: measure
-        description: End minus start; negative while discharging, positive while charging. The hourly rate used for "hours left" estimates.
+        description: End minus start; negative while discharging, positive while charging. Four of them make the hourly rate "hours left" is read from.
       - name: discharged_watt_hours
         logicalType: number
         physicalType: FLOAT64
         required: false
         semanticType: measure
-        description: Σ discharge_watts × held_seconds / 3600 within the hour.
+        description: Σ discharge_watts × held_seconds / 3600 within the slot.
       - name: charged_watt_hours
         logicalType: number
         physicalType: FLOAT64
         required: false
         semanticType: measure
-        description: Σ charge_watts × held_seconds / 3600 within the hour.
+        description: Σ charge_watts × held_seconds / 3600 within the slot.
       - name: input_watt_hours
         logicalType: number
         physicalType: FLOAT64
         required: false
         semanticType: measure
-        description: Σ input_watts × held_seconds / 3600 within the hour.
+        description: Σ input_watts × held_seconds / 3600 within the slot.
       - name: usb_a_output_watt_hours
         logicalType: number
         physicalType: FLOAT64
@@ -466,7 +474,7 @@ schema:
         physicalType: FLOAT64
         required: false
         semanticType: measure
-        description: Time-weighted average setpoint, °C (integer unless the setpoint changed within the hour).
+        description: Time-weighted average setpoint, °C (integer unless the setpoint changed within the slot).
       - name: external_input_ratio
         logicalType: number
         physicalType: FLOAT64
@@ -484,32 +492,32 @@ schema:
         physicalType: FLOAT64
         required: true
         semanticType: measure
-        description: Seconds of the hour covered by held state (0–3600). The denominator of the averages; 0 when nothing was observed.
+        description: Seconds of the slot covered by held state (0–900). The denominator of the averages; 0 when nothing was observed.
       - name: update_count
         logicalType: integer
         physicalType: INT64
         required: true
         semanticType: measure
-        description: Number of state updates whose held interval touched the hour.
+        description: Number of state updates whose held interval touched the slot.
     quality:
-      - name: one_row_per_hour
+      - name: one_row_per_slot
         type: sql
         dimension: uniqueness
-        query: SELECT COUNT(*) - COUNT(DISTINCT hour_key) FROM {model}
+        query: SELECT COUNT(*) - COUNT(DISTINCT slot_key) FROM {model}
         mustBe: 0
-      - name: hours_are_dense
+      - name: slots_are_dense
         type: sql
         dimension: completeness
-        description: No hour is missing between the first and the last row.
-        query: SELECT COALESCE(TIMESTAMP_DIFF(MAX(hour_started_at), MIN(hour_started_at), HOUR) + 1 - COUNT(*), 0) FROM {model}
+        description: No quarter hour is missing between the first and the last row.
+        query: SELECT COALESCE(TIMESTAMP_DIFF(MAX(slot_started_at), MIN(slot_started_at), MINUTE) / 15 + 1 - COUNT(*), 0) FROM {model}
         mustBe: 0
       - name: covered_seconds_in_range
         type: sql
         dimension: conformity
         description: >
-          An hour holds 3600 seconds and no more. Definitional, like the model's own
-          clamp; it fails only if the two ever disagree.
-        query: SELECT COUNT(*) FROM {model} WHERE covered_seconds < 0 OR covered_seconds > 3600
+          A quarter hour holds 900 seconds and no more. Definitional, like the model's
+          own clamp; it fails only if the two ever disagree.
+        query: SELECT COUNT(*) FROM {model} WHERE covered_seconds < 0 OR covered_seconds > 900
         mustBe: 0
       - name: ratios_in_range
         type: sql
@@ -528,28 +536,28 @@ schema:
         type: sql
         dimension: consistency
         description: >
-          Every watt-hour of fact_cooler_state_update is allocated to some hour and to
+          Every watt-hour of fact_cooler_state_update is allocated to some slot and to
           no more than one (within 1 Wh of rounding). Compared over the whole table,
           not per date: a held interval that straddles midnight JST is split between
           two dates here and belongs wholly to the update's date there.
         query: >
           SELECT COUNT(*) FROM (
             SELECT
-              (SELECT SUM(discharged_watt_hours) FROM {model}) AS hourly_discharged,
-              (SELECT SUM(charged_watt_hours) FROM {model}) AS hourly_charged,
-              (SELECT SUM(input_watt_hours) FROM {model}) AS hourly_input,
+              (SELECT SUM(discharged_watt_hours) FROM {model}) AS slot_discharged,
+              (SELECT SUM(charged_watt_hours) FROM {model}) AS slot_charged,
+              (SELECT SUM(input_watt_hours) FROM {model}) AS slot_input,
               (SELECT SUM(discharged_watt_hours) FROM fact_cooler_state_update) AS atomic_discharged,
               (SELECT SUM(charged_watt_hours) FROM fact_cooler_state_update) AS atomic_charged,
               (SELECT SUM(input_watt_hours) FROM fact_cooler_state_update) AS atomic_input
-          ) WHERE ABS(hourly_discharged - atomic_discharged) > 1
-             OR ABS(hourly_charged - atomic_charged) > 1
-             OR ABS(hourly_input - atomic_input) > 1
+          ) WHERE ABS(slot_discharged - atomic_discharged) > 1
+             OR ABS(slot_charged - atomic_charged) > 1
+             OR ABS(slot_input - atomic_input) > 1
         mustBe: 0
-      - name: hourly_energy_plausible
+      - name: energy_plausible
         type: sql
         dimension: accuracy
-        description: No hour discharges more than the cooler can physically draw.
-        query: SELECT COUNT(*) FROM {model} WHERE discharged_watt_hours > 100 OR charged_watt_hours > 150
+        description: No slot discharges more than the cooler can physically draw in a quarter hour.
+        query: SELECT COUNT(*) FROM {model} WHERE discharged_watt_hours > 25 OR charged_watt_hours > 38
         mustBe: 0
 
   - name: fact_cooler_pulldown
@@ -1013,7 +1021,7 @@ customProperties:
     value: by-arrived-boot
     description: Each arrival rebuilds every row of every boot its chunks touched, and the JST dates those rows fall on now or fell on before their timestamps were corrected; a full rebuild is always possible.
   - property: rules
-    value: "held_seconds cap 600 s; ts correction from the first NTP-synced update of the same boot; pull-down start = interior >= setpoint + 5 C, reached = interior <= setpoint + 1 C, first update after >= 15 min silence counts as start_up; hourly rows are dense over JST hours; band joins are half-open [lower, upper)"
+    value: "held_seconds cap 600 s; ts correction from the first NTP-synced update of the same boot; pull-down start = interior >= setpoint + 5 C, reached = interior <= setpoint + 1 C, first update after >= 15 min silence counts as start_up; snapshot rows are dense over JST quarter hours; band joins are half-open [lower, upper)"
   - property: estimatesNotStored
     value: true
     description: Next-morning state of charge, hours left and next pull-down time are computed by consumers from these tables.
