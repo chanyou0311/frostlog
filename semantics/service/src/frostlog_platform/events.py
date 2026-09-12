@@ -1,6 +1,6 @@
 """Putting an event on the topic both components announce themselves on.
 
-The topic and its messages are contracts/events.odcs.yaml. What goes on it is
+The topic and its messages are contracts/signals.odcs.yaml. What goes on it is
 each component's own business — the transform's ``semantic_updated``, the
 contract test's ``quality_report`` — so this module knows only that an event can
 say its name and turn itself into JSON.

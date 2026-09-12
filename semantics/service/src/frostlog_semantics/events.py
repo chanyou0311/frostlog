@@ -1,4 +1,4 @@
-"""What the transform says when it is done, as contracts/events.odcs.yaml declares it.
+"""What the transform says when it is done, as contracts/signals.odcs.yaml declares it.
 
 Several kinds of event share the topic, so the message attribute ``event``
 carries which one this is; the contract's schemas describe the body itself.
@@ -30,7 +30,7 @@ class SemanticUpdated(BaseModel):
 
     The consumer keeps its own copy of these models (notifier/src/frostlog_notifier/
     events.py): the two services deploy separately, and the contract in
-    contracts/events.odcs.yaml is what both must match.
+    contracts/signals.odcs.yaml is what both must match.
     """
 
     #: The contract's discriminator: consumers branch on this, not on field presence.

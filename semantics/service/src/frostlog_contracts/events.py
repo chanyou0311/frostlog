@@ -1,4 +1,4 @@
-"""What the contract test says when it is done, as contracts/events.odcs.yaml declares it."""
+"""What the contract test says when it is done, as contracts/signals.odcs.yaml declares it."""
 
 from datetime import datetime
 from typing import Literal

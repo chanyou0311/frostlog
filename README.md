@@ -60,7 +60,7 @@ make ci-warehouse   # contracts/samples から CI データセットを作り直
 
 設定は環境変数（Terraform が Cloud Run に与える）。`FROSTLOG_COLLECTION_BUCKET`（これ以外の
 バケットのイベントは無視する）、`FROSTLOG_BQ_DATASET`、`FROSTLOG_BQ_DATASET_CI`、
-`FROSTLOG_EVENTS_TOPIC`（トピックの短い名前）、`FROSTLOG_GCP_PROJECT`（省略時は
+`FROSTLOG_SIGNALS_TOPIC`（トピックの短い名前）、`FROSTLOG_GCP_PROJECT`（省略時は
 Application Default Credentials のプロジェクト）。healthchecks.io の URL とバケットの HMAC 鍵は
 Secret Manager にあり、`FROSTLOG_CONTRACT_TEST_HEALTHCHECK_URL_SECRET` と
 `FROSTLOG_COLLECTION_HMAC_SECRET` にはその名前だけを渡す（読めなければ ping と raw 契約の検査を飛ばす）。

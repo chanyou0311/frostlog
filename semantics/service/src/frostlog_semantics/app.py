@@ -61,7 +61,7 @@ def build_services(settings: Settings | None = None) -> Services:
         "FROSTLOG_BQ_LOCATION": settings.bq_location,
     }
     client = bigquery.Client(project=project)
-    topic = settings.events_topic
+    topic = settings.signals_topic
     publisher: Publisher = (
         PubSubPublisher(pubsub_v1.PublisherClient(), topic_path(project, topic))
         if topic
@@ -135,8 +135,11 @@ def chunk_arrived(
         # Eventarc delivers again; the load and the build are both idempotent.
         raise HTTPException(status_code=500, detail="dbt build failed")
 
-    # Only an events chunk carries upload runs, and it always arrives after every
-    # cooler chunk of the same return: that is what lets a consumer summarize one.
+    # Only an events chunk carries upload runs: the collector writes upload_done after
+    # its PUTs, so it travels in the next run. That a run's cooler chunks were put in the
+    # bucket first says nothing about the order they are processed in — chunks arrive on
+    # their own and a failed one comes back later — so this announces that a run ended
+    # and leaves what it covered to whoever reads the model.
     upload_runs = services.warehouse.upload_runs(chunk) if chunk.stream == "events" else []
     services.publisher.publish(
         SemanticUpdated(

@@ -27,7 +27,7 @@ RUN uv sync --locked --no-dev --group transform
 
 # Only what is the same in every deployment is set here. The deployment's own
 # names come from Terraform: FROSTLOG_COLLECTION_BUCKET, FROSTLOG_BQ_DATASET,
-# FROSTLOG_BQ_DATASET_CI, FROSTLOG_EVENTS_TOPIC (short name),
+# FROSTLOG_BQ_DATASET_CI, FROSTLOG_SIGNALS_TOPIC (short name),
 # FROSTLOG_CONTRACT_TEST_HEALTHCHECK_URL_SECRET and FROSTLOG_COLLECTION_HMAC_SECRET
 # (Secret Manager names, read at run time). The project id is not among them: it
 # is resolved from the credentials the revision runs with, and

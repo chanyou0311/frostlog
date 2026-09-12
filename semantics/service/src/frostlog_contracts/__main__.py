@@ -62,7 +62,7 @@ def build_services(settings: Settings | None = None) -> Services:
         "FROSTLOG_BQ_RAW_DATASET": settings.raw_dataset,
         "FROSTLOG_BQ_LOCATION": settings.bq_location,
     }
-    topic = settings.events_topic
+    topic = settings.signals_topic
     publisher: Publisher = (
         PubSubPublisher(pubsub_v1.PublisherClient(), topic_path(project, topic))
         if topic

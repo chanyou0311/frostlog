@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     bq_location: str = "us-central1"
 
     #: Short name of the Pub/Sub topic the quality reports go to.
-    events_topic: str | None = None
+    signals_topic: str | None = None
 
     #: Dead man's switch pinged after a run in which every contract passed. The direct
     #: value is for local runs; in production the URL is a secret and only its Secret

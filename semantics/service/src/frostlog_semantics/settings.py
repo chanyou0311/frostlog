@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
     #: Short name of the Pub/Sub topic the events go to (Terraform passes the short
     #: name; :func:`frostlog_platform.project.topic_path` turns it into the full one).
-    events_topic: str | None = None
+    signals_topic: str | None = None
 
     dbt_project_dir: Path = _ROOT / "semantics" / "dbt"
     dbt_profiles_dir: Path = _ROOT / "semantics" / "dbt"

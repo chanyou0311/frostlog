@@ -116,7 +116,7 @@ def fakes() -> Fakes:
     warehouse, metadata = FakeWarehouse(), FakeMetadata()
     transform, publisher = FakeTransform(), FakePublisher()
     services = Services(
-        settings=Settings(collection_bucket=COLLECTION_BUCKET, events_topic="frostlog-events"),
+        settings=Settings(collection_bucket=COLLECTION_BUCKET, signals_topic="frostlog-signals"),
         warehouse=warehouse,
         metadata=metadata,
         transform=transform,
@@ -143,7 +143,7 @@ def job() -> ContractFakes:
     pinged: list[str] = []
     services = ContractServices(
         settings=ContractSettings(
-            events_topic="frostlog-events",
+            signals_topic="frostlog-signals",
             contract_test_healthcheck_url="https://hc.example/uuid",
             collection_hmac_secret=HMAC_SECRET,
         ),
