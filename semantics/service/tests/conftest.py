@@ -29,14 +29,19 @@ class FakeWarehouse:
         self.loaded: list[tuple[str, datetime]] = []
         self.already_loaded = False
         self.runs: list[UploadRun] = []
-        self.asked_for_runs: list[str] = []
+        self.arrived: list[date] = [date(2026, 9, 6), date(2026, 9, 7)]
+        self.asked_since: list[datetime] = []
 
     def load(self, chunk: RawObject, uploaded_at: datetime) -> LoadResult:
         self.loaded.append((chunk.name, uploaded_at))
         return LoadResult(table=chunk.table, rows=3, already_loaded=self.already_loaded)
 
-    def upload_runs(self, chunk: RawObject) -> list[UploadRun]:
-        self.asked_for_runs.append(chunk.name)
+    def arrived_dates(self, since: datetime) -> list[date]:
+        self.asked_since.append(since)
+        return self.arrived
+
+    def upload_runs(self, since: datetime) -> list[UploadRun]:
+        self.asked_since.append(since)
         return self.runs
 
 

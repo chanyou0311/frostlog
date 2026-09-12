@@ -23,7 +23,7 @@ succeeded, because the retry needs it.
 import hashlib
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -32,7 +32,7 @@ from google.cloud import bigquery
 
 from frostlog_semantics import raw_schema
 from frostlog_semantics.events import UploadRun
-from frostlog_semantics.raw_objects import RawObject
+from frostlog_semantics.raw_objects import RawObject, target_dates
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +54,9 @@ class LoadResult:
 class Warehouse(Protocol):
     def load(self, chunk: RawObject, uploaded_at: datetime) -> LoadResult: ...
 
-    def upload_runs(self, chunk: RawObject) -> list[UploadRun]: ...
+    def arrived_dates(self, since: datetime) -> list[date]: ...
+
+    def upload_runs(self, since: datetime) -> list[UploadRun]: ...
 
 
 def append_job_id(object_name: str, attempt: int = 1) -> str:
@@ -124,13 +126,33 @@ class BigQueryWarehouse:
         self._client.delete_table(self._table(table), not_found_ok=True)
         self._ensure_table(table, raw_schema.SCHEMAS[table])
 
-    def upload_runs(self, chunk: RawObject) -> list[UploadRun]:
-        """The collector's upload runs that this events chunk reported as finished."""
+    def arrived_dates(self, since: datetime) -> list[date]:
+        """The JST dates the chunks that arrived since ``since`` ask to be rebuilt for.
+
+        A chunk's own day is in its name, and what is in it can fall on that JST date
+        or the next one, so both are asked for. Reading the name rather than the rows
+        keeps this to the two columns the question needs.
+        """
         config = bigquery.QueryJobConfig(
-            query_parameters=[bigquery.ScalarQueryParameter("source_key", "STRING", chunk.name)]
+            query_parameters=[bigquery.ScalarQueryParameter("since", "TIMESTAMP", since)]
         )
         job = self._client.query(
-            upload_runs_sql(self._table(chunk.table)),
+            arrived_dates_sql(self._table("raw_cooler"), self._table("raw_events")),
+            job_config=config,
+            location=self._location,
+        )
+        days: set[date] = set()
+        for row in job.result():
+            days.update(target_dates(row["dt"]))
+        return sorted(days)
+
+    def upload_runs(self, since: datetime) -> list[UploadRun]:
+        """The collector's upload runs reported finished by chunks that arrived since."""
+        config = bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("since", "TIMESTAMP", since)]
+        )
+        job = self._client.query(
+            upload_runs_sql(self._table("raw_events")),
             job_config=config,
             location=self._location,
         )
@@ -261,18 +283,38 @@ def append_sql(target: str, stage: str, schema: list[bigquery.SchemaField]) -> s
     )
 
 
+def arrived_dates_sql(cooler_table: str, events_table: str) -> str:
+    """The days of the chunks loaded since a moment, from both streams.
+
+    Both, because the chunk that anchors a boot's clock is often an event while the
+    reports it moves are cooler rows shipped under the date the wrong clock said.
+    """
+    return f"""
+SELECT DISTINCT dt FROM (
+  SELECT DATE(REGEXP_EXTRACT(source_key, r'dt=(\\d{{4}}-\\d{{2}}-\\d{{2}})')) AS dt
+  FROM `{cooler_table}` WHERE uploaded_at >= @since
+  UNION ALL
+  SELECT DATE(REGEXP_EXTRACT(source_key, r'dt=(\\d{{4}}-\\d{{2}}-\\d{{2}})')) AS dt
+  FROM `{events_table}` WHERE uploaded_at >= @since
+)
+WHERE dt IS NOT NULL
+ORDER BY dt
+"""
+
+
 def upload_runs_sql(events_table: str) -> str:
-    """The upload runs one events chunk reported, with what came before each of them.
+    """The upload runs the chunks loaded since a moment reported, and what preceded each.
 
     ``started_at`` is the run's own start (same boot); ``previous_finished_at`` is
     the end of the run before it, whichever boot that was — the gap between the two
-    is how long the collector was away from the home network.
+    is how long the collector was away from the home network. Both look across the
+    whole table, because what came before a run is not restricted to this window.
     """
     return f"""
 WITH finished AS (
   SELECT boot_id, ts, uploaded_chunk_count, uploaded_line_count
   FROM `{events_table}`
-  WHERE kind = 'upload_done' AND source_key = @source_key
+  WHERE kind = 'upload_done' AND uploaded_at >= @since
 )
 SELECT
   d.ts AS finished_at,

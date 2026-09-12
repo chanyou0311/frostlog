@@ -64,13 +64,26 @@ def test_the_staged_schema_leaves_out_what_the_chunk_does_not_carry() -> None:
     assert "payload" in staged
 
 
-def test_the_upload_run_query_reads_one_chunk_and_the_whole_stream() -> None:
+def test_the_upload_run_query_reads_a_window_and_the_whole_stream() -> None:
     sql = warehouse.upload_runs_sql("p.d.raw_events")
-    # The runs reported by this chunk...
-    assert "source_key = @source_key" in sql
-    # ...each with its own start and with the end of whatever ran before it.
+    # The runs reported by everything loaded since the window opened...
+    assert "kind = 'upload_done' AND uploaded_at >= @since" in sql
+    # ...each with its own start and with the end of whatever ran before it, which is
+    # not restricted to the window: what preceded a run may have arrived long ago.
     assert "s.kind = 'upload_started' AND s.boot_id = d.boot_id AND s.ts < d.ts" in sql
     assert "f.kind = 'upload_done' AND f.ts < d.ts" in sql
+
+
+def test_the_arrived_dates_query_reads_both_streams_by_arrival() -> None:
+    """The day is read from the object's name, and both streams answer.
+
+    The chunk that anchors a boot's clock is often an event, while the reports it
+    moves are cooler rows shipped under the date the wrong clock said.
+    """
+    sql = warehouse.arrived_dates_sql("p.d.raw_cooler", "p.d.raw_events")
+    assert sql.count("uploaded_at >= @since") == 2
+    assert "`p.d.raw_cooler`" in sql and "`p.d.raw_events`" in sql
+    assert r"dt=(\d{4}-\d{2}-\d{2})" in sql
 
 
 class FakeJob:

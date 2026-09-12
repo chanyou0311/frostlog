@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     #: name; :func:`frostlog_platform.project.topic_path` turns it into the full one).
     signals_topic: str | None = None
 
+    #: How far back the transform looks for chunks that have arrived. Longer than the
+    #: half hour between runs on purpose: a run the scheduler missed, or one that failed
+    #: every retry, is made good by the next one instead of leaving a date unbuilt. A day
+    #: and an hour covers any single outage worth repairing this way; a longer one is a
+    #: --full-refresh, not a wider window.
+    transform_lookback_hours: float = 25.0
+
     dbt_project_dir: Path = _ROOT / "semantics" / "dbt"
     dbt_profiles_dir: Path = _ROOT / "semantics" / "dbt"
     dbt_target: str = "prod"

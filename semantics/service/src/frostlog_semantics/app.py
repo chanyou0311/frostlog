@@ -1,10 +1,19 @@
-"""The Cloud Run service of the semantics data product: one endpoint, one job.
+"""The Cloud Run service of the semantics data product: loading, and transforming.
 
 ``POST /events/gcs`` is what Eventarc calls when a chunk lands in the collection
-bucket: the chunk goes into its BigQuery raw table, dbt rebuilds the JST dates it
-touched and a ``semantic_updated`` event says what changed. Failing with 500 is
-how the service asks Eventarc to deliver again, and a run that fails publishes
-nothing — consumers hear about a build only once it stands.
+bucket, and all it does is put the chunk into its BigQuery raw table. That happens
+every five minutes while the cooler records, which a load job is happy to do —
+BigQuery does not charge for one.
+
+``POST /jobs/transform`` is what Cloud Scheduler calls every 30 minutes: dbt
+rebuilds the JST dates whose chunks have arrived lately and a ``semantic_updated``
+event says what changed. Running it on every chunk instead would cost 288 builds a
+day, which leaves both BigQuery's and Cloud Run's free tiers inside a couple of
+months; the contract's promise is a day, so half-hourly is not a loss.
+
+Failing with 500 is how either endpoint asks its caller to deliver again, and a
+transform that fails publishes nothing — consumers hear about a build only once it
+stands.
 
 Whether the contracts are being kept is a different question, asked once a day by
 a job of its own (:mod:`frostlog_contracts`), because it is about both data
@@ -15,7 +24,7 @@ The endpoint does not authenticate: only Cloud Run IAM (OIDC) may call it.
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -103,13 +112,17 @@ def create_app(services: Services | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return chunk_arrived(current(), payload, ce_time)
 
+    @app.post("/jobs/transform")
+    def transform_job() -> dict[str, Any]:
+        return transform_due(current())
+
     return app
 
 
 def chunk_arrived(
     services: Services, payload: dict[str, Any], ce_time: str | None = None
 ) -> dict[str, Any]:
-    """Load the chunk the event describes and rebuild the dates it touched."""
+    """Load the chunk the event describes. Rebuilding it is the transform job's work."""
     # Eventarc sends the object either as the body (binary mode) or under `data`.
     nested = payload.get("data")
     body: dict[str, Any] = nested if isinstance(nested, dict) else payload
@@ -129,34 +142,56 @@ def chunk_arrived(
 
     uploaded_at = services.metadata.uploaded_at(chunk) or _event_time(payload, ce_time)
     load = services.warehouse.load(chunk, uploaded_at)
-    dates = raw_objects.target_dates(chunk.dt)
+    return {
+        "status": "loaded",
+        "object": name,
+        "table": load.table,
+        "rows": load.rows,
+        "already_loaded": load.already_loaded,
+    }
+
+
+def transform_due(services: Services) -> dict[str, Any]:
+    """Rebuild for the chunks that have arrived lately, and say so if any did.
+
+    The window is on arrival, not on the dates in the data: a trip's records are days
+    old when they land, and asking for "the last week of readings" would rebuild a
+    week of partitions every half hour, which is the cost this schedule exists to
+    avoid. It reaches back further than the schedule steps so that a run the
+    scheduler missed is made good by the next one rather than leaving a hole.
+    """
+    since = datetime.now(UTC) - timedelta(hours=services.settings.transform_lookback_hours)
+    dates = services.warehouse.arrived_dates(since)
+    if not dates:
+        # Nothing came in. Building anyway would rebuild whatever the empty date list
+        # falls back to, and publishing would announce a change that did not happen.
+        log.info("no chunk arrived since %s; nothing to rebuild", since)
+        return {"status": "idle", "since": since.isoformat()}
+
     build = services.transform.build(dates)
     if not build.passed:
-        # Eventarc delivers again; the load and the build are both idempotent.
+        # Scheduler retries; the build is idempotent and the window still holds.
         raise HTTPException(status_code=500, detail="dbt build failed")
 
-    # Only an events chunk carries upload runs: the collector writes upload_done after
-    # its PUTs, so it travels in the next run. That a run's cooler chunks were put in the
-    # bucket first says nothing about the order they are processed in — chunks arrive on
-    # their own and a failed one comes back later — so this announces that a run ended
-    # and leaves what it covered to whoever reads the model.
-    upload_runs = services.warehouse.upload_runs(chunk) if chunk.stream == "events" else []
+    # The collector writes upload_done after its PUTs, so a run's own completion travels
+    # in the next run's events chunk. Which chunks were processed in which order says
+    # nothing — they arrive on their own and a failed one comes back later — so this
+    # announces the runs that ended and leaves what they covered to whoever reads the
+    # model.
+    upload_runs = services.warehouse.upload_runs(since)
     services.publisher.publish(
         SemanticUpdated(
             run_id=uuid4().hex,
             published_at=datetime.now(UTC),
             date_keys=[raw_objects.date_key(day) for day in dates],
-            raw_uploaded_at_max=uploaded_at,
+            raw_uploaded_at_max=since,
             build_passed=True,
             upload_runs=upload_runs,
         )
     )
     return {
         "status": "built",
-        "object": name,
-        "table": load.table,
-        "rows": load.rows,
-        "already_loaded": load.already_loaded,
+        "since": since.isoformat(),
         "date_keys": [raw_objects.date_key(day) for day in dates],
         "upload_runs": len(upload_runs),
     }

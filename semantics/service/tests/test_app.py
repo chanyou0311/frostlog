@@ -1,34 +1,62 @@
-"""The two endpoints, end to end against the fakes."""
+"""The endpoints, end to end against the fakes: loading, and transforming."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from frostlog_semantics.app import chunk_arrived, create_app
+from frostlog_semantics.app import chunk_arrived, create_app, transform_due
 from frostlog_semantics.events import SemanticUpdated, UploadRun
 from tests.conftest import COLLECTION_BUCKET, Fakes
 
 
-def test_a_chunk_is_loaded_and_its_jst_dates_rebuilt(fakes: Fakes, finalized: dict) -> None:
+def test_a_chunk_is_loaded_and_nothing_more(fakes: Fakes, finalized: dict) -> None:
+    """Arrival is a load. Rebuilding on every one of them is what this schedule avoids."""
     result = chunk_arrived(fakes.services, finalized)
 
-    assert result["status"] == "built"
+    assert result["status"] == "loaded"
     assert result["table"] == "raw_cooler"
-    assert result["date_keys"] == [20260906, 20260907]
     assert fakes.warehouse.loaded[0][0] == finalized["name"]
+    assert fakes.transform.builds == []
+    assert fakes.publisher.published == []
+
+
+def test_the_transform_rebuilds_the_dates_whose_chunks_arrived(fakes: Fakes) -> None:
+    result = transform_due(fakes.services)
+
+    assert result["status"] == "built"
+    assert result["date_keys"] == [20260906, 20260907]
     assert fakes.transform.builds == [["2026-09-06", "2026-09-07"]]
 
 
-def test_the_update_is_announced_with_what_it_rebuilt(fakes: Fakes, finalized: dict) -> None:
-    chunk_arrived(fakes.services, finalized)
+def test_the_update_is_announced_with_what_it_rebuilt(fakes: Fakes) -> None:
+    transform_due(fakes.services)
 
     (event,) = fakes.publisher.published
     assert isinstance(event, SemanticUpdated)
     assert event.date_keys == [20260906, 20260907]
     assert event.build_passed is True
-    assert event.raw_uploaded_at_max == datetime(2026, 9, 6, 12, tzinfo=UTC)
+
+
+def test_the_window_reaches_back_further_than_the_schedule_steps(fakes: Fakes) -> None:
+    """A missed run is made good by the next one rather than leaving a date unbuilt."""
+    transform_due(fakes.services)
+
+    (since, _) = fakes.warehouse.asked_since
+    lookback = datetime.now(UTC) - since
+    assert lookback > timedelta(hours=24)
+
+
+def test_nothing_arrived_means_nothing_is_built_or_announced(fakes: Fakes) -> None:
+    """An empty date list would otherwise fall back to the macro's no-op date."""
+    fakes.warehouse.arrived = []
+
+    result = transform_due(fakes.services)
+
+    assert result["status"] == "idle"
+    assert fakes.transform.builds == []
+    assert fakes.publisher.published == []
 
 
 def test_the_upload_time_comes_from_the_object_metadata(fakes: Fakes, finalized: dict) -> None:
@@ -52,7 +80,7 @@ def test_the_event_time_stands_in_when_the_object_has_no_metadata(
 def test_a_structured_cloudevent_is_understood_too(fakes: Fakes, finalized: dict) -> None:
     result = chunk_arrived(fakes.services, {"time": "2026-09-06T12:00:00+00:00", "data": finalized})
 
-    assert result["status"] == "built"
+    assert result["status"] == "loaded"
 
 
 def test_an_object_that_is_not_a_chunk_is_left_alone(fakes: Fakes) -> None:
@@ -81,34 +109,27 @@ def test_an_event_without_an_object_is_a_bad_request(fakes: Fakes) -> None:
     assert raised.value.status_code == 400
 
 
-def test_a_redelivery_still_rebuilds(fakes: Fakes, finalized: dict) -> None:
-    # The append is refused as already done, but the build has to run: the first
-    # delivery may have failed exactly between the two.
+def test_a_redelivery_is_still_a_load(fakes: Fakes, finalized: dict) -> None:
     fakes.warehouse.already_loaded = True
 
     result = chunk_arrived(fakes.services, finalized)
 
     assert result["already_loaded"] is True
-    assert fakes.transform.builds == [["2026-09-06", "2026-09-07"]]
 
 
-def test_a_failed_build_asks_eventarc_to_try_again_and_announces_nothing(
-    fakes: Fakes, finalized: dict
-) -> None:
+def test_a_failed_build_asks_for_another_run_and_announces_nothing(fakes: Fakes) -> None:
     # Every retry would otherwise publish another event about data that is not there.
     fakes.transform.passed = False
 
     with pytest.raises(HTTPException) as raised:
-        chunk_arrived(fakes.services, finalized)
+        transform_due(fakes.services)
 
     assert raised.value.status_code == 500
     assert fakes.publisher.published == []
 
 
-def test_an_events_chunk_announces_the_upload_runs_it_carried(
-    fakes: Fakes, finalized: dict
-) -> None:
-    finalized["name"] = "v1/events/dt=2026-09-06/000000000000.jsonl.gz"
+def test_the_runs_of_every_events_chunk_in_the_window_are_announced(fakes: Fakes) -> None:
+    """One transform covers many chunks, so it carries every run they reported."""
     fakes.warehouse.runs = [
         UploadRun(
             finished_at=datetime(2026, 9, 6, 11, 4, 12, tzinfo=UTC),
@@ -116,28 +137,27 @@ def test_an_events_chunk_announces_the_upload_runs_it_carried(
             previous_finished_at=datetime(2026, 9, 6, 2, 0, tzinfo=UTC),
             chunk_count=2,
             line_count=311,
-        )
+        ),
+        UploadRun(
+            finished_at=datetime(2026, 9, 6, 11, 9, 14, tzinfo=UTC),
+            started_at=datetime(2026, 9, 6, 11, 9, 12, tzinfo=UTC),
+            previous_finished_at=datetime(2026, 9, 6, 11, 4, 12, tzinfo=UTC),
+            chunk_count=1,
+            line_count=88,
+        ),
     ]
 
-    chunk_arrived(fakes.services, finalized)
+    result = transform_due(fakes.services)
 
     (event,) = fakes.publisher.published
     assert isinstance(event, SemanticUpdated)
-    assert [run.line_count for run in event.upload_runs] == [311]
-    assert fakes.warehouse.asked_for_runs == [finalized["name"]]
-
-
-def test_a_cooler_chunk_carries_no_upload_runs(fakes: Fakes, finalized: dict) -> None:
-    chunk_arrived(fakes.services, finalized)
-
-    (event,) = fakes.publisher.published
-    assert isinstance(event, SemanticUpdated)
-    assert event.upload_runs == []
-    assert fakes.warehouse.asked_for_runs == []
+    assert [run.line_count for run in event.upload_runs] == [311, 88]
+    assert result["upload_runs"] == 2
 
 
 def test_the_routes_are_wired(fakes: Fakes, finalized: dict) -> None:
     client = TestClient(create_app(fakes.services))
 
     assert client.get("/healthz").json() == {"status": "ok"}
-    assert client.post("/events/gcs", json=finalized).json()["status"] == "built"
+    assert client.post("/events/gcs", json=finalized).json()["status"] == "loaded"
+    assert client.post("/jobs/transform").json()["status"] == "built"
