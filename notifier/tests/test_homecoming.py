@@ -91,15 +91,15 @@ def test_a_gap_of_two_hours_makes_one_summary() -> None:
     assert notification.kind == HOMECOMING
     assert notification.key == RETURN.isoformat()
     assert notification.coverage_end == RETURN
-    assert "帰宅の要約" in notification.text
-    assert "前回の到着から 9.0 h" in notification.text
-    assert "SoC 62 %" in notification.text
+    assert "ポータブル冷蔵庫のバッテリー" in notification.text
+    assert "直前の記録中断 9.0 h" in notification.text
+    assert "残量 62 %" in notification.text
     assert "消費 128.4 Wh" in notification.text
     assert "充電 40.2 Wh" in notification.text
-    assert "差引 -88.2 Wh" in notification.text
-    assert "プルダウン完了: 1 件" in notification.text
-    assert notification.image is not None
-    assert notification.image.startswith(b"\x89PNG")
+    assert "消費 128.4 Wh / 充電 40.2 Wh" in notification.text
+    assert "設定温度まで冷却 1 回" in notification.text
+    kinds = [block["type"] for block in notification.blocks]
+    assert kinds.count("data_visualization") == 2
 
 
 def test_the_period_ends_at_the_last_update_the_run_carried() -> None:
@@ -180,7 +180,7 @@ def test_there_is_no_outlook_while_charging() -> None:
     [notification] = homecoming.build_all(
         warehouse_with(latest_state_update_at=[dict(charging.model_dump())]), [ARRIVAL], None
     )
-    assert "見込みなし" in notification.text
+    assert "翌朝の見込みはなし" in notification.text
 
 
 def test_there_is_no_outlook_without_an_unplugged_hour() -> None:

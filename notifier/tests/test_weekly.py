@@ -159,6 +159,6 @@ def test_the_summary_is_built_with_its_text_and_chart() -> None:
     assert "100 % からの持ち時間" in notification.text
     assert "プルダウン 1 件" in notification.text
     assert "データ欠損: 5 時間" in notification.text
-    assert notification.image is not None
-    assert notification.image.startswith(b"\x89PNG")
+    kinds = [block["type"] for block in notification.blocks]
+    assert kinds.count("data_visualization") == 2
     assert dict(warehouse.queried)["hourly_snapshots"] == {"start": START, "end": END}

@@ -79,16 +79,16 @@ class FakeSlack:
     def __init__(self, enabled: bool = True, fail: Exception | None = None) -> None:
         self.enabled = enabled
         self.fail = fail
-        self.messages: list[tuple[str, bytes | None, str]] = []
+        self.messages: list[tuple[str, list[dict] | None]] = []
         self.dry_runs: list[str] = []
 
-    def post(self, text: str, image: bytes | None = None, filename: str = "chart.png") -> Posted:
+    def post(self, text: str, blocks: list[dict] | None = None) -> Posted:
         if self.fail is not None:
             raise self.fail
         if not self.enabled:
             self.dry_runs.append(text)
             return Posted(slack_timestamp=None, dry_run=True)
-        self.messages.append((text, image, filename))
+        self.messages.append((text, blocks))
         return Posted(slack_timestamp=f"170000000.{len(self.messages):06d}", dry_run=False)
 
 

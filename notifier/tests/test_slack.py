@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -6,7 +5,16 @@ import pytest
 from frostlog_notifier.errors import Transient
 from frostlog_notifier.slack import Posted, Slack
 
-PNG = b"\x89PNG\r\n\x1a\nfake"
+CHART = {
+    "type": "data_visualization",
+    "title": "バッテリー残量 (%)",
+    "chart": {
+        "type": "line",
+        "series": [{"name": "残量", "data": [{"label": "8時", "value": 62}]}],
+        "axis_config": {"categories": ["8時"]},
+    },
+}
+BLOCKS = [{"type": "section", "text": {"type": "mrkdwn", "text": "帰宅の要約"}}, CHART]
 
 
 class SlackError(Exception):
@@ -36,50 +44,31 @@ class FakeWebClient:
         return self.response
 
 
-def test_without_a_token_the_text_is_logged_and_the_chart_written(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    slack = Slack(token=None, channel="#fumo", dry_run_directory=tmp_path)
-    result = slack.post("帰宅の要約", PNG, "homecoming.png")
+def test_without_a_token_the_message_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    result = Slack(token=None, channel="#fumo").post("帰宅の要約", BLOCKS)
     assert result.dry_run is True
     assert result.slack_timestamp is None
-    assert (tmp_path / "homecoming.png").read_bytes() == PNG
     assert "帰宅の要約" in caplog.text
+    # The blocks go to the log too: without a token that is the only way to see them.
+    assert "data_visualization" in caplog.text
 
 
-def test_a_chart_is_uploaded_with_the_text_as_its_comment() -> None:
+def test_the_blocks_go_with_the_text_that_stands_in_for_them() -> None:
     client = FakeWebClient()
     slack = Slack(token="xoxb-test", channel="#fumo", client=client)
-    result = slack.post("到達", PNG, "pulldown.png")
+    result = slack.post("到達", BLOCKS)
     method, kwargs = client.calls[0]
-    assert method == "files_upload_v2"
-    assert kwargs == {
-        "channel": "#fumo",
-        "file": PNG,
-        "filename": "pulldown.png",
-        "initial_comment": "到達",
-    }
+    assert method == "chat_postMessage"
+    assert kwargs == {"channel": "#fumo", "text": "到達", "blocks": BLOCKS}
     assert result == Posted(slack_timestamp="1770000000.000100", dry_run=False)
 
 
-def test_a_message_without_a_chart_is_plain_text() -> None:
+def test_a_message_without_blocks_is_plain_text() -> None:
     client = FakeWebClient()
     Slack(token="xoxb-test", channel="#fumo", client=client).post("品質チェック失敗")
     method, kwargs = client.calls[0]
     assert method == "chat_postMessage"
-    assert kwargs == {"channel": "#fumo", "text": "品質チェック失敗"}
-
-
-def test_the_timestamp_of_an_upload_is_found_in_its_shares() -> None:
-    response = {
-        "ok": True,
-        "files": [
-            {"id": "F1", "shares": {"public": {"C1": [{"ts": "1770000123.000200"}]}}},
-        ],
-    }
-    client = FakeWebClient(response=response)
-    result = Slack(token="xoxb-test", channel="#fumo", client=client).post("x", PNG)
-    assert result.slack_timestamp == "1770000123.000200"
+    assert kwargs == {"channel": "#fumo", "text": "品質チェック失敗", "blocks": None}
 
 
 def test_rate_limiting_is_transient() -> None:
@@ -97,14 +86,14 @@ def test_a_rejected_message_is_not_transient() -> None:
     assert not isinstance(raised.value, Transient)
 
 
-def test_the_token_is_looked_up_once_and_only_when_it_is_needed(tmp_path: Path) -> None:
+def test_the_token_is_looked_up_once_and_only_when_it_is_needed() -> None:
     lookups: list[str] = []
 
     def source() -> str | None:
         lookups.append("looked up")
         return None
 
-    slack = Slack(token=source, channel="#fumo", dry_run_directory=tmp_path)
+    slack = Slack(token=source, channel="#fumo")
     assert lookups == []  # building the poster reaches nothing
     assert slack.post("one").dry_run is True
     assert slack.post("two").dry_run is True

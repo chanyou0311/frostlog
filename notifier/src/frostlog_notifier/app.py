@@ -45,7 +45,7 @@ async def events_pubsub(request: Request, notifier: Notifier = Depends(get_notif
         # Nothing about this message will improve on redelivery; take it off the queue.
         log.warning("dropping an unusable message: %s", exc)
         return _answer(200, {"posted": [], "dropped": str(exc)})
-    # BigQuery, matplotlib and Slack are all blocking; kept off the event loop so
+    # BigQuery and Slack are both blocking; kept off the event loop so
     # that /healthz still answers while a summary is being drawn and uploaded.
     try:
         posted = await run_in_threadpool(notifier.handle, event)

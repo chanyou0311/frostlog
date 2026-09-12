@@ -122,7 +122,7 @@ class Notifier:
         if self._posted.is_posted(notification.kind, notification.key):
             log.info("%s/%s already posted", notification.kind, notification.key)
             return None
-        result = self._slack.post(notification.text, notification.image, notification.filename)
+        result = self._slack.post(notification.text, notification.blocks)
         self._posted.record(
             notification.kind,
             notification.key,
@@ -162,5 +162,5 @@ def build(settings: Settings | None = None) -> Notifier:
     return Notifier(
         warehouse=warehouse,
         posted=PostedNotifications(warehouse),
-        slack=Slack(token, configuration.slack_channel, configuration.dry_run_directory),
+        slack=Slack(token, configuration.slack_channel),
     )

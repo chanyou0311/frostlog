@@ -1,5 +1,4 @@
 from datetime import timedelta
-from pathlib import Path
 
 import pytest
 from conftest import (
@@ -130,7 +129,7 @@ def test_one_return_is_summarised_once_however_many_chunks_it_took(
         ]
     )
     assert [n for n in notifier.handle(quiet) if n.kind == HOMECOMING] == []
-    assert len([text for text, _, _ in slack.messages if "帰宅の要約" in text]) == 1
+    assert len([text for text, _ in slack.messages if "戻ってきた時点の残量" in text]) == 1
 
 
 def test_the_next_summary_starts_where_the_last_one_stopped(
@@ -164,7 +163,7 @@ def test_a_failed_contract_test_is_posted_with_its_checks(
     [notification] = notifier.handle(report)
     assert notification.key == "frostlog-semantics/daily-1"
     assert "hours_are_dense" in slack.messages[0][0]
-    assert slack.messages[0][1] is None  # no chart
+    assert slack.messages[0][1] == []  # words only, no blocks
     assert notifier.handle(report) == []
 
 
@@ -339,13 +338,14 @@ def test_a_failure_without_a_token_is_only_logged(
 
 
 def test_without_a_token_everything_is_recorded_as_a_dry_run(
-    arrived: FakeWarehouse, settings: Settings, tmp_path: Path
+    arrived: FakeWarehouse, settings: Settings
 ) -> None:
-    slack = Slack(token=None, channel="#fumo", dry_run_directory=tmp_path)
+    slack = Slack(token=None, channel="#fumo")
     posted = build_notifier(arrived, slack, settings).handle(ARRIVED)
     rows = {row["kind"]: row for name, row in arrived.executed if name == "record_posted"}
     assert set(rows) == {"homecoming", "pulldown", "weekly"}
     assert all(row["dry_run"] is True for row in rows.values())
     assert all("slack_ts" not in row for row in rows.values())
+    # Each of them carries its charts even when there is nowhere to send them.
     for notification in posted:
-        assert (tmp_path / notification.filename).read_bytes().startswith(b"\x89PNG")
+        assert any(block["type"] == "data_visualization" for block in notification.blocks)

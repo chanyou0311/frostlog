@@ -4,8 +4,6 @@ The Slack token is optional on purpose: without it the service runs in dry run,
 which is how it is deployed before the token exists.
 """
 
-from pathlib import Path
-
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -28,8 +26,6 @@ class Settings(BaseSettings):
     #: Name of the Secret Manager secret holding the token (the name, never the token).
     slack_bot_token_secret: str | None = None
     slack_channel: str = "#fumo"
-    #: Where charts are written when there is no Slack token.
-    dry_run_directory: Path = Path("/tmp")
 
 
 def resolve_project(settings: Settings) -> str:

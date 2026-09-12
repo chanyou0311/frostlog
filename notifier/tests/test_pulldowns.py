@@ -48,8 +48,8 @@ def test_a_finished_episode_becomes_a_notification() -> None:
     assert "周辺平均 27.3 °C" in notification.text
     assert "消費 52.1 Wh" in notification.text
     assert "SoC 100 % → 88 % (-12 pt)" in notification.text
-    assert notification.image is not None
-    assert notification.image.startswith(b"\x89PNG")
+    kinds = [block["type"] for block in notification.blocks]
+    assert kinds.count("data_visualization") == 1
 
 
 def test_an_interrupted_episode_says_how_long_it_ran() -> None:

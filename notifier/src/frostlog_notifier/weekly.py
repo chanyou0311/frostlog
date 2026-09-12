@@ -9,6 +9,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
+from statistics import median
 
 from frostlog_notifier import charts, formatting, queries
 from frostlog_notifier.clock import (
@@ -209,20 +210,79 @@ def build(warehouse: Warehouse, iso_year: int, iso_week: int) -> Notification:
     days = jst_dates(start, end)
     summary = summarize(hours, bands, pulldowns, days)
     key = iso_week_key(iso_year, iso_week)
-    image = charts.weekly(
-        [
-            (day.day.strftime("%m-%d"), day.discharged_watt_hours, day.charged_watt_hours)
-            for day in summary.daily
-        ],
-        [(band.label, band.samples) for band in summary.bands if band.samples],
-        f"Week {key} ({days[0]:%m-%d} to {days[-1]:%m-%d} JST)",
-    )
     return Notification(
         kind=WEEKLY,
         key=key,
         text=_text(summary, key, days),
-        image=image,
-        filename=f"weekly-{key}.png",
+        blocks=_blocks(summary, key, days),
+    )
+
+
+def _blocks(summary: Summary, key: str, days: list[date]) -> list[dict]:
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": f"📅 {key} の週次まとめ", "emoji": True},
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*{days[0]:%m-%d} から {days[-1]:%m-%d} の 7 日間で"
+                f" {formatting.watt_hours(summary.discharged_watt_hours)} 使いました。*\n"
+                f"充電は {formatting.watt_hours(summary.charged_watt_hours)}、"
+                f"差引 {formatting.watt_hours(summary.net_watt_hours)}。",
+            },
+        },
+    ]
+    energy = charts.bar(
+        "日ごとの電力量 (Wh)",
+        [day.day.strftime("%m-%d") for day in summary.daily],
+        [
+            charts.Series("消費", [day.discharged_watt_hours for day in summary.daily]),
+            charts.Series("充電", [day.charged_watt_hours for day in summary.daily]),
+        ],
+    )
+    if energy is not None:
+        blocks.append(energy)
+    spread = _band_chart(summary)
+    if spread is not None:
+        blocks.append(spread)
+    blocks.append(
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": "外部電源につないでいた時間 "
+                    f"{formatting.hours(summary.external_input_hours)}"
+                    f" ・ 記録のなかった時間 {summary.gap_hours} 時間"
+                    " ・ Anker Solix EverFrost 2",
+                }
+            ],
+        }
+    )
+    return blocks
+
+
+def _band_chart(summary: Summary) -> dict | None:
+    """How fast the battery drains at each ambient temperature, and how much it varies.
+
+    A box plot said this in one mark per band; Slack draws lines, so the spread is
+    three of them. The middle line is the one to read — the outer two say how much
+    a single hour can differ from it.
+    """
+    bands = [band for band in summary.bands if band.samples]
+    if not bands:
+        return None
+    return charts.line(
+        "周辺温度ごとの残量変化 (%/h)",
+        [band.label for band in bands],
+        [
+            charts.Series("最も速い", [round(min(band.samples), 2) for band in bands]),
+            charts.Series("中央値", [round(median(band.samples), 2) for band in bands]),
+            charts.Series("最も遅い", [round(max(band.samples), 2) for band in bands]),
+        ],
     )
 
 
