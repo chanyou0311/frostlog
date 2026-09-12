@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from statistics import median
 
-from frostlog_notifier import charts, formatting, queries
+from frostlog_notifier import charts, folding, formatting, queries
 from frostlog_notifier.clock import (
     iso_week_bounds,
     iso_week_key,
@@ -206,39 +206,7 @@ def by_hour(slots: list[Snapshot]) -> list[Snapshot]:
     something. Folding follows the contract: the seconds and the watt-hours add, the
     averages weight by the seconds, and the change is the last reading less the first.
     """
-    grouped: dict[datetime, list[Snapshot]] = defaultdict(list)
-    for slot in slots:
-        grouped[slot.slot_started_at.replace(minute=0, second=0, microsecond=0)].append(slot)
-    return [_folded_hour(started, members) for started, members in sorted(grouped.items())]
-
-
-def _folded_hour(started: datetime, slots: list[Snapshot]) -> Snapshot:
-    covered = sum(slot.covered_seconds for slot in slots)
-    observed = [slot for slot in slots if slot.covered_seconds > 0]
-    start = next((slot.state_of_charge_start_percent for slot in observed), None)
-    end = next((slot.state_of_charge_end_percent for slot in reversed(observed)), None)
-    return Snapshot(
-        slot_started_at=started,
-        covered_seconds=covered,
-        state_of_charge_start_percent=start,
-        state_of_charge_end_percent=end,
-        state_of_charge_delta_percent=None if start is None or end is None else end - start,
-        discharged_watt_hours=sum(slot.discharged_watt_hours or 0.0 for slot in slots),
-        charged_watt_hours=sum(slot.charged_watt_hours or 0.0 for slot in slots),
-        interior_temperature_celsius=_weighted(slots, "interior_temperature_celsius"),
-        setpoint_celsius=_weighted(slots, "setpoint_celsius"),
-        ambient_temperature_celsius=_weighted(slots, "ambient_temperature_celsius"),
-        external_input_ratio=_weighted(slots, "external_input_ratio"),
-        charging_ratio=_weighted(slots, "charging_ratio"),
-    )
-
-
-def _weighted(slots: list[Snapshot], name: str) -> float | None:
-    present = [slot for slot in slots if getattr(slot, name) is not None]
-    weight = sum(slot.covered_seconds for slot in present)
-    if weight <= 0:
-        return None
-    return sum(getattr(slot, name) * slot.covered_seconds for slot in present) / weight
+    return folding.fold(slots, 4)
 
 
 def due_week(moment: datetime) -> tuple[int, int]:

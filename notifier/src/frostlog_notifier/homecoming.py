@@ -14,12 +14,13 @@ covers everything since the previous summary's coverage end.
 """
 
 import logging
-import math
 from datetime import datetime, timedelta
+from itertools import groupby
 
-from frostlog_notifier import charts, formatting, queries
+from frostlog_notifier import charts, folding, formatting, queries
 from frostlog_notifier.clock import next_morning, to_jst
 from frostlog_notifier.events import UploadRun
+from frostlog_notifier.folding import SLOT_SECONDS
 from frostlog_notifier.notification import HOMECOMING, Notification
 from frostlog_notifier.queries import Snapshot, StateUpdate
 from frostlog_notifier.warehouse import Warehouse
@@ -32,7 +33,6 @@ ARRIVAL_GAP = timedelta(hours=2)
 DEFAULT_PERIOD = timedelta(hours=24)
 #: Hours the outlook's slope is taken from.
 SLOPE_HOURS = 3
-SLOT_SECONDS = 900
 #: Slots behind the slope the outlook is read from: the last three hours of them.
 SLOPE_SLOTS = SLOPE_HOURS * 3600 // SLOT_SECONDS
 #: How far back the chart may reach for a stretch that was recorded. A trip records the
@@ -40,7 +40,9 @@ SLOPE_SLOTS = SLOPE_HOURS * 3600 // SLOT_SECONDS
 #: past a week it is no longer this homecoming.
 CHART_DAYS = 7
 #: Slots to a point, coarsest last. Each leaves a label a reader can place — a quarter
-#: hour, a half, an hour, two, three, four, six, twelve, a day.
+#: hour, a half, an hour, two, three, four, six, twelve, a day. The last one is what
+#: makes the choice total: a day to a point puts CHART_DAYS days inside MAX_POINTS
+#: however the boundaries fall, so there is no length this table does not cover.
 FOLD_FACTORS = (1, 2, 4, 8, 12, 16, 24, 48, 96)
 
 
@@ -51,20 +53,44 @@ def is_return(run: UploadRun) -> bool:
     return run.began_at - run.previous_finished_at >= ARRIVAL_GAP
 
 
-def slope_percent_per_hour(hours: list[Snapshot]) -> float | None:
-    """State-of-charge change per hour over the last unplugged hours, or None."""
-    unplugged = [
-        hour
-        for hour in hours
-        if hour.covered_seconds > 0
-        and hour.state_of_charge_delta_percent is not None
-        and (hour.external_input_ratio or 0.0) == 0.0
-    ]
-    recent = unplugged[-SLOPE_SLOTS:]
-    covered = sum(hour.covered_seconds for hour in recent) / 3600
+def _on_battery(slot: Snapshot) -> bool:
+    """The cooler was heard from through this slot and ran on its own battery."""
+    return (
+        slot.covered_seconds > 0
+        and slot.state_of_charge_start_percent is not None
+        and slot.state_of_charge_end_percent is not None
+        and (slot.external_input_ratio or 0.0) == 0.0
+    )
+
+
+def slope_percent_per_hour(slots: list[Snapshot]) -> float | None:
+    """State-of-charge change per hour over the last hours on the battery, or None.
+
+    Read at the ends of each stretch, the way the contract says state of charge is
+    read, and never by adding the slots' own deltas: a delta is the change inside a
+    slot, so the change between two slots belongs to neither and adding them up
+    quietly drops it. Stretches are separated by the cooler being plugged in, and
+    what happened while it was plugged in is not this slope's business, so each
+    stretch is measured on its own and only the drops are added.
+    """
+    stretches = [list(run) for battery, run in groupby(slots, key=_on_battery) if battery]
+    recent: list[list[Snapshot]] = []
+    budget = SLOPE_SLOTS
+    for stretch in reversed(stretches):
+        if budget <= 0:
+            break
+        tail = stretch[-budget:]
+        recent.append(tail)
+        budget -= len(tail)
+    covered = sum(slot.covered_seconds for stretch in recent for slot in stretch) / 3600
     if not recent or covered <= 0:
         return None
-    return sum(hour.state_of_charge_delta_percent or 0 for hour in recent) / covered
+    change = sum(
+        (stretch[-1].state_of_charge_end_percent or 0)
+        - (stretch[0].state_of_charge_start_percent or 0)
+        for stretch in recent
+    )
+    return change / covered
 
 
 #: Why there is no outlook. They read differently to someone deciding whether to
@@ -163,26 +189,32 @@ def _recorded_run(slots: list[Snapshot]) -> list[Snapshot]:
     return list(reversed(recorded))
 
 
-def _fold_factor(slot_count: int) -> int:
-    """Slots to a point: the fewest that still leave a chart Slack will draw."""
-    for factor in FOLD_FACTORS:
-        if math.ceil(slot_count / factor) <= charts.MAX_POINTS:
-            return factor
-    # Longer than a day to a point. Whole hours, as many as it takes.
-    return math.ceil(slot_count / charts.MAX_POINTS / 4) * 4
+def _fold_factor(slots: list[Snapshot]) -> int:
+    """Slots to a point: the fewest that still leave a chart Slack will draw.
 
-
-def _folded(slots: list[Snapshot]) -> tuple[list[str], list[list[Snapshot]]]:
-    """The chart's categories and the slots behind each.
-
-    Folding is addition, on the terms the contract sets: the seconds add and an average
-    weights by them. The hard part — cutting a report's held interval at the boundaries
-    — happened once, in the warehouse, and grouping what it produced cannot undo it.
+    Counted on the groups the boundaries actually make rather than on the slots
+    divided by the factor. A stretch that begins at 13:45 puts those three quarters
+    in an hour of their own, which is one point more than dividing would predict —
+    and one point over the limit is a chart Slack declines to draw at all.
     """
-    factor = _fold_factor(len(slots))
-    groups = [slots[index : index + factor] for index in range(0, len(slots), factor)]
+    for factor in FOLD_FACTORS:
+        starts = {folding.group_start(slot.slot_started_at, factor) for slot in slots}
+        if len(starts) <= charts.MAX_POINTS:
+            return factor
+    return FOLD_FACTORS[-1]
+
+
+def _folded(slots: list[Snapshot]) -> tuple[list[str], list[Snapshot]]:
+    """The chart's categories and the snapshot behind each point.
+
+    Coarsening is the contract's business, not this module's; :mod:`frostlog_notifier.folding`
+    holds the four rules. All that is decided here is how coarse to go, which is the
+    one thing the contract cannot know: it depends on what Slack will draw.
+    """
+    factor = _fold_factor(slots)
+    points = folding.fold(slots, factor)
     dated = to_jst(slots[0].slot_started_at).date() != to_jst(slots[-1].slot_started_at).date()
-    return [_label(group[0].slot_started_at, factor, dated) for group in groups], groups
+    return [_label(point.slot_started_at, factor, dated) for point in points], points
 
 
 def _label(moment: datetime, factor: int, dated: bool) -> str:
@@ -190,21 +222,6 @@ def _label(moment: datetime, factor: int, dated: bool) -> str:
     local = to_jst(moment)
     clock = f"{local:%-H時}" if factor % 4 == 0 else f"{local:%-H:%M}"
     return f"{local:%-d日} {clock}" if dated else clock
-
-
-def _measure(groups: list[list[Snapshot]], name: str) -> list[float | None]:
-    """Each point's average, weighted by the seconds its slots were recorded for."""
-    values: list[float | None] = []
-    for group in groups:
-        present = [slot for slot in group if getattr(slot, name) is not None]
-        weight = sum(slot.covered_seconds for slot in present)
-        if weight <= 0:
-            values.append(None)
-            continue
-        values.append(
-            round(sum(getattr(slot, name) * slot.covered_seconds for slot in present) / weight, 1)
-        )
-    return values
 
 
 def _blocks(
@@ -253,18 +270,22 @@ def _blocks(
         },
     ]
     if recorded:
-        labels, groups = _folded(recorded)
+        labels, points = _folded(recorded)
         charge = charts.line(
             "バッテリー残量 (%)",
             labels,
-            [charts.Series("残量", [group[-1].state_of_charge_end_percent for group in groups])],
+            [charts.Series("残量", [point.state_of_charge_end_percent for point in points])],
         )
         temperature = charts.line(
             "温度 (°C)",
             labels,
             [
-                charts.Series("庫内", _measure(groups, "interior_temperature_celsius")),
-                charts.Series("周辺", _measure(groups, "ambient_temperature_celsius")),
+                charts.Series(
+                    "庫内", [_rounded(point.interior_temperature_celsius) for point in points]
+                ),
+                charts.Series(
+                    "周辺", [_rounded(point.ambient_temperature_celsius) for point in points]
+                ),
             ],
         )
         blocks += [block for block in (charge, temperature) if block is not None]

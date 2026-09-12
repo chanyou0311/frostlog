@@ -1,4 +1,3 @@
-import math
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -173,6 +172,39 @@ def test_a_partly_covered_slot_weighs_less_in_the_slope() -> None:
     assert homecoming.slope_percent_per_hour(slots) == -2 / 0.375
 
 
+def test_the_slope_is_read_at_the_ends_not_added_up_from_the_slots() -> None:
+    """Four quarter hours the cooler was heard from for half of each.
+
+    Inside each of them the charge fell by one, and between them — while nothing was
+    being recorded — it fell by one more. Adding the slots' own deltas sees four of
+    those falls and misses three, which makes the battery look like it lasts twice as
+    long as it does. The contract says the charge is read at the ends, so it is.
+    """
+    end = RETURN.replace(minute=0)
+    slots = [
+        Snapshot.model_validate(
+            slot(end - timedelta(minutes=15 * (4 - index)), charge, delta=-1, covered_seconds=450.0)
+        )
+        for index, charge in enumerate([99, 97, 95, 93])
+    ]
+    # 1800 seconds recorded in all, so half an hour; 100 % at the start, 93 % at the end.
+    assert homecoming.slope_percent_per_hour(slots) == pytest.approx(-14.0)
+
+
+def test_charging_in_the_middle_does_not_count_towards_the_slope() -> None:
+    """The stretches on battery are measured apart, so a charge between them is not a rise."""
+    end = RETURN.replace(minute=0)
+    before = [Snapshot.model_validate(slot(end - timedelta(minutes=60), 80, delta=-2))]
+    charging = [
+        Snapshot.model_validate(
+            slot(end - timedelta(minutes=45), 90, delta=10, external_input_ratio=1.0)
+        )
+    ]
+    after = [Snapshot.model_validate(slot(end - timedelta(minutes=30), 88, delta=-2))]
+    # Four percent lost over the two quarter hours on battery, and the charge ignored.
+    assert homecoming.slope_percent_per_hour(before + charging + after) == pytest.approx(-8.0)
+
+
 def test_there_is_no_outlook_while_charging() -> None:
     hours = [Snapshot.model_validate(row) for row in day_of_slots(RETURN)]
     charging = StateUpdate.model_validate(
@@ -211,17 +243,48 @@ def test_the_outlook_never_leaves_the_scale() -> None:
     )
 
 
+def _stretch(hours_recorded: float, starting_at: datetime = RETURN) -> list[Snapshot]:
+    """A dense run of quarter hours, the last of them ending at ``starting_at``."""
+    count = round(hours_recorded * 3600 / homecoming.SLOT_SECONDS)
+    return [
+        Snapshot.model_validate(slot(starting_at + timedelta(minutes=15 * index), 80 - index))
+        for index in range(count)
+    ]
+
+
 @pytest.mark.parametrize("hours_recorded", [0.25, 0.5, 1, 2, 3, 5, 9, 12, 20, 24, 36, 48, 72, 168])
-def test_the_fold_always_leaves_a_chart_slack_will_draw(hours_recorded: float) -> None:
-    """However long the stretch, the points fit; over the limit there is no chart at all."""
-    slots = round(hours_recorded * 3600 / homecoming.SLOT_SECONDS)
-    factor = homecoming._fold_factor(slots)
-    assert factor >= 1
-    points = math.ceil(slots / factor)
-    assert points <= charts.MAX_POINTS, f"{hours_recorded} h is {points} points"
+@pytest.mark.parametrize("offset_minutes", [0, 15, 45])
+def test_the_fold_always_leaves_a_chart_slack_will_draw(
+    hours_recorded: float, offset_minutes: int
+) -> None:
+    """However long the stretch and wherever it starts, the points fit.
+
+    The offsets matter because the groups sit on clock boundaries: a stretch that
+    begins at 13:45 opens an hour with three quarters in it, which is a point the
+    slots divided by the factor does not predict.
+    """
+    slots = _stretch(hours_recorded, RETURN + timedelta(minutes=offset_minutes))
+    labels, points = homecoming._folded(slots)
+    assert len(points) == len(labels)
+    assert len(points) <= charts.MAX_POINTS, f"{hours_recorded} h is {len(points)} points"
 
 
 def test_a_shorter_stretch_is_charted_more_finely() -> None:
     """Two hours out used to be two points; the fold follows the length now."""
-    assert homecoming._fold_factor(2 * 4) == 1, "a quarter hour to a point while it fits"
-    assert homecoming._fold_factor(2 * 4) < homecoming._fold_factor(9 * 4)
+    assert homecoming._fold_factor(_stretch(2)) == 1, "a quarter hour to a point while it fits"
+    assert homecoming._fold_factor(_stretch(2)) < homecoming._fold_factor(_stretch(9))
+
+
+def test_a_group_starts_on_the_clock_not_where_the_recording_did() -> None:
+    """A stretch from 13:45 puts that quarter in the 13時 point, not at the head of 14時.
+
+    Folding by position would have labelled 13:45-14:45 as 13時, which is a claim about
+    an hour the reader can check against their own clock.
+    """
+    # Ten hours is long enough that a quarter and a half hour to a point both overflow,
+    # so the fold settles on whole hours and the boundaries become visible.
+    started = datetime(2026, 9, 11, 4, 45, tzinfo=UTC)  # 13:45 JST
+    labels, points = homecoming._folded(_stretch(10, started))
+    assert labels[:3] == ["13時", "14時", "15時"]
+    # The first point is that single quarter hour; the ones after it are whole hours.
+    assert [point.covered_seconds for point in points[:3]] == [900.0, 3600.0, 3600.0]
