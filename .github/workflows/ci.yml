@@ -10,17 +10,56 @@ on:
 permissions:
   contents: read
 
+env:
+  UV_VERSION: "0.12.10"
+  DATACONTRACT_CLI: "datacontract-cli[s3]==1.2.0"
+
 jobs:
-  check:
+
+  # The collector: the Pi's package at the repository root.
+  collector:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.1
         with:
-          version: "0.12.10"
+          version: ${{ env.UV_VERSION }}
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run ty check
       - run: uv run pytest
+
+  # The three data contracts are the source of truth; nothing is generated from
+  # them, so they are checked directly: well-formed, no breaking change against
+  # main, and the collection contract holds for the sample chunks built from real messages.
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # datacontract breaking compares against main
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: datacontract lint
+        run: |
+          for path in contracts/*.odcs.yaml; do
+            uvx --python 3.13 --from "$DATACONTRACT_CLI" datacontract lint "$path"
+          done
+      - name: datacontract breaking (against main)
+        run: |
+          git fetch --depth=1 origin main
+          for path in contracts/*.odcs.yaml; do
+            if git cat-file -e "origin/main:$path" 2>/dev/null; then
+              git show "origin/main:$path" > "$RUNNER_TEMP/$(basename "$path")"
+              uvx --python 3.13 --from "$DATACONTRACT_CLI" datacontract breaking \
+                "$RUNNER_TEMP/$(basename "$path")" "$path"
+            else
+              echo "$path is not on main yet; nothing to compare against"
+            fi
+          done
+      - name: datacontract test (collection contract vs sample chunks)
+        run: uvx --python 3.13 --from "$DATACONTRACT_CLI" datacontract test contracts/collection.odcs.yaml --server samples
