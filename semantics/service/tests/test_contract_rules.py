@@ -4,6 +4,7 @@ BigQuery is not available here; the rules are transpiled with sqlglot. What this
 pins is the logic of the rule, not BigQuery's own behaviour.
 """
 
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -32,7 +33,12 @@ def rule(name: str) -> str:
     for table in contract["schema"]:
         for quality in table.get("quality", []):
             if quality.get("name") == name:
-                bigquery_sql = quality["query"].replace("{model}", FACT)
+                # The contract qualifies every table with the server's project and
+                # dataset, because BigQuery will not resolve a bare name. DuckDB has
+                # one schema here, so the prefix is dropped rather than reproduced.
+                bigquery_sql = re.sub(r"\{project}\.\{dataset}\.", "", quality["query"]).replace(
+                    "{model}", FACT
+                )
                 return sqlglot.transpile(bigquery_sql, read="bigquery", write="duckdb")[0]
     raise KeyError(name)
 
