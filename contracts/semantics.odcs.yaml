@@ -20,8 +20,10 @@ description:
     under given conditions, and how long the interior takes to reach the setpoint.
   usage: >
     Read by frostlog-notifier (Slack digests) and by ad-hoc analysis. Consumers depend
-    only on the tables listed here and on the events of contracts/events.odcs.yaml
-    (the same data product, published on Pub/Sub); the raw bytes are never needed downstream.
+    only on the tables listed here and, to hear when they changed, on the topic of
+    contracts/events.odcs.yaml — a channel of its own, which this product publishes
+    `semantic_updated` to and the contract-test job publishes `quality_report` to. The
+    raw bytes are never needed downstream.
     Estimates (next-morning level, hours left, next pull-down time) are not stored: they
     are computed by consumers from these actuals.
   limitations: >

@@ -72,11 +72,18 @@ schema:
         required: false
         description: >
           The collector's upload runs this event's chunk reported as finished; empty
-          unless the chunk was an events chunk. The upload_done of a run reaches the
-          bucket in the following run, so by the time it is here every cooler chunk of
-          that run is loaded. A run whose started_at is 2 h or more after
-          previous_finished_at is a return of the car: everything recorded while it was
-          away came in with it.
+          unless the chunk was an events chunk.
+
+          It is the report of a run having ended, and no more than that. It does not
+          say that the run's other chunks are loaded, or transformed, or that the run
+          shipped everything it had: a chunk arrives on its own and may be late or
+          retried, and the collector writes upload_done after the PUTs that succeeded
+          rather than after the ones it owed. So a consumer summarises from the model as
+          it stands when the event arrives, and what it summarised may change later.
+
+          previous_finished_at is the end of the run before this one. What a long gap
+          between the two means — a trip, a cooler switched off, a Pi that could not
+          reach the bucket — is the consumer's reading, not this contract's.
         items:
           logicalType: object
           properties:
