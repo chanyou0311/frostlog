@@ -30,8 +30,10 @@ class StateUpdate(_Row):
     ambient_temperature_celsius: float | None = None
 
 
-class HourlySnapshot(_Row):
-    hour_started_at: datetime
+class Snapshot(_Row):
+    """One quarter hour of fact_cooler_snapshot."""
+
+    slot_started_at: datetime
     covered_seconds: float
     state_of_charge_start_percent: int | None = None
     state_of_charge_end_percent: int | None = None
@@ -43,17 +45,6 @@ class HourlySnapshot(_Row):
     ambient_temperature_celsius: float | None = None
     external_input_ratio: float | None = None
     charging_ratio: float | None = None
-
-
-class Snapshot(_Row):
-    """One step of a chart: what was true over it, weighted by how long each state held."""
-
-    started_at: datetime
-    covered_seconds: float
-    state_of_charge_end_percent: int | None = None
-    interior_temperature_celsius: float | None = None
-    ambient_temperature_celsius: float | None = None
-    external_input_ratio: float | None = None
 
 
 class Pulldown(_Row):
@@ -172,62 +163,29 @@ def state_updates_between(
     return [StateUpdate.model_validate(row) for row in rows]
 
 
-def snapshots(
-    warehouse: Warehouse, start: datetime, end: datetime, step_seconds: int
-) -> list[Snapshot]:
-    """The period in steps of ``step_seconds``, oldest first, aggregated by BigQuery.
+def snapshots(warehouse: Warehouse, start: datetime, end: datetime) -> list[Snapshot]:
+    """Quarter-hour rows whose slot starts in [start, end), oldest first, holes included.
 
-    fact_cooler_hourly_snapshot is dense and cheap but an hour is too coarse for a
-    chart of a two-hour trip. The atomic fact is as fine as the cooler talks —
-    every few seconds — so the step is chosen by whoever is drawing, and the
-    rolling up happens there rather than here: what comes back is one row per
-    step, never the thousands behind them.
-
-    A step nothing was recorded in has no row at all, which is how the caller
-    tells a silence from a reading.
+    The grain is the semantic product's, not this one's: what a slot means — how its
+    seconds were counted, how a report straddling its edge was split — is decided
+    there and tested against the contract. All this does is read them. Folding four
+    into an hour, or eight into two, is presentation and belongs where the drawing is;
+    the contract says which columns add and which weight by covered_seconds.
     """
     sql = f"""
       -- name: snapshots
       SELECT
-        TIMESTAMP_SECONDS(DIV(UNIX_SECONDS(updated_at), @step) * @step) AS started_at,
-        SUM(held_seconds) AS covered_seconds,
-        ARRAY_AGG(state_of_charge_percent ORDER BY updated_at DESC LIMIT 1)[SAFE_OFFSET(0)]
-          AS state_of_charge_end_percent,
-        SAFE_DIVIDE(
-          SUM(interior_temperature_celsius * held_seconds), SUM(held_seconds)
-        ) AS interior_temperature_celsius,
-        SAFE_DIVIDE(
-          SUM(ambient_temperature_celsius * held_seconds),
-          SUM(IF(ambient_temperature_celsius IS NULL, 0, held_seconds))
-        ) AS ambient_temperature_celsius,
-        SAFE_DIVIDE(
-          SUM(IF(external_input, held_seconds, 0)), SUM(held_seconds)
-        ) AS external_input_ratio
-      FROM {warehouse.table("fact_cooler_state_update")}
-      WHERE updated_at >= @start AND updated_at < @end
-      GROUP BY started_at
-      ORDER BY started_at
-    """
-    rows = warehouse.rows(sql, {"start": start, "end": end, "step": step_seconds})
-    return [Snapshot.model_validate(row) for row in rows]
-
-
-def hourly_snapshots(warehouse: Warehouse, start: datetime, end: datetime) -> list[HourlySnapshot]:
-    """Hourly rows whose hour starts in [start, end), oldest first (including empty hours)."""
-    sql = f"""
-      -- name: hourly_snapshots
-      SELECT
-        hour_started_at, covered_seconds,
+        slot_started_at, covered_seconds,
         state_of_charge_start_percent, state_of_charge_end_percent,
         state_of_charge_delta_percent, discharged_watt_hours, charged_watt_hours,
         interior_temperature_celsius, setpoint_celsius, ambient_temperature_celsius,
         external_input_ratio, charging_ratio
-      FROM {warehouse.table("fact_cooler_hourly_snapshot")}
-      WHERE hour_started_at >= @start AND hour_started_at < @end
-      ORDER BY hour_started_at
+      FROM {warehouse.table("fact_cooler_snapshot")}
+      WHERE slot_started_at >= @start AND slot_started_at < @end
+      ORDER BY slot_started_at
     """
     rows = warehouse.rows(sql, {"start": start, "end": end})
-    return [HourlySnapshot.model_validate(row) for row in rows]
+    return [Snapshot.model_validate(row) for row in rows]
 
 
 def finished_pulldowns_between(

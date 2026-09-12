@@ -6,14 +6,14 @@ from conftest import (
     FakeWarehouse,
     ambient_band_rows,
     at,
-    hourly,
     pulldown_row,
+    quarters,
     state_update,
     upload_run,
 )
 from test_charts import check as check_chart
-from test_homecoming import day_of_hours, steps_of
-from test_weekly import week_of_hours
+from test_homecoming import day_of_slots
+from test_weekly import week_of_slots
 
 from frostlog_notifier import charts
 from frostlog_notifier.clock import iso_week_bounds
@@ -84,8 +84,7 @@ def arrived() -> FakeWarehouse:
             "energy_between": [{"discharged_watt_hours": 128.4, "charged_watt_hours": 40.2}],
             "finished_pulldowns_between": [pulldown_row(at("2026-09-11", 8, 12))],
             "state_updates_between": [state_update(at("2026-09-11", 8, 12))],
-            "hourly_snapshots": day_of_hours(RETURN),
-            "snapshots": steps_of(RETURN),
+            "snapshots": day_of_slots(RETURN),
             "ambient_bands": ambient_band_rows(),
         }
     )
@@ -213,7 +212,7 @@ def test_the_weekly_summary_follows_the_first_data_of_the_new_week(
             "latest_state_update": [state_update(monday)],
             "state_update_count_between": updates_in((2026, 37)),
             "finished_pulldowns_between": [],
-            "hourly_snapshots": week_of_hours(),
+            "snapshots": week_of_slots(),
             "ambient_bands": ambient_band_rows(),
         }
     )
@@ -233,7 +232,7 @@ def test_the_weekly_summary_covers_the_week_that_ended_not_the_running_one(
             "latest_state_update": [state_update(midweek)],
             "state_update_count_between": updates_in((2026, 36), (2026, 37), count=100),
             "finished_pulldowns_between": [],
-            "hourly_snapshots": [hourly(midweek, 80)],
+            "snapshots": quarters(midweek, 80),
             "ambient_bands": ambient_band_rows(),
         }
     )
@@ -254,7 +253,7 @@ def test_weeks_that_come_home_together_are_each_summarised_oldest_first(
             # Three weeks away: 35 and 36 are closed and unposted, 34 has nothing.
             "state_update_count_between": updates_in((2026, 35), (2026, 36), (2026, 37)),
             "finished_pulldowns_between": [],
-            "hourly_snapshots": [hourly(midweek, 80)],
+            "snapshots": quarters(midweek, 80),
             "ambient_bands": ambient_band_rows(),
         }
     )
@@ -274,7 +273,7 @@ def test_a_week_without_any_data_is_passed_over_in_silence(
             "latest_state_update": [state_update(monday)],
             "state_update_count_between": [{"update_count": 0}],
             "finished_pulldowns_between": [],
-            "hourly_snapshots": [],
+            "snapshots": [],
             "ambient_bands": ambient_band_rows(),
         }
     )
@@ -288,7 +287,7 @@ def test_the_monday_job_posts_last_week(slack: FakeSlack, settings: Settings) ->
     monday_evening = end + timedelta(hours=12, minutes=3)
     warehouse = FakeWarehouse(
         {
-            "hourly_snapshots": week_of_hours(),
+            "snapshots": week_of_slots(),
             "state_update_count_between": updates_in((2026, 37)),
             "ambient_bands": ambient_band_rows(),
             "finished_pulldowns_between": [],
@@ -307,7 +306,7 @@ def test_the_monday_job_says_nothing_about_a_week_without_data(
     monday_evening = end + timedelta(hours=12, minutes=3)
     warehouse = FakeWarehouse(
         {
-            "hourly_snapshots": [],
+            "snapshots": [],
             "state_update_count_between": [{"update_count": 0}],
             "ambient_bands": ambient_band_rows(),
             "finished_pulldowns_between": [],

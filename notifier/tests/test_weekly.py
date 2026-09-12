@@ -1,17 +1,17 @@
 from datetime import UTC, date, datetime, timedelta
 
-from conftest import FakeWarehouse, ambient_band_rows, empty_hour, hourly, pulldown_row
+from conftest import FakeWarehouse, ambient_band_rows, empty_slot, pulldown_row, quarters
 
 from frostlog_notifier import weekly
 from frostlog_notifier.clock import iso_week_bounds, jst_dates
 from frostlog_notifier.notification import WEEKLY
-from frostlog_notifier.queries import Band, HourlySnapshot, Pulldown
+from frostlog_notifier.queries import Band, Pulldown, Snapshot
 
 START, END = iso_week_bounds(2026, 37)
 BANDS = [Band.model_validate(row) for row in ambient_band_rows()]
 
 
-def week_of_hours() -> list[dict]:
+def week_of_slots() -> list[dict]:
     """Seven days: unplugged all day, plugged in for an hour each evening, one dead night."""
     rows: list[dict] = []
     charge = 100
@@ -19,12 +19,12 @@ def week_of_hours() -> list[dict]:
         started = START + timedelta(hours=index)
         hour_of_day = index % 24  # the week starts at midnight JST
         if 3 <= index < 8:  # the first night has no data at all
-            rows.append(empty_hour(started))
+            rows.extend(empty_slot(started + timedelta(minutes=15 * q)) for q in range(4))
             continue
         if hour_of_day == 20:
             charge = min(100, charge + 8)
-            rows.append(
-                hourly(
+            rows.extend(
+                quarters(
                     started,
                     charge,
                     delta=8,
@@ -38,8 +38,8 @@ def week_of_hours() -> list[dict]:
             continue
         drop = 2 if hour_of_day in range(12, 18) else 1
         charge = max(0, charge - drop)
-        rows.append(
-            hourly(
+        rows.extend(
+            quarters(
                 started,
                 charge,
                 delta=-drop,
@@ -51,13 +51,14 @@ def week_of_hours() -> list[dict]:
 
 
 def summarize(rows: list[dict] | None = None, pulldowns: list[dict] | None = None):
-    hours = [HourlySnapshot.model_validate(row) for row in (rows or week_of_hours())]
+    # The week is asked by the hour, so the slots are folded first, as build() does.
+    hours = weekly.by_hour([Snapshot.model_validate(row) for row in (rows or week_of_slots())])
     episodes = [Pulldown.model_validate(row) for row in (pulldowns or [])]
     return weekly.summarize(hours, BANDS, episodes, jst_dates(START, END))
 
 
 def test_the_totals_are_the_sums_of_the_hours() -> None:
-    rows = week_of_hours()
+    rows = week_of_slots()
     summary = summarize(rows)
     assert summary.discharged_watt_hours == sum(row["discharged_watt_hours"] or 0 for row in rows)
     assert summary.charged_watt_hours == sum(row["charged_watt_hours"] or 0 for row in rows)
@@ -79,7 +80,9 @@ def test_the_driving_hours_needed_are_the_deficit_over_the_charge_rate() -> None
 
 def test_a_week_that_pays_for_itself_needs_no_driving() -> None:
     rows = [
-        hourly(
+        row
+        for index in range(24)
+        for row in quarters(
             START + timedelta(hours=index),
             100,
             delta=0,
@@ -116,9 +119,9 @@ def test_gaps_between_the_first_and_the_last_hour_are_counted() -> None:
 
 
 def test_a_day_without_any_data_is_named() -> None:
-    rows = week_of_hours()
-    for index in range(48, 72):  # the third UTC day of the week
-        rows[index] = empty_hour(START + timedelta(hours=index))
+    rows = week_of_slots()
+    for index in range(48 * 4, 72 * 4):  # the third UTC day of the week, slot by slot
+        rows[index] = empty_slot(START + timedelta(minutes=15 * index))
     summary = summarize(rows)
     assert date(2026, 9, 9) in summary.missing_days
 
@@ -145,7 +148,7 @@ def test_the_week_to_summarise_is_the_one_that_just_ended() -> None:
 def test_the_summary_is_built_with_its_text_and_chart() -> None:
     warehouse = FakeWarehouse(
         {
-            "hourly_snapshots": week_of_hours(),
+            "snapshots": week_of_slots(),
             "ambient_bands": ambient_band_rows(),
             "finished_pulldowns_between": [pulldown_row(START + timedelta(hours=1))],
         }
@@ -161,4 +164,4 @@ def test_the_summary_is_built_with_its_text_and_chart() -> None:
     assert "データ欠損: 5 時間" in notification.text
     kinds = [block["type"] for block in notification.blocks]
     assert kinds.count("data_visualization") == 2
-    assert dict(warehouse.queried)["hourly_snapshots"] == {"start": START, "end": END}
+    assert dict(warehouse.queried)["snapshots"] == {"start": START, "end": END}

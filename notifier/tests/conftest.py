@@ -146,19 +146,20 @@ def state_update(updated_at: datetime, **overrides: Any) -> dict[str, Any]:
     return row | overrides
 
 
-def hourly(
-    hour_started_at: datetime,
+def slot(
+    slot_started_at: datetime,
     state_of_charge_end_percent: int,
     delta: int = -1,
     **overrides: Any,
 ) -> dict[str, Any]:
+    """One quarter hour of fact_cooler_snapshot."""
     row = {
-        "hour_started_at": hour_started_at,
-        "covered_seconds": 3600.0,
+        "slot_started_at": slot_started_at,
+        "covered_seconds": 900.0,
         "state_of_charge_start_percent": state_of_charge_end_percent - delta,
         "state_of_charge_end_percent": state_of_charge_end_percent,
         "state_of_charge_delta_percent": delta,
-        "discharged_watt_hours": 28.0,
+        "discharged_watt_hours": 7.0,
         "charged_watt_hours": 0.0,
         "interior_temperature_celsius": -18.4,
         "setpoint_celsius": -20.0,
@@ -169,9 +170,9 @@ def hourly(
     return row | overrides
 
 
-def empty_hour(hour_started_at: datetime) -> dict[str, Any]:
+def empty_slot(slot_started_at: datetime) -> dict[str, Any]:
     return {
-        "hour_started_at": hour_started_at,
+        "slot_started_at": slot_started_at,
         "covered_seconds": 0.0,
         "state_of_charge_start_percent": None,
         "state_of_charge_end_percent": None,
@@ -184,6 +185,35 @@ def empty_hour(hour_started_at: datetime) -> dict[str, Any]:
         "external_input_ratio": None,
         "charging_ratio": None,
     }
+
+
+def quarters(
+    hour_started_at: datetime,
+    state_of_charge_end_percent: int,
+    delta: int = -1,
+    **overrides: Any,
+) -> list[dict[str, Any]]:
+    """An hour as the four slots it is made of, so that folding them gives it back.
+
+    The watt-hours are quartered and the change is carried by the first slot; what
+    matters to a reader of the folded hour is that the seconds, the watt-hours and the
+    ends agree with the hour it stands for.
+    """
+    per_slot = {
+        key: (value / 4 if key.endswith("watt_hours") and value is not None else value)
+        for key, value in overrides.items()
+    }
+    rows = [
+        slot(
+            hour_started_at + timedelta(minutes=15 * index),
+            state_of_charge_end_percent,
+            delta=delta if index == 0 else 0,
+            **per_slot,
+        )
+        for index in range(4)
+    ]
+    rows[0]["state_of_charge_start_percent"] = state_of_charge_end_percent - delta
+    return rows
 
 
 def pulldown_row(started_at: datetime, **overrides: Any) -> dict[str, Any]:

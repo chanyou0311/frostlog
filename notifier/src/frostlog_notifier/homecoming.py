@@ -17,7 +17,7 @@ from frostlog_notifier import charts, formatting, queries
 from frostlog_notifier.clock import next_morning, to_jst
 from frostlog_notifier.events import UploadRun
 from frostlog_notifier.notification import HOMECOMING, Notification
-from frostlog_notifier.queries import HourlySnapshot, StateUpdate
+from frostlog_notifier.queries import Snapshot, StateUpdate
 from frostlog_notifier.warehouse import Warehouse
 
 log = logging.getLogger(__name__)
@@ -28,11 +28,16 @@ ARRIVAL_GAP = timedelta(hours=2)
 DEFAULT_PERIOD = timedelta(hours=24)
 #: Hours the outlook's slope is taken from.
 SLOPE_HOURS = 3
-CHART_HOURS = 24
-#: Steps the chart may be drawn in, finest first. A two-hour trip deserves more than
-#: two points, and the cooler reports every few seconds, so the hour the warehouse
-#: aggregates by is only the coarsest of these.
-CHART_STEPS_SECONDS = (300, 600, 900, 1800, 3600, 7200, 10800, 21600)
+SLOT_SECONDS = 900
+#: Slots behind the slope the outlook is read from: the last three hours of them.
+SLOPE_SLOTS = SLOPE_HOURS * 3600 // SLOT_SECONDS
+#: How far back the chart may reach for a stretch that was recorded. A trip records the
+#: whole time it is away and sends it all on the way home, so the stretch can be days;
+#: past a week it is no longer this homecoming.
+CHART_DAYS = 7
+#: Slots to a point, coarsest last. Each leaves a label a reader can place — a quarter
+#: hour, a half, an hour, two, three, four, six, twelve, a day.
+FOLD_FACTORS = (1, 2, 4, 8, 12, 16, 24, 48, 96)
 
 
 def is_return(run: UploadRun) -> bool:
@@ -42,7 +47,7 @@ def is_return(run: UploadRun) -> bool:
     return run.began_at - run.previous_finished_at >= ARRIVAL_GAP
 
 
-def slope_percent_per_hour(hours: list[HourlySnapshot]) -> float | None:
+def slope_percent_per_hour(hours: list[Snapshot]) -> float | None:
     """State-of-charge change per hour over the last unplugged hours, or None."""
     unplugged = [
         hour
@@ -51,7 +56,7 @@ def slope_percent_per_hour(hours: list[HourlySnapshot]) -> float | None:
         and hour.state_of_charge_delta_percent is not None
         and (hour.external_input_ratio or 0.0) == 0.0
     ]
-    recent = unplugged[-SLOPE_HOURS:]
+    recent = unplugged[-SLOPE_SLOTS:]
     covered = sum(hour.covered_seconds for hour in recent) / 3600
     if not recent or covered <= 0:
         return None
@@ -59,7 +64,7 @@ def slope_percent_per_hour(hours: list[HourlySnapshot]) -> float | None:
 
 
 def projected_state_of_charge(
-    latest: StateUpdate, hours: list[HourlySnapshot], target: datetime
+    latest: StateUpdate, hours: list[Snapshot], target: datetime
 ) -> float | None:
     """State of charge expected at ``target`` if the recent slope holds.
 
@@ -110,68 +115,82 @@ def _build(
     start = min(start, end)
     energy = queries.energy_between(warehouse, start, end)
     pulldowns = queries.finished_pulldowns_between(warehouse, start, end)
-    hour_start = end.replace(minute=0, second=0, microsecond=0) - timedelta(hours=CHART_HOURS - 1)
-    hours = queries.hourly_snapshots(warehouse, hour_start, end + timedelta(hours=1))
+    slots = queries.snapshots(
+        warehouse, end - timedelta(days=CHART_DAYS), end + timedelta(seconds=SLOT_SECONDS)
+    )
+    recorded = _recorded_run(slots)
 
     morning = next_morning(end)
-    projected = projected_state_of_charge(latest, hours, morning)
+    projected = projected_state_of_charge(latest, recorded, morning)
     gap = run.began_at - run.previous_finished_at if run.previous_finished_at else None
-    recorded = _recorded_run(hours)
-    steps: list[queries.Snapshot] = []
-    if recorded:
-        chart_start = recorded[0].hour_started_at
-        step = _step_seconds((end - chart_start).total_seconds())
-        steps = queries.snapshots(warehouse, chart_start, end + timedelta(seconds=step), step)
-        # Whatever the arithmetic, the newest steps are the ones worth keeping.
-        steps = steps[-charts.MAX_POINTS :]
-    else:
-        step = CHART_STEPS_SECONDS[-1]
-    text = _text(latest, start, end, energy, pulldowns, morning, projected, gap)
     return Notification(
         kind=HOMECOMING,
         # The run, not the data: the key must not move when a later chunk of the same return lands.
         key=run.began_at.isoformat(),
-        text=text,
-        blocks=_blocks(latest, energy, pulldowns, morning, projected, gap, steps, step),
+        text=_text(latest, start, end, energy, pulldowns, morning, projected, gap),
+        blocks=_blocks(latest, energy, pulldowns, morning, projected, gap, recorded),
         coverage_end=end,
     )
 
 
-def _recorded_run(hours: list[HourlySnapshot]) -> list[HourlySnapshot]:
-    """The hours up to now that the cooler was heard from, back to the last silence.
+def _recorded_run(slots: list[Snapshot]) -> list[Snapshot]:
+    """The slots up to now the cooler was heard from, back to the last silence.
 
-    Slack draws a series without holes or not at all, and the cooler is off — and
-    so is the Pi it powers — for hours at a time. Charting the stretch that was
-    recorded avoids inventing the readings a hole would need. It is the hours, not
-    the trip: a silence of less than an hour does not break it, and the message
-    says which steps the chart covers.
+    Slack draws a series without holes or not at all, and the cooler is off — and so is
+    the Pi it powers — for hours at a time. Charting the stretch that was recorded
+    avoids inventing the readings a hole would need. The message says which slots it
+    covers, and how long the silence before them was.
     """
-    recorded: list[HourlySnapshot] = []
-    for hour in reversed(hours):
-        if hour.covered_seconds <= 0:
+    recorded: list[Snapshot] = []
+    for slot in reversed(slots):
+        if slot.covered_seconds <= 0:
             break
-        recorded.append(hour)
+        recorded.append(slot)
     return list(reversed(recorded))
 
 
-def _step_seconds(span_seconds: float) -> int:
-    """The finest step that keeps the chart within what Slack will draw.
+def _fold_factor(slot_count: int) -> int:
+    """Slots to a point: the fewest that still leave a chart Slack will draw."""
+    for factor in FOLD_FACTORS:
+        if math.ceil(slot_count / factor) <= charts.MAX_POINTS:
+            return factor
+    # Longer than a day to a point. Whole hours, as many as it takes.
+    return math.ceil(slot_count / charts.MAX_POINTS / 4) * 4
 
-    Two steps of room: the period rarely starts on a step boundary, so the first
-    and the last of them are partial and count as their own. Over the limit a
-    chart is not drawn at all, which would be a worse chart than a coarse one.
+
+def _folded(slots: list[Snapshot]) -> tuple[list[str], list[list[Snapshot]]]:
+    """The chart's categories and the slots behind each.
+
+    Folding is addition, on the terms the contract sets: the seconds add and an average
+    weights by them. The hard part — cutting a report's held interval at the boundaries
+    — happened once, in the warehouse, and grouping what it produced cannot undo it.
     """
-    for step in CHART_STEPS_SECONDS:
-        if span_seconds / step <= charts.MAX_POINTS - 2:
-            return step
-    # Longer than the coarsest of them: whole hours, as many as it takes. Nothing
-    # asks for this today — the chart looks back a day — but a step that does not
-    # fit draws no chart, and that should not rest on how far another function looks.
-    return math.ceil(span_seconds / (charts.MAX_POINTS - 2) / 3600) * 3600
+    factor = _fold_factor(len(slots))
+    groups = [slots[index : index + factor] for index in range(0, len(slots), factor)]
+    dated = to_jst(slots[0].slot_started_at).date() != to_jst(slots[-1].slot_started_at).date()
+    return [_label(group[0].slot_started_at, factor, dated) for group in groups], groups
 
 
-def _label(moment: datetime, step: int) -> str:
-    return f"{to_jst(moment):%-H時}" if step >= 3600 else f"{to_jst(moment):%-H:%M}"
+def _label(moment: datetime, factor: int, dated: bool) -> str:
+    """A category a reader can place: the minutes only while a point is under an hour."""
+    local = to_jst(moment)
+    clock = f"{local:%-H時}" if factor % 4 == 0 else f"{local:%-H:%M}"
+    return f"{local:%-d日} {clock}" if dated else clock
+
+
+def _measure(groups: list[list[Snapshot]], name: str) -> list[float | None]:
+    """Each point's average, weighted by the seconds its slots were recorded for."""
+    values: list[float | None] = []
+    for group in groups:
+        present = [slot for slot in group if getattr(slot, name) is not None]
+        weight = sum(slot.covered_seconds for slot in present)
+        if weight <= 0:
+            values.append(None)
+            continue
+        values.append(
+            round(sum(getattr(slot, name) * slot.covered_seconds for slot in present) / weight, 1)
+        )
+    return values
 
 
 def _blocks(
@@ -181,8 +200,7 @@ def _blocks(
     morning: datetime,
     projected: float | None,
     gap: timedelta | None,
-    steps: list[queries.Snapshot],
-    step_seconds: int,
+    recorded: list[Snapshot],
 ) -> list[dict]:
     """The message as Block Kit: what it means, then what it looked like."""
     blocks: list[dict] = [
@@ -216,24 +234,27 @@ def _blocks(
             ],
         },
     ]
-    if steps:
-        labels = [_label(snapshot.started_at, step_seconds) for snapshot in steps]
+    if recorded:
+        labels, groups = _folded(recorded)
         charge = charts.line(
             "バッテリー残量 (%)",
             labels,
-            [charts.Series("残量", [s.state_of_charge_end_percent for s in steps])],
+            [charts.Series("残量", [group[-1].state_of_charge_end_percent for group in groups])],
         )
         temperature = charts.line(
             "温度 (°C)",
             labels,
             [
-                charts.Series("庫内", [_rounded(s.interior_temperature_celsius) for s in steps]),
-                charts.Series("周辺", [_rounded(s.ambient_temperature_celsius) for s in steps]),
+                charts.Series("庫内", _measure(groups, "interior_temperature_celsius")),
+                charts.Series("周辺", _measure(groups, "ambient_temperature_celsius")),
             ],
         )
         blocks += [block for block in (charge, temperature) if block is not None]
     blocks.append(
-        {"type": "section", "text": {"type": "mrkdwn", "text": _period(energy, pulldowns, steps)}}
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": _period(energy, pulldowns, recorded)},
+        }
     )
     blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": _footnote(gap)}]})
     return blocks
@@ -263,17 +284,17 @@ def _lead(latest: StateUpdate, morning: datetime, projected: float | None) -> st
 def _period(
     energy: queries.Energy,
     pulldowns: list[queries.Pulldown],
-    steps: list[queries.Snapshot],
+    recorded: list[Snapshot],
 ) -> str:
     """The stretch the chart covers, and the two things it cannot draw."""
-    if not steps:
+    if not recorded:
         return "この期間に記録はありませんでした。"
-    covered = sum(snapshot.covered_seconds for snapshot in steps)
-    plugged = sum(
-        snapshot.covered_seconds * (snapshot.external_input_ratio or 0.0) for snapshot in steps
-    )
+    covered = sum(slot.covered_seconds for slot in recorded)
+    plugged = sum(slot.covered_seconds * (slot.external_input_ratio or 0.0) for slot in recorded)
+    ended = to_jst(recorded[-1].slot_started_at) + timedelta(seconds=SLOT_SECONDS)
     lines = [
-        f"*記録があったのは {formatting.stamp(steps[0].started_at)} から*",
+        f"*記録があったのは {formatting.stamp(recorded[0].slot_started_at)}"
+        f" から {ended:%H:%M} まで*",
         f"消費 {formatting.watt_hours(energy.discharged_watt_hours)}"
         f" ・ 充電 {formatting.watt_hours(energy.charged_watt_hours)}"
         f" ・ このうち {formatting.percent(100 * plugged / covered if covered else None)}"

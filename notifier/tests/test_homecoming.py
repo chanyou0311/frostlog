@@ -1,12 +1,13 @@
+import math
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from conftest import FakeWarehouse, at, hourly, pulldown_row, state_update, upload_run
+from conftest import FakeWarehouse, at, pulldown_row, quarters, slot, state_update, upload_run
 
 from frostlog_notifier import charts, homecoming
 from frostlog_notifier.events import UploadRun
 from frostlog_notifier.notification import HOMECOMING
-from frostlog_notifier.queries import HourlySnapshot, StateUpdate
+from frostlog_notifier.queries import Snapshot, StateUpdate
 
 RETURN = at("2026-09-11", 12, 3)  # 21:03 JST
 #: The run that shipped the trip: started on arrival, finished two minutes later.
@@ -19,44 +20,27 @@ ARRIVAL = UploadRun.model_validate(
 )
 
 
-def day_of_hours(end: datetime, first_charge: int = 86, plugged: range = range(0)) -> list[dict]:
-    """24 dense hours ending at ``end``: one percent an hour, some of them plugged in."""
-    rows = []
+def day_of_slots(end: datetime, first_charge: int = 86, plugged: range = range(0)) -> list[dict]:
+    """24 dense hours ending at ``end``, as the 96 slots they are made of."""
+    rows: list[dict] = []
     charge = first_charge
     for index in range(24):
         started = end.replace(minute=0, second=0, microsecond=0) - timedelta(hours=23 - index)
         if index in plugged:
             charge = min(100, charge + 6)
-            rows.append(
-                hourly(
-                    started,
-                    charge,
-                    delta=6,
-                    external_input_ratio=1.0,
-                    charging_ratio=1.0,
-                    charged_watt_hours=54.0,
-                    discharged_watt_hours=0.0,
-                )
+            rows += quarters(
+                started,
+                charge,
+                delta=6,
+                external_input_ratio=1.0,
+                charging_ratio=1.0,
+                charged_watt_hours=54.0,
+                discharged_watt_hours=0.0,
             )
         else:
             charge -= 1
-            rows.append(hourly(started, charge))
+            rows += quarters(started, charge)
     return rows
-
-
-def steps_of(end: datetime, count: int = 18, step: timedelta = timedelta(minutes=30)) -> list[dict]:
-    """What the warehouse rolls up for the chart: one row per step, newest last."""
-    return [
-        {
-            "started_at": end - step * (count - index),
-            "covered_seconds": step.total_seconds(),
-            "state_of_charge_end_percent": 80 - index,
-            "interior_temperature_celsius": -18.5,
-            "ambient_temperature_celsius": 24.5,
-            "external_input_ratio": 0.0,
-        }
-        for index in range(count)
-    ]
 
 
 def warehouse_with(**overrides) -> FakeWarehouse:
@@ -66,8 +50,7 @@ def warehouse_with(**overrides) -> FakeWarehouse:
             {"discharged_watt_hours": 128.4, "charged_watt_hours": 40.2},
         ],
         "finished_pulldowns_between": [pulldown_row(at("2026-09-11", 0, 30))],
-        "hourly_snapshots": day_of_hours(RETURN),
-        "snapshots": steps_of(RETURN),
+        "snapshots": day_of_slots(RETURN),
     }
     return FakeWarehouse(answers | overrides)
 
@@ -147,7 +130,7 @@ def test_two_returns_in_one_event_are_chained() -> None:
             "latest_state_update_at": lambda given: [state_update(given["moment"])],
             "energy_between": [{"discharged_watt_hours": 10.0, "charged_watt_hours": 0.0}],
             "finished_pulldowns_between": [],
-            "hourly_snapshots": day_of_hours(RETURN),
+            "snapshots": day_of_slots(RETURN),
         }
     )
     second = UploadRun.model_validate(
@@ -165,7 +148,7 @@ def test_nothing_is_summarised_before_any_state_update() -> None:
 
 
 def test_the_outlook_follows_the_slope_of_the_last_unplugged_hours() -> None:
-    hours = [HourlySnapshot.model_validate(row) for row in day_of_hours(RETURN)]
+    hours = [Snapshot.model_validate(row) for row in day_of_slots(RETURN)]
     latest = StateUpdate.model_validate(state_update(RETURN, state_of_charge_percent=62))
     # One percent an hour down, and 9.95 hours from 21:03 JST to 07:00 the next morning.
     morning = datetime(2026, 9, 11, 22, 0, tzinfo=UTC)
@@ -173,20 +156,20 @@ def test_the_outlook_follows_the_slope_of_the_last_unplugged_hours() -> None:
     assert homecoming.projected_state_of_charge(latest, hours, morning) == pytest.approx(52.05)
 
 
-def test_a_partly_covered_hour_weighs_less_in_the_slope() -> None:
+def test_a_partly_covered_slot_weighs_less_in_the_slope() -> None:
     end = RETURN.replace(minute=0)
-    hours = [
-        HourlySnapshot.model_validate(hourly(end - timedelta(hours=2), 64, delta=-1)),
-        HourlySnapshot.model_validate(
-            hourly(end - timedelta(hours=1), 63, delta=-1, covered_seconds=1800.0)
+    slots = [
+        Snapshot.model_validate(slot(end - timedelta(minutes=30), 64, delta=-1)),
+        Snapshot.model_validate(
+            slot(end - timedelta(minutes=15), 63, delta=-1, covered_seconds=450.0)
         ),
     ]
-    # Two percent over one and a half covered hours.
-    assert homecoming.slope_percent_per_hour(hours) == -2 / 1.5
+    # Two percent over 900 + 450 seconds, which is three eighths of an hour.
+    assert homecoming.slope_percent_per_hour(slots) == -2 / 0.375
 
 
 def test_there_is_no_outlook_while_charging() -> None:
-    hours = [HourlySnapshot.model_validate(row) for row in day_of_hours(RETURN)]
+    hours = [Snapshot.model_validate(row) for row in day_of_slots(RETURN)]
     charging = StateUpdate.model_validate(
         state_update(RETURN, battery_state="charging", external_input=True, input_watts=58)
     )
@@ -200,7 +183,7 @@ def test_there_is_no_outlook_while_charging() -> None:
 
 
 def test_there_is_no_outlook_without_an_unplugged_hour() -> None:
-    hours = [HourlySnapshot.model_validate(row) for row in day_of_hours(RETURN, plugged=range(24))]
+    hours = [Snapshot.model_validate(row) for row in day_of_slots(RETURN, plugged=range(24))]
     latest = StateUpdate.model_validate(state_update(RETURN))
     assert homecoming.slope_percent_per_hour(hours) is None
     assert homecoming.projected_state_of_charge(latest, hours, RETURN + timedelta(hours=10)) is None
@@ -208,26 +191,23 @@ def test_there_is_no_outlook_without_an_unplugged_hour() -> None:
 
 def test_the_outlook_never_leaves_the_scale() -> None:
     hours = [
-        HourlySnapshot.model_validate(hourly(RETURN - timedelta(hours=1), 2, delta=-30)),
+        Snapshot.model_validate(slot(RETURN - timedelta(hours=1), 2, delta=-30)),
     ]
     latest = StateUpdate.model_validate(state_update(RETURN, state_of_charge_percent=2))
     assert homecoming.projected_state_of_charge(latest, hours, RETURN + timedelta(hours=10)) == 0.0
 
 
-@pytest.mark.parametrize("span_hours", [0.25, 0.5, 1, 2, 3, 5, 9, 12, 20, 24, 36, 48, 72, 168])
-def test_the_step_always_leaves_a_chart_slack_will_draw(span_hours: float) -> None:
-    """The step is chosen so the period fits; over the limit there is no chart at all.
-
-    Counting the steps is where this went wrong once: a period rarely starts on a
-    boundary, so both ends can be partial and the two of them are their own steps.
-    """
-    step = homecoming._step_seconds(span_hours * 3600)
-    assert step > 0
-    most = int(span_hours * 3600 // step) + 2
-    assert most <= charts.MAX_POINTS, f"{span_hours} h at {step} s is up to {most} points"
+@pytest.mark.parametrize("hours_recorded", [0.25, 0.5, 1, 2, 3, 5, 9, 12, 20, 24, 36, 48, 72, 168])
+def test_the_fold_always_leaves_a_chart_slack_will_draw(hours_recorded: float) -> None:
+    """However long the stretch, the points fit; over the limit there is no chart at all."""
+    slots = round(hours_recorded * 3600 / homecoming.SLOT_SECONDS)
+    factor = homecoming._fold_factor(slots)
+    assert factor >= 1
+    points = math.ceil(slots / factor)
+    assert points <= charts.MAX_POINTS, f"{hours_recorded} h is {points} points"
 
 
-def test_a_shorter_trip_is_charted_more_finely() -> None:
-    """Two hours out used to be two points; the step follows the period now."""
-    assert homecoming._step_seconds(2 * 3600) < homecoming._step_seconds(9 * 3600)
-    assert homecoming._step_seconds(2 * 3600) <= 600
+def test_a_shorter_stretch_is_charted_more_finely() -> None:
+    """Two hours out used to be two points; the fold follows the length now."""
+    assert homecoming._fold_factor(2 * 4) == 1, "a quarter hour to a point while it fits"
+    assert homecoming._fold_factor(2 * 4) < homecoming._fold_factor(9 * 4)

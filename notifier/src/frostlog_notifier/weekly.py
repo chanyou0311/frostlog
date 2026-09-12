@@ -20,7 +20,7 @@ from frostlog_notifier.clock import (
     to_jst,
 )
 from frostlog_notifier.notification import WEEKLY, Notification
-from frostlog_notifier.queries import Band, HourlySnapshot, Pulldown
+from frostlog_notifier.queries import Band, Pulldown, Snapshot
 from frostlog_notifier.warehouse import Warehouse
 
 log = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ def _band_of(bands: list[Band], value: float) -> Band | None:
 
 
 def summarize(
-    hours: list[HourlySnapshot],
+    hours: list[Snapshot],
     bands: list[Band],
     pulldowns: list[Pulldown],
     days: list[date],
@@ -109,7 +109,7 @@ def summarize(
     )
 
     covered_days = {
-        to_jst(hour.hour_started_at).date() for hour in hours if hour.covered_seconds > 0
+        to_jst(hour.slot_started_at).date() for hour in hours if hour.covered_seconds > 0
     }
     observed = [index for index, hour in enumerate(hours) if hour.covered_seconds > 0]
     gap_hours = (
@@ -134,7 +134,7 @@ def summarize(
     )
 
 
-def _band_drops(hours: list[HourlySnapshot], bands: list[Band]) -> list[BandDrop]:
+def _band_drops(hours: list[Snapshot], bands: list[Band]) -> list[BandDrop]:
     """State-of-charge change per hour per ambient temperature band, unplugged hours only."""
     deltas: dict[int, list[float]] = defaultdict(list)
     covered: dict[int, float] = defaultdict(float)
@@ -187,14 +187,58 @@ def _triggers(pulldowns: list[Pulldown]) -> list[TriggerCount]:
     return counts
 
 
-def _daily(hours: list[HourlySnapshot], days: list[date]) -> list[DailyEnergy]:
+def _daily(hours: list[Snapshot], days: list[date]) -> list[DailyEnergy]:
     discharged: dict[date, float] = defaultdict(float)
     charged: dict[date, float] = defaultdict(float)
     for hour in hours:
-        day = to_jst(hour.hour_started_at).date()
+        day = to_jst(hour.slot_started_at).date()
         discharged[day] += hour.discharged_watt_hours or 0.0
         charged[day] += hour.charged_watt_hours or 0.0
     return [DailyEnergy(day, discharged[day], charged[day]) for day in days]
+
+
+def by_hour(slots: list[Snapshot]) -> list[Snapshot]:
+    """The quarter hours folded back into hours, which is the grain this asks at.
+
+    State of charge is a whole percent, so over a quarter hour it is mostly 0 or 1 —
+    read as a rate that is 0 or 4 %/h, and a week of that says more about the
+    resolution than about the cooler. An hour is long enough for the number to mean
+    something. Folding follows the contract: the seconds and the watt-hours add, the
+    averages weight by the seconds, and the change is the last reading less the first.
+    """
+    grouped: dict[datetime, list[Snapshot]] = defaultdict(list)
+    for slot in slots:
+        grouped[slot.slot_started_at.replace(minute=0, second=0, microsecond=0)].append(slot)
+    return [_folded_hour(started, members) for started, members in sorted(grouped.items())]
+
+
+def _folded_hour(started: datetime, slots: list[Snapshot]) -> Snapshot:
+    covered = sum(slot.covered_seconds for slot in slots)
+    observed = [slot for slot in slots if slot.covered_seconds > 0]
+    start = next((slot.state_of_charge_start_percent for slot in observed), None)
+    end = next((slot.state_of_charge_end_percent for slot in reversed(observed)), None)
+    return Snapshot(
+        slot_started_at=started,
+        covered_seconds=covered,
+        state_of_charge_start_percent=start,
+        state_of_charge_end_percent=end,
+        state_of_charge_delta_percent=None if start is None or end is None else end - start,
+        discharged_watt_hours=sum(slot.discharged_watt_hours or 0.0 for slot in slots),
+        charged_watt_hours=sum(slot.charged_watt_hours or 0.0 for slot in slots),
+        interior_temperature_celsius=_weighted(slots, "interior_temperature_celsius"),
+        setpoint_celsius=_weighted(slots, "setpoint_celsius"),
+        ambient_temperature_celsius=_weighted(slots, "ambient_temperature_celsius"),
+        external_input_ratio=_weighted(slots, "external_input_ratio"),
+        charging_ratio=_weighted(slots, "charging_ratio"),
+    )
+
+
+def _weighted(slots: list[Snapshot], name: str) -> float | None:
+    present = [slot for slot in slots if getattr(slot, name) is not None]
+    weight = sum(slot.covered_seconds for slot in present)
+    if weight <= 0:
+        return None
+    return sum(getattr(slot, name) * slot.covered_seconds for slot in present) / weight
 
 
 def due_week(moment: datetime) -> tuple[int, int]:
@@ -204,7 +248,7 @@ def due_week(moment: datetime) -> tuple[int, int]:
 
 def build(warehouse: Warehouse, iso_year: int, iso_week: int) -> Notification:
     start, end = iso_week_bounds(iso_year, iso_week)
-    hours = queries.hourly_snapshots(warehouse, start, end)
+    hours = by_hour(queries.snapshots(warehouse, start, end))
     bands = queries.ambient_bands(warehouse)
     pulldowns = queries.finished_pulldowns_between(warehouse, start, end)
     days = jst_dates(start, end)
