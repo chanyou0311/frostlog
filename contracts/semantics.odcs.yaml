@@ -248,10 +248,28 @@ schema:
         dimension: uniqueness
         query: SELECT COUNT(*) - COUNT(DISTINCT CONCAT(boot_id, '/', CAST(uptime_seconds AS STRING))) FROM {model}
         mustBe: 0
-      - name: held_seconds_in_range
+      - name: held_seconds_is_the_gap_to_the_next_update
         type: sql
-        dimension: conformity
-        query: SELECT COUNT(*) FROM {model} WHERE held_seconds < 0 OR held_seconds > 600
+        dimension: consistency
+        description: >
+          How long a state is taken to hold: until the next update of the same boot, at
+          most the ten minutes after which the cooler repeats itself anyway. Recomputed
+          here rather than only bounded, because the number that matters is not "under
+          600" but "the right gap": a run rebuilds the boots its chunk touched, and a row
+          whose neighbour arrived after it was last written would keep a hold that is too
+          long — and every aggregate weights by it.
+        query: >
+          SELECT COUNT(*) FROM (
+            SELECT
+              held_seconds,
+              GREATEST(0.0, LEAST(600.0, COALESCE(
+                LEAD(uptime_seconds) OVER (PARTITION BY boot_id ORDER BY uptime_seconds)
+                  - uptime_seconds,
+                600.0
+              ))) AS expected
+            FROM {model}
+          )
+          WHERE ABS(held_seconds - expected) > 0.001
         mustBe: 0
       - name: state_of_charge_in_range
         type: sql
@@ -270,6 +288,10 @@ schema:
       - name: external_input_matches_watts
         type: sql
         dimension: consistency
+        description: >
+          The definition of external_input, not a search for a bug: it cannot fail while
+          the model computes it this way. It is here so that changing what "plugged in"
+          means has to be agreed here first.
         query: SELECT COUNT(*) FROM {model} WHERE external_input != (input_watts > 0)
         mustBe: 0
       - name: date_key_matches_updated_at
@@ -484,6 +506,9 @@ schema:
       - name: covered_seconds_in_range
         type: sql
         dimension: conformity
+        description: >
+          An hour holds 3600 seconds and no more. Definitional, like the model's own
+          clamp; it fails only if the two ever disagree.
         query: SELECT COUNT(*) FROM {model} WHERE covered_seconds < 0 OR covered_seconds > 3600
         mustBe: 0
       - name: ratios_in_range
@@ -494,6 +519,9 @@ schema:
       - name: delta_is_end_minus_start
         type: sql
         dimension: consistency
+        description: >
+          The definition of the delta. Consumers read it instead of subtracting, so what
+          it means belongs in the contract rather than only in the model.
         query: SELECT COUNT(*) FROM {model} WHERE state_of_charge_delta_percent != state_of_charge_end_percent - state_of_charge_start_percent
         mustBe: 0
       - name: energy_matches_state_updates
