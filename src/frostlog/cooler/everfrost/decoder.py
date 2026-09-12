@@ -104,12 +104,25 @@ def _parameter(parameters: dict[int, Parameter], key: int) -> Parameter:
         raise ProtocolError(f"parameter {key:02x} missing (got {present})") from None
 
 
+def _value(parameters: dict[int, Parameter], key: int) -> bytes:
+    """The bytes of a parameter that carries a number or a code.
+
+    A zero-length one is not a number or a code, and reading it would either index
+    past the end or quietly answer zero. The message is malformed; say so, so the
+    receiver keeps the frames and goes on listening.
+    """
+    value = _parameter(parameters, key).value
+    if not value:
+        raise ProtocolError(f"parameter {key:02x} carries no value")
+    return value
+
+
 def _signed(parameters: dict[int, Parameter], key: int) -> int:
-    return int.from_bytes(_parameter(parameters, key).value, "little", signed=True)
+    return int.from_bytes(_value(parameters, key), "little", signed=True)
 
 
 def _choice(parameters: dict[int, Parameter], key: int, names: dict[int, str]) -> Any:
-    return _named(_parameter(parameters, key).value[-1], names, f"parameter {key:02x}")
+    return _named(_value(parameters, key)[-1], names, f"parameter {key:02x}")
 
 
 def _named(code: int, names: dict[int, str], what: str) -> Any:

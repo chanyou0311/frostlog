@@ -75,6 +75,17 @@ def test_a_body_that_is_not_a_state_report_is_refused() -> None:
         decode_state(b"\xa1\x05\xaa")  # truncated
 
 
+def test_a_parameter_with_no_value_is_refused_rather_than_indexed() -> None:
+    # b0 00: the display unit announced, then nothing. Reading its last byte would
+    # raise IndexError, which nobody catches, and the collector would exit on a
+    # message it had not yet recorded.
+    plain = bytearray.fromhex(captured.DISCHARGING.plain)
+    at = plain.index(b"\xb0\x02")
+    plain[at : at + 4] = b"\xb0\x00"
+    with pytest.raises(ProtocolError, match="parameter b0 carries no value"):
+        decode_state(bytes(plain))
+
+
 def test_an_unknown_code_is_refused_rather_than_guessed() -> None:
     plain = bytearray.fromhex(captured.DISCHARGING.plain)
     plain[plain.index(b"\xb0\x02\x01") + 3] = 0x09  # a display unit that is neither °C nor °F

@@ -28,7 +28,21 @@ mkdir -p "$config_dir/systemd/user"
 install -m 644 scripts/systemd/* "$config_dir/systemd/user/"
 # The environment sensor is read with every cooler message now; its own service is gone.
 if [ -f "$config_dir/systemd/user/frostlog-ambient@.service" ]; then
-  systemctl --user disable --now 'frostlog-ambient@*.service' || true
+  # systemctl expands no globs here, so the instances have to be named. Removing the
+  # template would not stop one that is already running: it would go on reading the
+  # sensor beside the cooler service. Loaded units and enabled symlinks are both looked
+  # for, because an instance can be either without being the other.
+  instances=$(
+    {
+      systemctl --user list-units --all --plain --no-legend 'frostlog-ambient@*.service' |
+        awk '{print $1}'
+      find "$config_dir/systemd/user" -name 'frostlog-ambient@*.service' -exec basename {} \;
+    } 2>/dev/null | sort -u
+  )
+  if [ -n "$instances" ]; then
+    # shellcheck disable=SC2086 # one unit per word is what systemctl wants
+    systemctl --user disable --now $instances
+  fi
   rm -f "$config_dir/systemd/user/frostlog-ambient@.service"
 fi
 systemctl --user daemon-reload
