@@ -37,8 +37,8 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/events/pubsub")
-async def events_pubsub(request: Request, notifier: Notifier = Depends(get_notifier)) -> Response:
+@app.post("/signals/pubsub")
+async def signals_pubsub(request: Request, notifier: Notifier = Depends(get_notifier)) -> Response:
     try:
         event = parse(await request.json())
     except (Undecodable, ValueError) as exc:
@@ -53,7 +53,7 @@ async def events_pubsub(request: Request, notifier: Notifier = Depends(get_notif
         log.warning("transient failure; asking Pub/Sub to retry: %s", exc)
         return _answer(500, {"error": str(exc)})
     except Exception as exc:  # a defect, not a hiccup: reported, then acknowledged
-        await run_in_threadpool(notifier.report_failure, "events/pubsub", exc)
+        await run_in_threadpool(notifier.report_failure, "signals/pubsub", exc)
         return _answer(200, {"error": f"{type(exc).__name__}: {exc}"})
     return _answer(200, {"posted": [notification.key for notification in posted]})
 

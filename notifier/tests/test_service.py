@@ -327,7 +327,7 @@ def test_a_failure_reports_itself_to_the_channel(
     arrived: FakeWarehouse, slack: FakeSlack, settings: Settings
 ) -> None:
     notifier = build_notifier(arrived, slack, settings)
-    notifier.report_failure("events/pubsub", ValueError("boom"))
+    notifier.report_failure("signals/pubsub", ValueError("boom"))
     assert "notifier の失敗" in slack.messages[0][0]
     assert "ValueError: boom" in slack.messages[0][0]
 
@@ -337,14 +337,14 @@ def test_a_defect_that_keeps_coming_back_is_reported_once_a_day(
 ) -> None:
     notifier = build_notifier(arrived, slack, settings)
     for _ in range(4):  # Pub/Sub redelivers the same message all day
-        notifier.report_failure("events/pubsub", ValueError("boom"))
+        notifier.report_failure("signals/pubsub", ValueError("boom"))
     assert len(slack.messages) == 1
 
     # Another defect, and the same one tomorrow, are worth saying.
-    notifier.report_failure("events/pubsub", KeyError("other"))
+    notifier.report_failure("signals/pubsub", KeyError("other"))
     notifier.report_failure("jobs/weekly-deadline", ValueError("boom"))
     tomorrow = build_notifier(arrived, slack, settings, now=lambda: RETURN + timedelta(days=1))
-    tomorrow.report_failure("events/pubsub", ValueError("boom"))
+    tomorrow.report_failure("signals/pubsub", ValueError("boom"))
     assert len(slack.messages) == 4
 
 
