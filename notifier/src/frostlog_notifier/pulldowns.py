@@ -42,7 +42,7 @@ def _notification(warehouse: Warehouse, episode: Pulldown) -> Notification:
     updates = queries.state_updates_between(
         warehouse, episode.started_at, episode.ended_at or episode.started_at
     )
-    title = f"Pull-down {formatting.full_stamp(episode.started_at)}"
+    title = f"{formatting.full_stamp(episode.started_at)} からの冷却"
     return Notification(
         kind=PULLDOWN,
         key=episode.pulldown_key,

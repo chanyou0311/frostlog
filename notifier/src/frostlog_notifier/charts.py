@@ -1,12 +1,17 @@
 """The PNG that goes with each notification.
 
-Labels are ASCII on purpose: the container carries no Japanese font, and a
-missing glyph would silently become a box. Dates in titles are JST.
+Labelled in Japanese, like the message it goes with. That needs a font the slim
+image does not ship — the Dockerfile installs one, and :func:`_pyplot` names it
+first among the families to try, so a checkout on a machine without it still
+draws. A missing glyph is a silent box, never an error, which is why the minus
+sign is asked for as ASCII: the Japanese faces have no U+2212 and every interior
+temperature here is negative. Dates in titles are JST.
 """
 
 from __future__ import annotations
 
 import io
+import logging
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +21,8 @@ from frostlog_notifier.queries import HourlySnapshot, StateUpdate
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
+
+log = logging.getLogger(__name__)
 
 
 def _pyplot() -> Any:
@@ -29,7 +36,30 @@ def _pyplot() -> Any:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    plt.rcParams["font.family"] = "sans-serif"
+    plt.rcParams["font.sans-serif"] = [*JAPANESE_FONTS, *plt.rcParams["font.sans-serif"]]
+    plt.rcParams["axes.unicode_minus"] = False
+    _warn_once_without_a_japanese_font()
     return plt
+
+
+_reported_missing_font = False
+
+
+def _warn_once_without_a_japanese_font() -> None:
+    """Say it in the log, because the chart itself would say it in boxes."""
+    global _reported_missing_font
+    if _reported_missing_font:
+        return
+    from matplotlib import font_manager
+
+    available = {font.name for font in font_manager.fontManager.ttflist}
+    if not available.intersection(JAPANESE_FONTS):
+        log.warning(
+            "no Japanese font (%s); the charts will draw their labels as boxes",
+            ", ".join(JAPANESE_FONTS),
+        )
+    _reported_missing_font = True
 
 
 def _dates() -> Any:
@@ -37,6 +67,10 @@ def _dates() -> Any:
 
     return mdates
 
+
+#: Families to draw Japanese with, most wanted first: the container's, then what a
+#: development machine is likely to have. matplotlib falls through to its own.
+JAPANESE_FONTS = ("IPAexGothic", "IPAGothic", "Noto Sans CJK JP", "Hiragino Sans")
 
 CHARGING = "#4c9be8"
 SOC = "#2b7a3d"
@@ -82,8 +116,8 @@ def daily_overview(hours: list[HourlySnapshot], title: str) -> bytes:
     step = times[1] - times[0] if len(times) > 1 else timedelta(hours=1)
 
     charge = [hour.state_of_charge_end_percent for hour in hours]
-    top.plot(times, charge, color=SOC, marker="o", markersize=2.5, label="state of charge (%)")
-    top.set_ylabel("state of charge (%)")
+    top.plot(times, charge, color=SOC, marker="o", markersize=2.5, label="バッテリー残量 (%)")
+    top.set_ylabel("バッテリー残量 (%)")
     top.set_ylim(0, 105)
     for axes in (top, bottom):
         _shade_hours(axes, hours, times, step)
@@ -95,22 +129,22 @@ def daily_overview(hours: list[HourlySnapshot], title: str) -> bytes:
         times,
         [hour.interior_temperature_celsius for hour in hours],
         color=INTERIOR,
-        label="interior (C)",
+        label="庫内 (°C)",
     )
     bottom.plot(
         times,
         [hour.setpoint_celsius for hour in hours],
         color=SETPOINT,
         linestyle="--",
-        label="setpoint (C)",
+        label="設定 (°C)",
     )
     bottom.plot(
         times,
         [hour.ambient_temperature_celsius for hour in hours],
         color=AMBIENT,
-        label="ambient (C)",
+        label="周辺 (°C)",
     )
-    bottom.set_ylabel("temperature (C)")
+    bottom.set_ylabel("温度 (°C)")
     _legend(bottom)
     _hour_axis(bottom)
     return _png(figure)
@@ -142,8 +176,8 @@ def _shading_key() -> list[Any]:
     from matplotlib.patches import Patch
 
     return [
-        Patch(facecolor=CHARGING, alpha=0.30, label="plugged in (deeper = more of the hour)"),
-        Patch(facecolor=SILENT, alpha=0.35, label="nothing recorded"),
+        Patch(facecolor=CHARGING, alpha=0.30, label="外部電源あり (濃いほど長い)"),
+        Patch(facecolor=SILENT, alpha=0.35, label="記録なし"),
     ]
 
 
@@ -175,17 +209,17 @@ def pulldown(updates: list[StateUpdate], setpoint_celsius: int, title: str) -> b
         color=INTERIOR,
         marker="o",
         markersize=2.5,
-        label="interior (C)",
+        label="庫内 (°C)",
     )
     axes.plot(
         minutes,
         [update.ambient_temperature_celsius for update in updates],
         color=AMBIENT,
-        label="ambient (C)",
+        label="周辺 (°C)",
     )
-    axes.axhline(setpoint_celsius, color=SETPOINT, linestyle="--", label="setpoint (C)")
-    axes.set_xlabel("minutes from start")
-    axes.set_ylabel("temperature (C)")
+    axes.axhline(setpoint_celsius, color=SETPOINT, linestyle="--", label="設定 (°C)")
+    axes.set_xlabel("開始からの分")
+    axes.set_ylabel("温度 (°C)")
     axes.grid(alpha=0.3)
     axes.legend(loc="upper right", fontsize=8)
     return _png(figure)
@@ -216,14 +250,14 @@ def weekly(
         [discharged for _, discharged, _ in days],
         width=width,
         color=DISCHARGED,
-        label="discharged (Wh)",
+        label="消費 (Wh)",
     )
     left.bar(
         [position + width / 2 for position in positions],
         [charged for _, _, charged in days],
         width=width,
         color=CHARGING,
-        label="charged (Wh)",
+        label="充電 (Wh)",
     )
     left.plot(
         list(positions),
@@ -231,12 +265,12 @@ def weekly(
         color=NET,
         marker="o",
         markersize=3,
-        label="net (Wh)",
+        label="差引 (Wh)",
     )
     left.axhline(0, color=NET, linewidth=0.8)
     left.set_xticks(list(positions))
     left.set_xticklabels(labels, fontsize=8)
-    left.set_ylabel("watt hours")
+    left.set_ylabel("ワット時 (Wh)")
     left.grid(alpha=0.3, axis="y")
     left.legend(fontsize=8)
 
@@ -249,8 +283,8 @@ def weekly(
     else:
         right.text(0.5, 0.5, "no unplugged hours", ha="center", va="center", fontsize=9)
         right.set_xticks([])
-    right.set_ylabel("state of charge change (%/h)")
-    right.set_xlabel("ambient temperature band (C)")
+    right.set_ylabel("残量の変化 (%/h)")
+    right.set_xlabel("周辺温度帯 (°C)")
     right.tick_params(axis="x", labelsize=8)
     right.grid(alpha=0.3, axis="y")
     return _png(figure)

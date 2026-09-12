@@ -112,7 +112,7 @@ def _build(
     projected = projected_state_of_charge(latest, hours, morning)
     gap = run.began_at - run.previous_finished_at if run.previous_finished_at else None
     text = _text(latest, start, end, energy, len(pulldowns), hours, morning, projected, gap)
-    title = f"Last {CHART_HOURS} hours to {formatting.full_stamp(end)}"
+    title = f"{formatting.full_stamp(end)} までの {CHART_HOURS} 時間"
     image = charts.daily_overview(hours, title)
     return Notification(
         kind=HOMECOMING,
