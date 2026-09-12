@@ -1,22 +1,10 @@
-{% set batch_boots = frostlog_batch_boot_ids() %}
-
 {{
     config(
-        materialized='incremental',
-        incremental_strategy='insert_overwrite',
+        materialized='table',
         partition_by={'field': 'partition_date', 'data_type': 'date'},
         tags=['partitioned'],
         on_schema_change='fail',
         contract={'enforced': true},
-        post_hook="""
-            delete from {{ this }} s
-            where not exists (
-                select 1
-                from ({{ frostlog_observed_slots(ref('fact_cooler_state_update')) }}) o
-                where o.first_slot is null
-                   or s.slot_started_at between o.first_slot and o.last_slot
-            )
-        """,
     )
 }}
 
@@ -32,71 +20,20 @@
 -- two-hour trip is two points of an hourly table. Cutting the intervals is the part
 -- that cannot be done again downstream; folding four slots into an hour can.
 --
--- Which dates a run recomputes is wider than the dates its chunk touched, because
--- the table has to stay dense: the reports of the boots in the batch may have moved
--- to another date since the last run (timestamp correction), a day on which nothing
--- was recorded appears in no chunk at all, and the day before a rebuilt one holds
--- the reports that reach into it.
---
--- What a correction empties is a different matter: a run replaces the partitions its
--- result has rows for, and a date left with none keeps the rows it had. The post-hook
--- drops whatever a rebuild has put outside the observed span.
+-- Built whole every run, like fact_cooler_pulldown and for the same reason. Dense is
+-- a property of the table, not of a partition, and a correction that moves a report
+-- to another date moves the hole with it; keeping that true incrementally took three
+-- separate mechanisms — a widened date list, a look at the day before, and a delete
+-- of what a rebuild had emptied — each of which had to agree with the other two. The
+-- scan is not new work either: the pull-down beside it already reads the whole fact
+-- on every run, so this is a second pass over rows already paid for, and the
+-- transform runs on a half-hourly schedule rather than on every chunk.
 
 with observed as (
 
     {{ frostlog_observed_slots(ref('fact_cooler_state_update')) }}
 
 ),
-
-{% if is_incremental() %}
-
-wanted_days as (
-
-    select day from unnest([{{ frostlog_partitions() | join(', ') }}]) as day
-
-    union distinct
-
-    -- Where this run's reports are now...
-    select date(updated_at, 'Asia/Tokyo')
-    from {{ ref('fact_cooler_state_update') }}
-    where boot_id in {{ frostlog_id_list(batch_boots) }}
-
-    union distinct
-
-    -- ...and the date they were placed on before their timestamps were corrected.
-    select date(updated_at_raw, 'Asia/Tokyo')
-    from {{ ref('fact_cooler_state_update') }}
-    where boot_id in {{ frostlog_id_list(batch_boots) }}
-
-),
-
-target_days as (
-
-    select day from wanted_days
-
-    union distinct
-
-    -- A day the Pi spent switched off is in no chunk, so nothing would ever ask for
-    -- its slots; without them the table has a hole and stops being dense.
-    select day
-    from unnest(generate_date_array(
-        (select max(partition_date) from {{ this }}),
-        (select max(day) from wanted_days)
-    )) as day
-
-    union distinct
-
-    -- The same the other way, for a chunk of a day the table has already moved past:
-    -- what lies between it and the earliest day there is would otherwise be a hole.
-    select day
-    from unnest(generate_date_array(
-        (select min(day) from wanted_days),
-        (select min(partition_date) from {{ this }})
-    )) as day
-
-),
-
-{% else %}
 
 target_days as (
 
@@ -107,8 +44,6 @@ target_days as (
         )) as day
 
 ),
-
-{% endif %}
 
 slots as (
 
@@ -135,9 +70,7 @@ updates as (
         battery_key,
         updated_at,
         held_seconds,
-        timestamp_add(
-            updated_at, interval cast(round(held_seconds * 1000) as int64) millisecond
-        ) as held_until,
+        {{ frostlog_held_until('updated_at', 'held_seconds') }} as held_until,
         state_of_charge_percent,
         discharge_watts,
         charge_watts,
@@ -151,14 +84,6 @@ updates as (
         external_input,
         battery_state
     from {{ ref('fact_cooler_state_update') }}
-    {% if is_incremental() %}
-    -- The day before a rebuilt one too: its last report reaches into this one.
-    where partition_date in (
-        select day from target_days
-        union distinct
-        select date_sub(day, interval 1 day) from target_days
-    )
-    {% endif %}
 
 ),
 
