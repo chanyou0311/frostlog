@@ -9,6 +9,8 @@ say its name and turn itself into JSON.
 import logging
 from typing import Any, Protocol
 
+from frostlog_platform.project import topic_path
+
 log = logging.getLogger(__name__)
 
 
@@ -41,3 +43,17 @@ class NoPublisher:
 
     def publish(self, event: Event) -> None:
         log.info("no topic configured; %s not published: %s", event.name, event.model_dump_json())
+
+
+def publisher_for(project: str, topic: str | None) -> Publisher:
+    """A publisher on ``topic``, or one that goes nowhere when there is no topic.
+
+    Local runs and tests have no topic; production does. Which of the two it is has
+    to be decided the same way in both components, or an event would be dropped in
+    one and published in the other.
+    """
+    if not topic:
+        return NoPublisher()
+    from google.cloud import pubsub_v1
+
+    return PubSubPublisher(pubsub_v1.PublisherClient(), topic_path(project, topic))

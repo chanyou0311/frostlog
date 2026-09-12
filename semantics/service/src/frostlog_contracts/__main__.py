@@ -33,8 +33,8 @@ from frostlog_contracts.tester import (
     DatacontractTester,
     s3_credentials,
 )
-from frostlog_platform.events import NoPublisher, Publisher, PubSubPublisher
-from frostlog_platform.project import resolve_project, topic_path
+from frostlog_platform.events import Publisher, publisher_for
+from frostlog_platform.project import resolve_project
 
 log = logging.getLogger(__name__)
 
@@ -52,26 +52,14 @@ class Services:
 
 def build_services(settings: Settings | None = None) -> Services:
     """The production wiring: Pub/Sub and Secret Manager through ADC."""
-    from google.cloud import pubsub_v1, secretmanager
+    from google.cloud import secretmanager
 
     settings = settings or Settings()
     project = resolve_project(settings.gcp_project)
-    environment = {
-        "FROSTLOG_BQ_PROJECT": project,
-        "FROSTLOG_BQ_DATASET": settings.bq_dataset,
-        "FROSTLOG_BQ_RAW_DATASET": settings.raw_dataset,
-        "FROSTLOG_BQ_LOCATION": settings.bq_location,
-    }
-    topic = settings.signals_topic
-    publisher: Publisher = (
-        PubSubPublisher(pubsub_v1.PublisherClient(), topic_path(project, topic))
-        if topic
-        else NoPublisher()
-    )
     return Services(
         settings=settings,
-        tester=DatacontractTester(environment),
-        publisher=publisher,
+        tester=DatacontractTester(settings.warehouse_environment(project)),
+        publisher=publisher_for(project, settings.signals_topic),
         secrets=SecretManagerReader(secretmanager.SecretManagerServiceClient(), project),
     )
 

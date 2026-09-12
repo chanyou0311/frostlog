@@ -30,8 +30,8 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException
 
-from frostlog_platform.events import NoPublisher, Publisher, PubSubPublisher
-from frostlog_platform.project import resolve_project, topic_path
+from frostlog_platform.events import Publisher, publisher_for
+from frostlog_platform.project import resolve_project
 from frostlog_semantics import raw_objects
 from frostlog_semantics.events import SemanticUpdated
 from frostlog_semantics.settings import Settings
@@ -59,23 +59,11 @@ class Services:
 
 def build_services(settings: Settings | None = None) -> Services:
     """The production wiring: BigQuery, Cloud Storage and Pub/Sub through ADC."""
-    from google.cloud import bigquery, pubsub_v1, storage
+    from google.cloud import bigquery, storage
 
     settings = settings or Settings()
     project = resolve_project(settings.gcp_project)
-    environment = {
-        "FROSTLOG_BQ_PROJECT": project,
-        "FROSTLOG_BQ_DATASET": settings.bq_dataset,
-        "FROSTLOG_BQ_RAW_DATASET": settings.raw_dataset,
-        "FROSTLOG_BQ_LOCATION": settings.bq_location,
-    }
     client = bigquery.Client(project=project)
-    topic = settings.signals_topic
-    publisher: Publisher = (
-        PubSubPublisher(pubsub_v1.PublisherClient(), topic_path(project, topic))
-        if topic
-        else NoPublisher()
-    )
     return Services(
         settings=settings,
         warehouse=BigQueryWarehouse(client, project, settings.raw_dataset, settings.bq_location),
@@ -84,10 +72,10 @@ def build_services(settings: Settings | None = None) -> Services:
             project_dir=settings.dbt_project_dir,
             profiles_dir=settings.dbt_profiles_dir,
             target=settings.dbt_target,
-            environment=environment,
+            environment=settings.warehouse_environment(project),
             select=settings.dbt_select,
         ),
-        publisher=publisher,
+        publisher=publisher_for(project, settings.signals_topic),
     )
 
 
