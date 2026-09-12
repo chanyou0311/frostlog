@@ -13,7 +13,7 @@ DIRS := --project-dir dbt --profiles-dir dbt
 CONTRACTS := ../contracts
 TARGET ?= prod
 
-.PHONY: install check lint test parse build unit-test contract-test ci-warehouse lint-contracts
+.PHONY: install check lint test parse build unit-test contract-test contract-test-collection contract-test-semantics ci-warehouse lint-contracts
 
 install:
 	uv sync --project service --group transform
@@ -45,8 +45,19 @@ unit-test:
 # contract reads the bucket through its S3 API, so it wants
 # DATACONTRACT_S3_ACCESS_KEY_ID / DATACONTRACT_S3_SECRET_ACCESS_KEY (the service
 # reads them from Secret Manager; a person exports their own HMAC key).
-contract-test:
+# Each data product against its own contract, in production. The daily
+# frostlog-contracts job runs both; these are here for the one-off check, and
+# separately because the two products go live at different times — collection can
+# be held to its word before the warehouse the semantics contract describes exists.
+# collection needs DATACONTRACT_S3_ACCESS_KEY_ID / _SECRET_ACCESS_KEY (the HMAC key
+# Terraform issues into Secret Manager); semantics needs Application Default
+# Credentials and FROSTLOG_BQ_*.
+contract-test: contract-test-collection contract-test-semantics
+
+contract-test-collection:
 	$(UV) datacontract test $(CONTRACTS)/collection.odcs.yaml --server gcs
+
+contract-test-semantics:
 	$(UV) datacontract test $(CONTRACTS)/semantics.odcs.yaml --server production
 
 # The whole warehouse, end to end, on the sample chunks in the repository: the CI
