@@ -22,26 +22,28 @@ unit_tests:
         - {serial_number: 'COOLER-1', model: 'everfrost', firmware_version: '1.0.0', valid_from: '2026-08-31 00:00:00+00', valid_to: '2026-09-05 00:00:00+00', is_current: false}
         - {serial_number: 'COOLER-1', model: 'everfrost', firmware_version: '1.1.0', valid_from: '2026-09-05 00:00:00+00', valid_to: null, is_current: true}
 
-  - name: hours_are_dense_and_energy_is_integrated_over_the_covered_seconds
-    model: fact_cooler_hourly_snapshot
+  - name: slots_are_dense_and_energy_is_integrated_over_the_covered_seconds
+    model: fact_cooler_snapshot
     overrides:
       macros:
         is_incremental: false
     description: >
-      Watt-hours are the sum of watts times the seconds inside the hour, conditions
-      are averages weighted the same way, and an hour in which nothing was recorded
-      still gets a row, with no measures and no covered seconds.
+      Watt-hours are the sum of watts times the seconds inside the slot, conditions
+      are averages weighted the same way, a report that straddles a boundary is cut
+      between the two slots, and a slot in which nothing was recorded still gets a
+      row, with no measures and no covered seconds.
     given:
       - input: ref('fact_cooler_state_update')
         rows:
           - {state_update_key: 'a', cooler_key: 11, battery_key: 22, updated_at: '2026-09-05 15:00:00+00', held_seconds: 600.0, state_of_charge_percent: 80, discharge_watts: 60, charge_watts: 0, input_watts: 0, usb_a_output_watts: 0, usb_c_output_watts: 0, ambient_temperature_celsius: 20.0, ambient_humidity_percent: 50.0, interior_temperature_celsius: -10, setpoint_celsius: -20, external_input: false, battery_state: 'discharging'}
-          - {state_update_key: 'b', cooler_key: 11, battery_key: 22, updated_at: '2026-09-05 15:10:00+00', held_seconds: 600.0, state_of_charge_percent: 79, discharge_watts: 0, charge_watts: 0, input_watts: 0, usb_a_output_watts: 0, usb_c_output_watts: 0, ambient_temperature_celsius: 30.0, ambient_humidity_percent: 50.0, interior_temperature_celsius: -12, setpoint_celsius: -20, external_input: false, battery_state: 'idle'}
-          - {state_update_key: 'c', cooler_key: 11, battery_key: 22, updated_at: '2026-09-05 17:30:00+00', held_seconds: 600.0, state_of_charge_percent: 78, discharge_watts: 30, charge_watts: 0, input_watts: 0, usb_a_output_watts: 0, usb_c_output_watts: 0, ambient_temperature_celsius: 22.0, ambient_humidity_percent: 50.0, interior_temperature_celsius: -14, setpoint_celsius: -20, external_input: false, battery_state: 'discharging'}
+          - {state_update_key: 'b', cooler_key: 11, battery_key: 22, updated_at: '2026-09-05 15:10:00+00', held_seconds: 600.0, state_of_charge_percent: 79, discharge_watts: 0, charge_watts: 0, input_watts: 0, usb_a_output_watts: 0, usb_c_output_watts: 0, ambient_temperature_celsius: 26.0, ambient_humidity_percent: 50.0, interior_temperature_celsius: -12, setpoint_celsius: -20, external_input: false, battery_state: 'discharging'}
+          - {state_update_key: 'c', cooler_key: 11, battery_key: 22, updated_at: '2026-09-05 15:45:00+00', held_seconds: 600.0, state_of_charge_percent: 78, discharge_watts: 30, charge_watts: 0, input_watts: 0, usb_a_output_watts: 0, usb_c_output_watts: 0, ambient_temperature_celsius: 22.0, ambient_humidity_percent: 50.0, interior_temperature_celsius: -14, setpoint_celsius: -20, external_input: false, battery_state: 'discharging'}
     expect:
       rows:
-        - {hour_key: '2026090600', date_key: 20260906, hour_of_day: 0, cooler_key: 11, covered_seconds: 1200.0, update_count: 2, discharged_watt_hours: 10.0, ambient_temperature_celsius: 25.0, state_of_charge_start_percent: 80, state_of_charge_end_percent: 79, state_of_charge_delta_percent: -1}
-        - {hour_key: '2026090601', date_key: 20260906, hour_of_day: 1, cooler_key: null, covered_seconds: 0.0, update_count: 0, discharged_watt_hours: null, ambient_temperature_celsius: null, state_of_charge_start_percent: null, state_of_charge_end_percent: null, state_of_charge_delta_percent: null}
-        - {hour_key: '2026090602', date_key: 20260906, hour_of_day: 2, cooler_key: 11, covered_seconds: 600.0, update_count: 1, discharged_watt_hours: 5.0, ambient_temperature_celsius: 22.0, state_of_charge_start_percent: 78, state_of_charge_end_percent: 78, state_of_charge_delta_percent: 0}
+        - {slot_key: '202609060000', date_key: 20260906, hour_of_day: 0, minute_of_hour: 0, cooler_key: 11, covered_seconds: 900.0, update_count: 2, discharged_watt_hours: 10.0, ambient_temperature_celsius: 22.0, state_of_charge_start_percent: 80, state_of_charge_end_percent: 79, state_of_charge_delta_percent: -1}
+        - {slot_key: '202609060015', date_key: 20260906, hour_of_day: 0, minute_of_hour: 15, cooler_key: 11, covered_seconds: 300.0, update_count: 1, discharged_watt_hours: 0.0, ambient_temperature_celsius: 26.0, state_of_charge_start_percent: 79, state_of_charge_end_percent: 79, state_of_charge_delta_percent: 0}
+        - {slot_key: '202609060030', date_key: 20260906, hour_of_day: 0, minute_of_hour: 30, cooler_key: null, covered_seconds: 0.0, update_count: 0, discharged_watt_hours: null, ambient_temperature_celsius: null, state_of_charge_start_percent: null, state_of_charge_end_percent: null, state_of_charge_delta_percent: null}
+        - {slot_key: '202609060045', date_key: 20260906, hour_of_day: 0, minute_of_hour: 45, cooler_key: 11, covered_seconds: 600.0, update_count: 1, discharged_watt_hours: 5.0, ambient_temperature_celsius: 22.0, state_of_charge_start_percent: 78, state_of_charge_end_percent: 78, state_of_charge_delta_percent: 0}
 
   - name: a_pulldown_from_start_up_ends_when_the_setpoint_is_reached
     model: fact_cooler_pulldown
@@ -150,7 +152,7 @@ unit_tests:
         - {state_update_key: 'k2', cooler_key: 11, battery_key: 22, date_key: 20260907, partition_date: '2026-09-07', updated_at_raw: '2026-09-06 15:40:00+00', timestamp_corrected: false}
 
   - name: a_full_battery_is_not_charging
-    model: fact_cooler_hourly_snapshot
+    model: fact_cooler_snapshot
     overrides:
       macros:
         is_incremental: false
@@ -165,4 +167,5 @@ unit_tests:
           - {state_update_key: 'b', cooler_key: 11, battery_key: 22, updated_at: '2026-09-05 15:10:00+00', held_seconds: 600.0, state_of_charge_percent: 100, discharge_watts: 0, charge_watts: 0, input_watts: 60, usb_a_output_watts: 0, usb_c_output_watts: 0, ambient_temperature_celsius: 20.0, ambient_humidity_percent: 50.0, interior_temperature_celsius: -19, setpoint_celsius: -20, external_input: true, battery_state: 'full'}
     expect:
       rows:
-        - {hour_key: '2026090600', covered_seconds: 1200.0, update_count: 2, charging_ratio: 0.5, external_input_ratio: 1.0, state_of_charge_end_percent: 100}
+        - {slot_key: '202609060000', covered_seconds: 900.0, update_count: 2, charging_ratio: 0.6666666666666666, external_input_ratio: 1.0, state_of_charge_end_percent: 100}
+        - {slot_key: '202609060015', covered_seconds: 300.0, update_count: 1, charging_ratio: 0.0, external_input_ratio: 1.0, state_of_charge_end_percent: 100}

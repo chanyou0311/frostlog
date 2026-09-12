@@ -128,23 +128,24 @@ models:
         description: input_watts × held_seconds / 3600.
         constraints: [{type: not_null}]
 
-  - name: fact_cooler_hourly_snapshot
+  - name: fact_cooler_snapshot
     description: >
-      One row per JST hour between the first and the last observed hour, including
-      hours with nothing in them. Energy columns are additive; condition columns are
-      averages weighted by the covered seconds.
+      One row per quarter hour (JST) between the first and the last observed slot,
+      including slots with nothing in them. Energy columns are additive; condition
+      columns are averages weighted by the covered seconds. Four of them fold into an
+      hour exactly, which is why the grain is this side of one.
     config:
       contract:
         enforced: true
     columns:
-      - name: hour_key
+      - name: slot_key
         data_type: string
-        description: date_key and hour_of_day (yyyymmddhh).
+        description: date_key, hour and minute of the slot's start (yyyymmddhhmm).
         constraints: [{type: not_null}]
         data_tests: [unique]
       - name: cooler_key
         data_type: int64
-        description: dim_cooler at the hour's last update; null when the hour has no data.
+        description: dim_cooler at the slot's last update; null when the slot has no data.
       - name: battery_key
         data_type: int64
       - name: date_key
@@ -161,9 +162,13 @@ models:
         data_type: int64
         description: 0-23, JST.
         constraints: [{type: not_null}]
-      - name: hour_started_at
+      - name: minute_of_hour
+        data_type: int64
+        description: 0, 15, 30 or 45.
+        constraints: [{type: not_null}]
+      - name: slot_started_at
         data_type: timestamp
-        description: Start of the hour in UTC.
+        description: Start of the slot in UTC.
         constraints: [{type: not_null}]
       - name: state_of_charge_start_percent
         data_type: int64
@@ -171,7 +176,7 @@ models:
         data_type: int64
       - name: state_of_charge_delta_percent
         data_type: int64
-        description: End minus start; the hourly rate behind an "hours left" estimate.
+        description: End minus start; four of them make the hourly rate behind an "hours left" estimate.
       - name: discharged_watt_hours
         data_type: float64
       - name: charged_watt_hours
@@ -196,7 +201,7 @@ models:
         data_type: float64
       - name: covered_seconds
         data_type: float64
-        description: Seconds of the hour covered by held state (0-3600).
+        description: Seconds of the slot covered by held state (0-900).
         constraints: [{type: not_null}]
       - name: update_count
         data_type: int64

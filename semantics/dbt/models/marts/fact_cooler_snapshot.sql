@@ -9,24 +9,28 @@
         on_schema_change='fail',
         contract={'enforced': true},
         post_hook="""
-            delete from {{ this }} h
+            delete from {{ this }} s
             where not exists (
                 select 1
-                from ({{ frostlog_observed_hours(ref('fact_cooler_state_update')) }}) o
-                where o.first_hour is null
-                   or h.hour_started_at between o.first_hour and o.last_hour
+                from ({{ frostlog_observed_slots(ref('fact_cooler_state_update')) }}) o
+                where o.first_slot is null
+                   or s.slot_started_at between o.first_slot and o.last_slot
             )
         """,
     )
 }}
 
--- One row per JST hour, whether anything was recorded in it or not.
+-- One row per quarter hour (JST), whether anything was recorded in it or not.
 --
--- A state report holds for up to ten minutes, so its interval usually falls inside
--- one hour and sometimes straddles two. Each interval is cut at the hour boundaries
--- and the pieces are what the hour is made of: energy is the sum of watts times the
--- seconds inside the hour, conditions are averages weighted the same way, and
--- `covered_seconds` says how much of the hour those pieces actually cover.
+-- A state report holds for up to ten minutes, so its interval often straddles a slot
+-- boundary. Each interval is cut at those boundaries and the pieces are what a slot
+-- is made of: energy is the sum of watts times the seconds inside the slot,
+-- conditions are averages weighted the same way, and `covered_seconds` says how much
+-- of the slot those pieces actually cover.
+--
+-- A quarter hour rather than an hour because this is what consumers draw from, and a
+-- two-hour trip is two points of an hourly table. Cutting the intervals is the part
+-- that cannot be done again downstream; folding four slots into an hour can.
 --
 -- Which dates a run recomputes is wider than the dates its chunk touched, because
 -- the table has to stay dense: the reports of the boots in the batch may have moved
@@ -40,7 +44,7 @@
 
 with observed as (
 
-    {{ frostlog_observed_hours(ref('fact_cooler_state_update')) }}
+    {{ frostlog_observed_slots(ref('fact_cooler_state_update')) }}
 
 ),
 
@@ -73,7 +77,7 @@ target_days as (
     union distinct
 
     -- A day the Pi spent switched off is in no chunk, so nothing would ever ask for
-    -- its hours; without them the table has a hole and stops being dense.
+    -- its slots; without them the table has a hole and stops being dense.
     select day
     from unnest(generate_date_array(
         (select max(partition_date) from {{ this }}),
@@ -106,19 +110,21 @@ target_days as (
 
 {% endif %}
 
-hours as (
+slots as (
 
-    select hour_started_at
+    select slot_started_at
     from target_days,
         unnest(generate_timestamp_array(
             timestamp(day, 'Asia/Tokyo'),
-            timestamp_sub(timestamp(date_add(day, interval 1 day), 'Asia/Tokyo'), interval 1 hour),
-            interval 1 hour
-        )) as hour_started_at
-    -- The table starts at the first hour observed and stops at the hour the last
+            timestamp_sub(
+                timestamp(date_add(day, interval 1 day), 'Asia/Tokyo'), interval 15 minute
+            ),
+            interval 15 minute
+        )) as slot_started_at
+    -- The table starts at the first slot observed and stops at the slot the last
     -- held interval runs into, so that the tail of that interval is allocated too.
     cross join observed
-    where hour_started_at between observed.first_hour and observed.last_hour
+    where slot_started_at between observed.first_slot and observed.last_slot
 
 ),
 
@@ -159,25 +165,25 @@ updates as (
 allocation as (
 
     select
-        h.hour_started_at,
+        s.slot_started_at,
         u.*,
         timestamp_diff(
-            least(u.held_until, timestamp_add(h.hour_started_at, interval 1 hour)),
-            greatest(u.updated_at, h.hour_started_at),
+            least(u.held_until, timestamp_add(s.slot_started_at, interval 15 minute)),
+            greatest(u.updated_at, s.slot_started_at),
             millisecond
         ) / 1000.0 as overlap_seconds
-    from hours h
+    from slots s
     join updates u
-        on u.updated_at < timestamp_add(h.hour_started_at, interval 1 hour)
-       and u.held_until > h.hour_started_at
+        on u.updated_at < timestamp_add(s.slot_started_at, interval 15 minute)
+       and u.held_until > s.slot_started_at
 
 ),
 
 aggregated as (
 
     select
-        hour_started_at,
-        least(3600.0, sum(overlap_seconds)) as covered_seconds,
+        slot_started_at,
+        least(900.0, sum(overlap_seconds)) as covered_seconds,
         count(*) as update_count,
         array_agg(cooler_key order by updated_at desc limit 1)[safe_offset(0)] as cooler_key,
         array_agg(battery_key order by updated_at desc limit 1)[safe_offset(0)] as battery_key,
@@ -211,18 +217,19 @@ aggregated as (
             sum(if(battery_state = 'charging', overlap_seconds, 0)), sum(overlap_seconds)
         ) as charging_ratio
     from allocation
-    group by hour_started_at
+    group by slot_started_at
 
 )
 
 select
-    format_timestamp('%Y%m%d%H', h.hour_started_at, 'Asia/Tokyo') as hour_key,
+    format_timestamp('%Y%m%d%H%M', s.slot_started_at, 'Asia/Tokyo') as slot_key,
     a.cooler_key,
     a.battery_key,
-    {{ frostlog_date_key('h.hour_started_at') }} as date_key,
-    date(h.hour_started_at, 'Asia/Tokyo') as partition_date,
-    extract(hour from h.hour_started_at at time zone 'Asia/Tokyo') as hour_of_day,
-    h.hour_started_at,
+    {{ frostlog_date_key('s.slot_started_at') }} as date_key,
+    date(s.slot_started_at, 'Asia/Tokyo') as partition_date,
+    extract(hour from s.slot_started_at at time zone 'Asia/Tokyo') as hour_of_day,
+    extract(minute from s.slot_started_at at time zone 'Asia/Tokyo') as minute_of_hour,
+    s.slot_started_at,
     a.state_of_charge_start_percent,
     a.state_of_charge_end_percent,
     a.state_of_charge_end_percent - a.state_of_charge_start_percent
@@ -240,5 +247,5 @@ select
     a.charging_ratio,
     coalesce(a.covered_seconds, 0.0) as covered_seconds,
     coalesce(a.update_count, 0) as update_count
-from hours h
-left join aggregated a using (hour_started_at)
+from slots s
+left join aggregated a using (slot_started_at)
