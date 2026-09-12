@@ -21,6 +21,11 @@ description:
     aggregated, filtered or corrected.
   usage: >
     Read by the semantic data product (frostlog-semantics) to build the dimensional model.
+    Delivery is at-least-once, as it is for telemetry generally: a chunk re-cut after a
+    partial upload can carry a message that is already here. A repeat is byte-identical,
+    so a reader may keep whichever copy it likes — frostlog-semantics keeps the one that
+    arrived last, and its tables are one row per message. Deduplicating is the reader's
+    job; this product only promises never to lose a message.
     A row's original — `frames`, and `plain` where decryption verified — is never
     rewritten. What a row means may be revised: an interpretation error is fixed
     downstream by reading those bytes again, and a message type that becomes decodable
@@ -252,11 +257,21 @@ schema:
         required: false
         description: Why the message could not be assembled or decrypted (e.g. "incomplete", "fragment 3/2 out of order"). Present only on failure.
     quality:
-      - name: message_identity_is_unique
+      - name: repeated_messages_agree
         type: sql
-        dimension: uniqueness
-        description: A message is identified by (boot_id, uptime_seconds); no duplicates.
-        query: SELECT COUNT(*) - COUNT(DISTINCT boot_id || '/' || CAST(uptime_seconds AS VARCHAR)) FROM {model}
+        dimension: consistency
+        description: >
+          A message is identified by (boot_id, uptime_seconds) and may arrive more than
+          once. Every copy must carry the same frames: that is what makes "keep the one
+          that arrived last" a choice between equals rather than a coin toss.
+        query: >
+          SELECT COUNT(*) FROM (
+            SELECT boot_id, uptime_seconds
+            FROM {model}
+            WHERE boot_id IS NOT NULL AND uptime_seconds IS NOT NULL
+            GROUP BY boot_id, uptime_seconds
+            HAVING COUNT(DISTINCT array_to_string(frames, ',')) > 1
+          )
         mustBe: 0
       - name: frames_present
         type: sql
@@ -381,10 +396,20 @@ schema:
         required: false
         description: Number of lines shipped in this upload run (upload_done).
     quality:
-      - name: event_identity_is_unique
+      - name: repeated_events_agree
         type: sql
-        dimension: uniqueness
-        query: SELECT COUNT(*) - COUNT(DISTINCT boot_id || '/' || CAST(uptime_seconds AS VARCHAR) || '/' || kind) FROM {model}
+        dimension: consistency
+        description: >
+          An event is identified by (boot_id, uptime_seconds, kind) and, like a cooler
+          message, may arrive more than once. Every copy must agree on when it happened.
+        query: >
+          SELECT COUNT(*) FROM (
+            SELECT boot_id, uptime_seconds, kind
+            FROM {model}
+            WHERE boot_id IS NOT NULL AND uptime_seconds IS NOT NULL
+            GROUP BY boot_id, uptime_seconds, kind
+            HAVING COUNT(DISTINCT CAST(ts AS VARCHAR)) > 1
+          )
         mustBe: 0
 
 slaProperties:

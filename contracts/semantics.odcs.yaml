@@ -56,6 +56,8 @@ schema:
       environment at that moment. Irregular snapshot of the cooler operation (the cooler
       sends on every change, at least every 10 minutes, and after connecting). State
       measures are semi-additive: aggregate them with held_seconds as the weight.
+      The collection product delivers at-least-once; this is where that becomes exactly
+      once — a message that arrived twice is one row, the copy that arrived last.
     dataGranularityDescription: One state update message (cmd 4402) from the cooler.
     properties:
       - name: state_update_key
