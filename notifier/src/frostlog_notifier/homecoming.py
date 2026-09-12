@@ -10,6 +10,7 @@ since the previous summary's coverage end.
 """
 
 import logging
+import math
 from datetime import datetime, timedelta
 
 from frostlog_notifier import charts, formatting, queries
@@ -163,7 +164,10 @@ def _step_seconds(span_seconds: float) -> int:
     for step in CHART_STEPS_SECONDS:
         if span_seconds / step <= charts.MAX_POINTS - 2:
             return step
-    return CHART_STEPS_SECONDS[-1]
+    # Longer than the coarsest of them: whole hours, as many as it takes. Nothing
+    # asks for this today — the chart looks back a day — but a step that does not
+    # fit draws no chart, and that should not rest on how far another function looks.
+    return math.ceil(span_seconds / (charts.MAX_POINTS - 2) / 3600) * 3600
 
 
 def _label(moment: datetime, step: int) -> str:

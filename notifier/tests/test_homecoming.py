@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from conftest import FakeWarehouse, at, hourly, pulldown_row, state_update, upload_run
 
-from frostlog_notifier import homecoming
+from frostlog_notifier import charts, homecoming
 from frostlog_notifier.events import UploadRun
 from frostlog_notifier.notification import HOMECOMING
 from frostlog_notifier.queries import HourlySnapshot, StateUpdate
@@ -212,3 +212,22 @@ def test_the_outlook_never_leaves_the_scale() -> None:
     ]
     latest = StateUpdate.model_validate(state_update(RETURN, state_of_charge_percent=2))
     assert homecoming.projected_state_of_charge(latest, hours, RETURN + timedelta(hours=10)) == 0.0
+
+
+@pytest.mark.parametrize("span_hours", [0.25, 0.5, 1, 2, 3, 5, 9, 12, 20, 24, 36, 48, 72, 168])
+def test_the_step_always_leaves_a_chart_slack_will_draw(span_hours: float) -> None:
+    """The step is chosen so the period fits; over the limit there is no chart at all.
+
+    Counting the steps is where this went wrong once: a period rarely starts on a
+    boundary, so both ends can be partial and the two of them are their own steps.
+    """
+    step = homecoming._step_seconds(span_hours * 3600)
+    assert step > 0
+    most = int(span_hours * 3600 // step) + 2
+    assert most <= charts.MAX_POINTS, f"{span_hours} h at {step} s is up to {most} points"
+
+
+def test_a_shorter_trip_is_charted_more_finely() -> None:
+    """Two hours out used to be two points; the step follows the period now."""
+    assert homecoming._step_seconds(2 * 3600) < homecoming._step_seconds(9 * 3600)
+    assert homecoming._step_seconds(2 * 3600) <= 600

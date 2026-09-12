@@ -11,9 +11,11 @@ from conftest import (
     state_update,
     upload_run,
 )
+from test_charts import check as check_chart
 from test_homecoming import day_of_hours, steps_of
 from test_weekly import week_of_hours
 
+from frostlog_notifier import charts
 from frostlog_notifier.clock import iso_week_bounds
 from frostlog_notifier.errors import Transient
 from frostlog_notifier.events import QualityReport, SemanticUpdated
@@ -87,6 +89,25 @@ def arrived() -> FakeWarehouse:
             "ambient_bands": ambient_band_rows(),
         }
     )
+
+
+def test_every_chart_a_notification_carries_is_one_slack_would_accept(
+    arrived: FakeWarehouse, slack: FakeSlack, settings: Settings
+) -> None:
+    """The three notifications, each drawn from the fakes, held against the reference.
+
+    A block Slack refuses takes its whole message with it, and nothing else here
+    talks to Slack, so this is where that is caught.
+    """
+    posted = build_notifier(arrived, slack, settings).handle(ARRIVED)
+    assert {notification.kind for notification in posted} == {"homecoming", "pulldown", "weekly"}
+    for notification in posted:
+        assert notification.text, "a message must stand on its own without its blocks"
+        charted = [b for b in notification.blocks if b["type"] == "data_visualization"]
+        assert charted, notification.kind
+        assert len(charted) <= charts.MAX_CHARTS, notification.kind
+        for block in charted:
+            check_chart(block)
 
 
 def test_an_arrival_posts_the_summary_the_pulldown_and_the_closed_week(
