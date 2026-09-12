@@ -77,3 +77,13 @@ def _chart(
 def _complete(series: Series, wanted: int) -> bool:
     """Only a series with a value for every category can be drawn at all."""
     return len(series.values) == wanted and all(value is not None for value in series.values)
+
+
+def at_most(*candidates: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The charts a message may carry: the ones that could be drawn, up to MAX_CHARTS.
+
+    Slack refuses a message with a third one, and counting them at each call site
+    left the limit to a convention that only a test enforced. A caller hands over
+    everything it would like to show and gets back what it is allowed to send.
+    """
+    return [chart for chart in candidates if chart is not None][:MAX_CHARTS]

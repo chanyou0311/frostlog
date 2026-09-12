@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime, timedelta
 
 from conftest import FakeWarehouse, ambient_band_rows, empty_slot, pulldown_row, quarters
 
-from frostlog_notifier import weekly
+from frostlog_notifier import queries, weekly
 from frostlog_notifier.clock import iso_week_bounds, jst_dates
 from frostlog_notifier.notification import WEEKLY
 from frostlog_notifier.queries import Band, Pulldown, Snapshot
@@ -29,7 +29,6 @@ def week_of_slots() -> list[dict]:
                     charge,
                     delta=8,
                     external_input_ratio=1.0,
-                    charging_ratio=1.0,
                     charged_watt_hours=60.0,
                     discharged_watt_hours=0.0,
                     ambient_temperature_celsius=22.0,
@@ -153,7 +152,8 @@ def test_the_summary_is_built_with_its_text_and_chart() -> None:
             "finished_pulldowns_between": [pulldown_row(START + timedelta(hours=1))],
         }
     )
-    notification = weekly.build(warehouse, 2026, 37)
+    bands = queries.ambient_bands(warehouse)
+    notification = weekly.build(warehouse, 2026, 37, bands)
     assert notification.kind == WEEKLY
     assert notification.key == "2026-W37"
     assert "週の要約 2026-W37" in notification.text

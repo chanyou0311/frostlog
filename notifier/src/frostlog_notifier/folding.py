@@ -81,8 +81,6 @@ def _folded(started: datetime, slots: list[Snapshot]) -> Snapshot:
         discharged_watt_hours=sum(slot.discharged_watt_hours or 0.0 for slot in slots),
         charged_watt_hours=sum(slot.charged_watt_hours or 0.0 for slot in slots),
         interior_temperature_celsius=weighted(slots, "interior_temperature_celsius"),
-        setpoint_celsius=weighted(slots, "setpoint_celsius"),
         ambient_temperature_celsius=weighted(slots, "ambient_temperature_celsius"),
         external_input_ratio=weighted(slots, "external_input_ratio"),
-        charging_ratio=weighted(slots, "charging_ratio"),
     )

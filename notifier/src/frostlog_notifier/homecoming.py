@@ -155,7 +155,7 @@ def _build(
     slots = queries.snapshots(
         warehouse, end - timedelta(days=CHART_DAYS), end + timedelta(seconds=SLOT_SECONDS)
     )
-    recorded = _recorded_run(slots)
+    recorded = _latest_stretch(slots)
 
     morning = next_morning(end)
     projected, refused = projected_state_of_charge(latest, recorded, morning)
@@ -173,13 +173,17 @@ def _build(
     )
 
 
-def _recorded_run(slots: list[Snapshot]) -> list[Snapshot]:
+def _latest_stretch(slots: list[Snapshot]) -> list[Snapshot]:
     """The slots up to now the cooler was heard from, back to the last silence.
 
-    Slack draws a series without holes or not at all, and the cooler is off — and so is
-    the Pi it powers — for hours at a time. Charting the stretch that was recorded
-    avoids inventing the readings a hole would need. The message says which slots it
-    covers, and how long the silence before them was.
+    Two things want it, for reasons of their own. A chart because Slack draws a
+    series without holes or not at all, and the cooler — with the Pi it powers — is
+    off for hours at a time, so a hole would have to be invented. The outlook because
+    a drop measured across a silence is not a drop the battery made: what the cooler
+    did while nothing was recorded is not in these numbers either way.
+
+    Changing it for one of them changes it for the other, which is why it is named
+    after what it is rather than after what either wanted it for.
     """
     recorded: list[Snapshot] = []
     for slot in reversed(slots):
@@ -288,7 +292,7 @@ def _blocks(
                 ),
             ],
         )
-        blocks += [block for block in (charge, temperature) if block is not None]
+        blocks += charts.at_most(charge, temperature)
     blocks.append(
         {
             "type": "section",

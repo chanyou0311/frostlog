@@ -136,9 +136,11 @@ def summarize(
 
 def _band_drops(hours: list[Snapshot], bands: list[Band]) -> list[BandDrop]:
     """State-of-charge change per hour per ambient temperature band, unplugged hours only."""
-    deltas: dict[int, list[float]] = defaultdict(list)
-    covered: dict[int, float] = defaultdict(float)
-    summed: dict[int, float] = defaultdict(float)
+    # One list of (change, hours) a band, because they are one grouping and four
+    # dictionaries of the same keys have to be kept in step by hand. A key is only
+    # here at all because an hour with seconds in it fell in the band, so the hours
+    # are always above zero and there is nothing to guard against.
+    measured: dict[int, list[tuple[float, float]]] = defaultdict(list)
     known: dict[int, Band] = {}
     for hour in hours:
         if (
@@ -152,19 +154,18 @@ def _band_drops(hours: list[Snapshot], bands: list[Band]) -> list[BandDrop]:
         if band is None:
             continue
         known[band.band_key] = band
-        span = hour.covered_seconds / 3600
-        covered[band.band_key] += span
-        summed[band.band_key] += hour.state_of_charge_delta_percent
-        deltas[band.band_key].append(hour.state_of_charge_delta_percent / span)
+        measured[band.band_key].append(
+            (hour.state_of_charge_delta_percent, hour.covered_seconds / 3600)
+        )
     return [
         BandDrop(
             label=band.label,
-            percent_per_hour=summed[key] / covered[key],
-            hours=covered[key],
-            samples=deltas[key],
+            percent_per_hour=sum(change for change, _ in measured[key])
+            / sum(span for _, span in measured[key]),
+            hours=sum(span for _, span in measured[key]),
+            samples=[change / span for change, span in measured[key]],
         )
         for key, band in sorted(known.items(), key=lambda item: item[1].sort_order)
-        if covered[key] > 0
     ]
 
 
@@ -214,10 +215,15 @@ def due_week(moment: datetime) -> tuple[int, int]:
     return previous_iso_week(moment)
 
 
-def build(warehouse: Warehouse, iso_year: int, iso_week: int) -> Notification:
+def build(warehouse: Warehouse, iso_year: int, iso_week: int, bands: list[Band]) -> Notification:
+    """One week's summary. The bands come in because a backlog builds several weeks.
+
+    They are eight rows of a dimension that cannot change between two of those weeks,
+    so reading them here would be the same round trip up to WEEKLY_BACKLOG_WEEKS
+    times in one run.
+    """
     start, end = iso_week_bounds(iso_year, iso_week)
     hours = by_hour(queries.snapshots(warehouse, start, end))
-    bands = queries.ambient_bands(warehouse)
     pulldowns = queries.finished_pulldowns_between(warehouse, start, end)
     days = jst_dates(start, end)
     summary = summarize(hours, bands, pulldowns, days)
@@ -255,11 +261,7 @@ def _blocks(summary: Summary, key: str, days: list[date]) -> list[dict]:
             charts.Series("充電", [day.charged_watt_hours for day in summary.daily]),
         ],
     )
-    if energy is not None:
-        blocks.append(energy)
-    spread = _band_chart(summary)
-    if spread is not None:
-        blocks.append(spread)
+    blocks += charts.at_most(energy, _band_chart(summary))
     blocks.append(
         {
             "type": "context",

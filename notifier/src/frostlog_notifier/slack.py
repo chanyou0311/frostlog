@@ -5,6 +5,7 @@ without it: a dry run logs the message it would have sent and is recorded as
 posted all the same, which keeps the idempotency rules exercised.
 """
 
+import functools
 import json
 import logging
 from collections.abc import Callable
@@ -46,18 +47,17 @@ class Slack:
             self._token_source = lambda: token
         else:
             self._token_source = token
-        self._token: str | None = None
-        self._looked_up = False
         self._channel = channel
         self._client = client
 
-    @property
+    @functools.cached_property
     def token(self) -> str | None:
-        """The bot token, looked up once and kept for the life of the instance."""
-        if not self._looked_up:
-            self._token = self._token_source()
-            self._looked_up = True
-        return self._token
+        """The bot token, looked up once and kept for the life of the instance.
+
+        Cached even when it is None: a secret that is not there is an answer, and
+        asking Secret Manager again on every notification would not change it.
+        """
+        return self._token_source()
 
     @property
     def enabled(self) -> bool:

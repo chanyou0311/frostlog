@@ -41,10 +41,8 @@ class Snapshot(_Row):
     discharged_watt_hours: float | None = None
     charged_watt_hours: float | None = None
     interior_temperature_celsius: float | None = None
-    setpoint_celsius: float | None = None
     ambient_temperature_celsius: float | None = None
     external_input_ratio: float | None = None
-    charging_ratio: float | None = None
 
 
 class Pulldown(_Row):
@@ -178,8 +176,7 @@ def snapshots(warehouse: Warehouse, start: datetime, end: datetime) -> list[Snap
         slot_started_at, covered_seconds,
         state_of_charge_start_percent, state_of_charge_end_percent,
         state_of_charge_delta_percent, discharged_watt_hours, charged_watt_hours,
-        interior_temperature_celsius, setpoint_celsius, ambient_temperature_celsius,
-        external_input_ratio, charging_ratio
+        interior_temperature_celsius, ambient_temperature_celsius, external_input_ratio
       FROM {warehouse.table("fact_cooler_snapshot")}
       WHERE slot_started_at >= @start AND slot_started_at < @end
       ORDER BY slot_started_at

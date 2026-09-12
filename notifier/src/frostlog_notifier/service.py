@@ -88,14 +88,17 @@ class Notifier:
         yet gets its own message.
         """
         pending: list[Notification] = []
+        bands = queries.ambient_bands(self._warehouse)
         year, week = iso_year, iso_week
         for _ in range(WEEKLY_BACKLOG_WEEKS):
-            pending.extend(self._weekly(year, week))
+            pending.extend(self._weekly(year, week, bands))
             year, week = clock.previous_iso_week(clock.iso_week_bounds(year, week)[0])
         pending.reverse()
         return pending
 
-    def _weekly(self, iso_year: int, iso_week: int) -> list[Notification]:
+    def _weekly(
+        self, iso_year: int, iso_week: int, bands: list[queries.Band]
+    ) -> list[Notification]:
         key = clock.iso_week_key(iso_year, iso_week)
         if self._posted.is_posted(WEEKLY, key):
             return []
@@ -104,7 +107,7 @@ class Notifier:
             # A week the cooler recorded nothing in has nothing to say, not zeros to report.
             log.info("no state update in %s; no weekly summary", key)
             return []
-        return [weekly.build(self._warehouse, iso_year, iso_week)]
+        return [weekly.build(self._warehouse, iso_year, iso_week, bands)]
 
     def _post_all(self, notifications: list[Notification]) -> list[Notification]:
         return [

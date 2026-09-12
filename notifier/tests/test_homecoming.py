@@ -32,7 +32,6 @@ def day_of_slots(end: datetime, first_charge: int = 86, plugged: range = range(0
                 charge,
                 delta=6,
                 external_input_ratio=1.0,
-                charging_ratio=1.0,
                 charged_watt_hours=54.0,
                 discharged_watt_hours=0.0,
             )

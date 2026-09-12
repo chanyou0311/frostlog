@@ -162,10 +162,8 @@ def slot(
         "discharged_watt_hours": 7.0,
         "charged_watt_hours": 0.0,
         "interior_temperature_celsius": -18.4,
-        "setpoint_celsius": -20.0,
         "ambient_temperature_celsius": 26.0,
         "external_input_ratio": 0.0,
-        "charging_ratio": 0.0,
     }
     return row | overrides
 
@@ -180,10 +178,8 @@ def empty_slot(slot_started_at: datetime) -> dict[str, Any]:
         "discharged_watt_hours": None,
         "charged_watt_hours": None,
         "interior_temperature_celsius": None,
-        "setpoint_celsius": None,
         "ambient_temperature_celsius": None,
         "external_input_ratio": None,
-        "charging_ratio": None,
     }
 
 
