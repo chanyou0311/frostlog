@@ -1000,10 +1000,15 @@ slaProperties:
     value: 24
     unit: h
     element: fact_cooler_state_update.updated_at
-    description: "Tables reflect a raw update within 24 hours of its upload. The transform actually runs on every arrival (target within a minute)."
+    description: "Tables reflect a raw update within 24 hours of its upload. The transform actually runs every 30 minutes, so the usual wait is that rather than a day."
   - property: frequency
-    value: on-arrival
-    description: The transform runs when a raw chunk lands; the contract test runs daily.
+    value: every-30-minutes
+    description: >
+      A chunk is loaded into raw as it lands, which is every five minutes while the
+      cooler is recording; the tables this contract describes are rebuilt from raw
+      every 30 minutes. Loading and transforming are separated because a load job
+      costs nothing to run often and a transform does not. The contract test runs
+      daily.
   - property: retention
     value: unlimited
     description: Tables are rebuildable from raw; nothing is deleted.
