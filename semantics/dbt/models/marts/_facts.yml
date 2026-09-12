@@ -1,0 +1,294 @@
+version: 2
+
+models:
+  - name: fact_cooler_state_update
+    description: >
+      One row per state report from the cooler, with the air around it at that moment.
+      State measures are semi-additive: weight them with held_seconds.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: state_update_key
+        data_type: string
+        description: Surrogate key (hash of boot_id and uptime_seconds).
+        constraints: [{type: not_null}]
+        data_tests: [unique]
+      - name: cooler_key
+        data_type: int64
+        description: dim_cooler version in effect at updated_at.
+        constraints: [{type: not_null}]
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_cooler'), field: cooler_key}
+      - name: battery_key
+        data_type: int64
+        description: dim_battery row; the absent row when no battery is installed.
+        constraints: [{type: not_null}]
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_battery'), field: battery_key}
+      - name: date_key
+        data_type: int64
+        description: dim_date key (JST date of updated_at, yyyymmdd).
+        constraints: [{type: not_null}]
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_date'), field: date_key}
+      - name: partition_date
+        data_type: date
+        description: >
+          The same JST date as a DATE. BigQuery partitions on a column rather than
+          on an expression, so this is the partitioning column.
+        constraints: [{type: not_null}]
+      - name: updated_at
+        data_type: timestamp
+        description: Time of the update in UTC, corrected when the clock was not yet synchronized.
+        constraints: [{type: not_null}]
+      - name: updated_at_raw
+        data_type: timestamp
+        description: The timestamp as recorded by the Pi, before correction.
+        constraints: [{type: not_null}]
+      - name: timestamp_corrected
+        data_type: bool
+        constraints: [{type: not_null}]
+      - name: boot_id
+        data_type: string
+        description: Pi boot the record came from (degenerate dimension).
+        constraints: [{type: not_null}]
+      - name: uptime_seconds
+        data_type: float64
+        constraints: [{type: not_null}]
+      - name: source_key
+        data_type: string
+        description: Raw object the row came from.
+        constraints: [{type: not_null}]
+      - name: external_input
+        data_type: bool
+        description: True when power was drawn from the external DC input.
+        constraints: [{type: not_null}]
+      - name: battery_state
+        data_type: string
+        constraints: [{type: not_null}]
+        data_tests:
+          - accepted_values:
+              arguments: {values: [idle, charging, discharging, full, absent]}
+      - name: display_unit
+        data_type: string
+        constraints: [{type: not_null}]
+      - name: protection_level
+        data_type: string
+        constraints: [{type: not_null}]
+      - name: brightness
+        data_type: string
+        constraints: [{type: not_null}]
+      - name: setpoint_celsius
+        data_type: int64
+        constraints: [{type: not_null}]
+      - name: interior_temperature_celsius
+        data_type: int64
+        constraints: [{type: not_null}]
+      - name: state_of_charge_percent
+        data_type: int64
+        constraints: [{type: not_null}]
+      - name: input_watts
+        data_type: int64
+        constraints: [{type: not_null}]
+      - name: usb_a_output_watts
+        data_type: int64
+        constraints: [{type: not_null}]
+      - name: usb_c_output_watts
+        data_type: int64
+        constraints: [{type: not_null}]
+      - name: charge_watts
+        data_type: int64
+        constraints: [{type: not_null}]
+      - name: discharge_watts
+        data_type: int64
+        constraints: [{type: not_null}]
+      - name: ambient_temperature_celsius
+        data_type: float64
+        description: Cabin air temperature, °C. Null when the sensor read failed.
+      - name: ambient_humidity_percent
+        data_type: float64
+      - name: held_seconds
+        data_type: float64
+        description: Seconds this state is taken to hold, capped at the 600 s heartbeat.
+        constraints: [{type: not_null}]
+      - name: discharged_watt_hours
+        data_type: float64
+        description: discharge_watts × held_seconds / 3600 — the integration rule, written once.
+        constraints: [{type: not_null}]
+      - name: charged_watt_hours
+        data_type: float64
+        description: charge_watts × held_seconds / 3600.
+        constraints: [{type: not_null}]
+      - name: input_watt_hours
+        data_type: float64
+        description: input_watts × held_seconds / 3600.
+        constraints: [{type: not_null}]
+
+  - name: fact_cooler_snapshot
+    description: >
+      One row per quarter hour (JST) between the first and the last observed slot,
+      including slots with nothing in them. Energy columns are additive; condition
+      columns are averages weighted by the covered seconds. Four of them fold into an
+      hour exactly, which is why the grain is this side of one.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: slot_key
+        data_type: string
+        description: date_key, hour and minute of the slot's start (yyyymmddhhmm).
+        constraints: [{type: not_null}]
+        data_tests: [unique]
+      - name: cooler_key
+        data_type: int64
+        description: dim_cooler at the slot's last update; null when the slot has no data.
+      - name: battery_key
+        data_type: int64
+      - name: date_key
+        data_type: int64
+        constraints: [{type: not_null}]
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_date'), field: date_key}
+      - name: partition_date
+        data_type: date
+        description: The JST date as a DATE; the partitioning column.
+        constraints: [{type: not_null}]
+      - name: hour_of_day
+        data_type: int64
+        description: 0-23, JST.
+        constraints: [{type: not_null}]
+      - name: minute_of_hour
+        data_type: int64
+        description: 0, 15, 30 or 45.
+        constraints: [{type: not_null}]
+      - name: slot_started_at
+        data_type: timestamp
+        description: Start of the slot in UTC.
+        constraints: [{type: not_null}]
+      - name: state_of_charge_start_percent
+        data_type: int64
+      - name: state_of_charge_end_percent
+        data_type: int64
+      - name: state_of_charge_delta_percent
+        data_type: int64
+        description: End minus start; four of them make the hourly rate behind an "hours left" estimate.
+      - name: discharged_watt_hours
+        data_type: float64
+      - name: charged_watt_hours
+        data_type: float64
+      - name: input_watt_hours
+        data_type: float64
+      - name: usb_a_output_watt_hours
+        data_type: float64
+      - name: usb_c_output_watt_hours
+        data_type: float64
+      - name: ambient_temperature_celsius
+        data_type: float64
+      - name: ambient_humidity_percent
+        data_type: float64
+      - name: interior_temperature_celsius
+        data_type: float64
+      - name: setpoint_celsius
+        data_type: float64
+      - name: external_input_ratio
+        data_type: float64
+      - name: charging_ratio
+        data_type: float64
+      - name: covered_seconds
+        data_type: float64
+        description: Seconds of the slot covered by held state (0-900).
+        constraints: [{type: not_null}]
+      - name: update_count
+        data_type: int64
+        constraints: [{type: not_null}]
+
+  - name: fact_cooler_pulldown
+    description: >
+      One row per pull-down episode: the interior being cooled from at least 5 °C
+      above the setpoint down to within 1 °C of it. An episode still running has
+      null milestones.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: pulldown_key
+        data_type: string
+        description: Surrogate key (the key of the state update that started the episode).
+        constraints: [{type: not_null}]
+        data_tests: [unique]
+      - name: cooler_key
+        data_type: int64
+        constraints: [{type: not_null}]
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_cooler'), field: cooler_key}
+      - name: battery_key
+        data_type: int64
+        constraints: [{type: not_null}]
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_battery'), field: battery_key}
+      - name: date_key
+        data_type: int64
+        description: dim_date key of started_at (JST).
+        constraints: [{type: not_null}]
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_date'), field: date_key}
+      - name: partition_date
+        data_type: date
+        description: The JST date of started_at as a DATE; the partitioning column.
+        constraints: [{type: not_null}]
+      - name: started_at
+        data_type: timestamp
+        constraints: [{type: not_null}]
+      - name: reached_at
+        data_type: timestamp
+        description: First update within 1 °C of the setpoint. Null until reached.
+      - name: ended_at
+        data_type: timestamp
+      - name: trigger
+        data_type: string
+        constraints: [{type: not_null}]
+        data_tests:
+          - accepted_values:
+              arguments: {values: [start_up, setpoint_change, rise]}
+      - name: outcome
+        data_type: string
+        data_tests:
+          - accepted_values:
+              arguments: {values: [reached, interrupted]}
+      - name: interior_temperature_start_celsius
+        data_type: int64
+        constraints: [{type: not_null}]
+      - name: setpoint_celsius
+        data_type: int64
+        constraints: [{type: not_null}]
+      - name: state_of_charge_start_percent
+        data_type: int64
+        constraints: [{type: not_null}]
+      - name: state_of_charge_delta_percent
+        data_type: int64
+      - name: duration_seconds
+        data_type: float64
+        description: reached_at minus started_at. Null unless reached.
+      - name: elapsed_seconds
+        data_type: float64
+      - name: discharged_watt_hours
+        data_type: float64
+      - name: charged_watt_hours
+        data_type: float64
+      - name: ambient_temperature_celsius
+        data_type: float64
+      - name: external_input_ratio
+        data_type: float64
+      - name: covered_seconds
+        data_type: float64
+      - name: update_count
+        data_type: int64
+        constraints: [{type: not_null}]

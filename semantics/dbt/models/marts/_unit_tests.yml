@@ -1,0 +1,292 @@
+version: 2
+
+unit_tests:
+  - name: a_new_firmware_opens_a_new_cooler_version
+    model: dim_cooler
+    description: >
+      A handshake that reports a firmware the cooler did not have before closes the
+      row that was open and opens a new one; repeating the same firmware changes
+      nothing. The unknown row reaches back to the first sign of the cooler, so a
+      state update recorded before the first handshake still finds its version.
+    given:
+      - input: ref('stg_cooler_negotiation')
+        rows:
+          - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.0.0', negotiated_at: '2026-09-01 00:00:00+00'}
+          - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.1.0', negotiated_at: '2026-09-05 00:00:00+00'}
+          - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.1.0', negotiated_at: '2026-09-06 00:00:00+00'}
+      - input: ref('stg_cooler_state_update')
+        rows:
+          - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-08-31 00:00:00+00'}
+    expect:
+      rows:
+        - {serial_number: 'COOLER-1', model: 'everfrost', firmware_version: null, valid_from: '2026-08-31 00:00:00+00', valid_to: '2026-09-01 00:00:00+00', is_current: false}
+        - {serial_number: 'COOLER-1', model: 'everfrost', firmware_version: '1.0.0', valid_from: '2026-09-01 00:00:00+00', valid_to: '2026-09-05 00:00:00+00', is_current: false}
+        - {serial_number: 'COOLER-1', model: 'everfrost', firmware_version: '1.1.0', valid_from: '2026-09-05 00:00:00+00', valid_to: null, is_current: true}
+
+  # These pairs describe two arrivals separately: dbt unit tests do not keep a
+  # fact from one build to the next. The expected keys are hashes of literal
+  # identities, so checking only the windows cannot hide a key that changed when
+  # the earlier chunk arrived. SQL expectations let BigQuery compute its own hash.
+  - name: a_later_boot_arrives_before_the_earliest_handshake
+    model: dim_cooler
+    description: >
+      Boot 2 lands first. Its firmware key must already be the one that boot 1
+      will use when its earlier handshake arrives, even though the opening time
+      is not yet known. The unknown row is kept with an empty window because the
+      first sign of this cooler is already a handshake.
+    given:
+      - input: ref('stg_cooler_negotiation')
+        rows:
+          - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.0.0', negotiated_at: '2026-09-02 00:00:00+00'}
+      - input: ref('stg_cooler_state_update')
+        rows:
+          - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-09-02 00:01:00+00'}
+    expect:
+      format: sql
+      rows: |
+        select
+          abs(farm_fingerprint('COOLER-1|unnegotiated|1')) as cooler_key,
+          'COOLER-1' as serial_number, 'everfrost' as model,
+          'F4:9D:8A:C3:4F:84' as bluetooth_address,
+          cast(null as string) as chip, cast(null as string) as firmware_version,
+          timestamp '2026-09-02 00:00:00+00' as valid_from,
+          timestamp '2026-09-02 00:00:00+00' as valid_to, false as is_current
+        union all
+        select
+          abs(farm_fingerprint('COOLER-1|F4:9D:8A:C3:4F:84|A1|1.0.0|1')),
+          'COOLER-1', 'everfrost', 'F4:9D:8A:C3:4F:84', 'A1', '1.0.0',
+          timestamp '2026-09-02 00:00:00+00', cast(null as timestamp), true
+
+  - name: an_earlier_same_firmware_handshake_keeps_the_cooler_key
+    model: dim_cooler
+    description: >
+      Boot 1's handshake arrives after boot 2's with the same firmware and an
+      earlier time. The episode now opens a day earlier, but both keys are the
+      ones from the preceding test; facts from boot 2 can still resolve them.
+    given:
+      - input: ref('stg_cooler_negotiation')
+        rows:
+          - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.0.0', negotiated_at: '2026-09-02 00:00:00+00'}
+          - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.0.0', negotiated_at: '2026-09-01 00:00:00+00'}
+      - input: ref('stg_cooler_state_update')
+        rows:
+          - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-09-02 00:01:00+00'}
+          - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-09-01 00:01:00+00'}
+    expect:
+      format: sql
+      rows: |
+        select
+          abs(farm_fingerprint('COOLER-1|unnegotiated|1')) as cooler_key,
+          'COOLER-1' as serial_number, 'everfrost' as model,
+          'F4:9D:8A:C3:4F:84' as bluetooth_address,
+          cast(null as string) as chip, cast(null as string) as firmware_version,
+          timestamp '2026-09-01 00:00:00+00' as valid_from,
+          timestamp '2026-09-01 00:00:00+00' as valid_to, false as is_current
+        union all
+        select
+          abs(farm_fingerprint('COOLER-1|F4:9D:8A:C3:4F:84|A1|1.0.0|1')),
+          'COOLER-1', 'everfrost', 'F4:9D:8A:C3:4F:84', 'A1', '1.0.0',
+          timestamp '2026-09-01 00:00:00+00', cast(null as timestamp), true
+
+  - name: a_state_only_cooler_has_a_persistent_unknown_key
+    model: dim_cooler
+    description: >
+      A state report can arrive before any handshake. The unknown key belongs to
+      the serial alone, so neither an earlier first sign nor a different address
+      in a later chunk can take it away from this boot's facts.
+    given:
+      - input: ref('stg_cooler_negotiation')
+        rows: []
+      - input: ref('stg_cooler_state_update')
+        rows:
+          - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-09-02 00:01:00+00'}
+    expect:
+      format: sql
+      rows: |
+        select
+          abs(farm_fingerprint('COOLER-1|unnegotiated|1')) as cooler_key,
+          'COOLER-1' as serial_number, 'everfrost' as model,
+          'F4:9D:8A:C3:4F:84' as bluetooth_address,
+          cast(null as string) as chip, cast(null as string) as firmware_version,
+          timestamp '2026-09-02 00:01:00+00' as valid_from,
+          cast(null as timestamp) as valid_to, true as is_current
+
+  - name: the_first_handshake_closes_but_keeps_the_unknown_key
+    model: dim_cooler
+    description: >
+      The first handshake turns up in a later batch, dated before the state
+      report. The unknown window is now empty, but the preceding test's key
+      remains, even though a new state report has changed the last address seen.
+      The old fact can name unknown firmware until its boot is rebuilt without
+      becoming a dangling reference in the meantime.
+    given:
+      - input: ref('stg_cooler_negotiation')
+        rows:
+          - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.0.0', negotiated_at: '2026-09-01 00:00:00+00'}
+      - input: ref('stg_cooler_state_update')
+        rows:
+          - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-09-02 00:01:00+00'}
+          - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:85', model: 'everfrost', updated_at: '2026-09-03 00:01:00+00'}
+    expect:
+      format: sql
+      rows: |
+        select
+          abs(farm_fingerprint('COOLER-1|unnegotiated|1')) as cooler_key,
+          'COOLER-1' as serial_number, 'everfrost' as model,
+          'F4:9D:8A:C3:4F:85' as bluetooth_address,
+          cast(null as string) as chip, cast(null as string) as firmware_version,
+          timestamp '2026-09-01 00:00:00+00' as valid_from,
+          timestamp '2026-09-01 00:00:00+00' as valid_to, false as is_current
+        union all
+        select
+          abs(farm_fingerprint('COOLER-1|F4:9D:8A:C3:4F:84|A1|1.0.0|1')),
+          'COOLER-1', 'everfrost', 'F4:9D:8A:C3:4F:84', 'A1', '1.0.0',
+          timestamp '2026-09-01 00:00:00+00', cast(null as timestamp), true
+
+  - name: slots_are_dense_and_energy_is_integrated_over_the_covered_seconds
+    model: fact_cooler_snapshot
+    overrides:
+      macros:
+        is_incremental: false
+    description: >
+      Watt-hours are the sum of watts times the seconds inside the slot, conditions
+      are averages weighted the same way, a report that straddles a boundary is cut
+      between the two slots, and a slot in which nothing was recorded still gets a
+      row, with no measures and no covered seconds.
+    given:
+      - input: ref('fact_cooler_state_update')
+        rows:
+          - {state_update_key: 'a', cooler_key: 11, battery_key: 22, updated_at: '2026-09-05 15:00:00+00', held_seconds: 600.0, state_of_charge_percent: 80, discharge_watts: 60, charge_watts: 0, input_watts: 0, usb_a_output_watts: 0, usb_c_output_watts: 0, ambient_temperature_celsius: 20.0, ambient_humidity_percent: 50.0, interior_temperature_celsius: -10, setpoint_celsius: -20, external_input: false, battery_state: 'discharging'}
+          - {state_update_key: 'b', cooler_key: 11, battery_key: 22, updated_at: '2026-09-05 15:10:00+00', held_seconds: 600.0, state_of_charge_percent: 79, discharge_watts: 0, charge_watts: 0, input_watts: 0, usb_a_output_watts: 0, usb_c_output_watts: 0, ambient_temperature_celsius: 26.0, ambient_humidity_percent: 50.0, interior_temperature_celsius: -12, setpoint_celsius: -20, external_input: false, battery_state: 'discharging'}
+          - {state_update_key: 'c', cooler_key: 11, battery_key: 22, updated_at: '2026-09-05 15:45:00+00', held_seconds: 600.0, state_of_charge_percent: 78, discharge_watts: 30, charge_watts: 0, input_watts: 0, usb_a_output_watts: 0, usb_c_output_watts: 0, ambient_temperature_celsius: 22.0, ambient_humidity_percent: 50.0, interior_temperature_celsius: -14, setpoint_celsius: -20, external_input: false, battery_state: 'discharging'}
+    expect:
+      rows:
+        - {slot_key: '202609060000', date_key: 20260906, hour_of_day: 0, minute_of_hour: 0, cooler_key: 11, covered_seconds: 900.0, update_count: 2, discharged_watt_hours: 10.0, ambient_temperature_celsius: 22.0, state_of_charge_start_percent: 80, state_of_charge_end_percent: 79, state_of_charge_delta_percent: -1}
+        - {slot_key: '202609060015', date_key: 20260906, hour_of_day: 0, minute_of_hour: 15, cooler_key: 11, covered_seconds: 300.0, update_count: 1, discharged_watt_hours: 0.0, ambient_temperature_celsius: 26.0, state_of_charge_start_percent: 79, state_of_charge_end_percent: 79, state_of_charge_delta_percent: 0}
+        - {slot_key: '202609060030', date_key: 20260906, hour_of_day: 0, minute_of_hour: 30, cooler_key: null, covered_seconds: 0.0, update_count: 0, discharged_watt_hours: null, ambient_temperature_celsius: null, state_of_charge_start_percent: null, state_of_charge_end_percent: null, state_of_charge_delta_percent: null}
+        - {slot_key: '202609060045', date_key: 20260906, hour_of_day: 0, minute_of_hour: 45, cooler_key: 11, covered_seconds: 600.0, update_count: 1, discharged_watt_hours: 5.0, ambient_temperature_celsius: 22.0, state_of_charge_start_percent: 78, state_of_charge_end_percent: 78, state_of_charge_delta_percent: 0}
+
+  - name: a_pulldown_from_start_up_ends_when_the_setpoint_is_reached
+    model: fact_cooler_pulldown
+    description: >
+      The first report of a boot that is 5 °C or more above the setpoint starts an
+      episode, which ends at the first report within 1 °C of the setpoint. The
+      reports after that belong to no episode.
+    given:
+      - input: ref('fact_cooler_state_update')
+        rows:
+          - {state_update_key: 's1', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:00:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: 25, state_of_charge_percent: 100, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's2', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:05:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: 5, state_of_charge_percent: 99, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's3', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:10:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: -19, state_of_charge_percent: 98, battery_state: 'discharging', external_input: false, discharge_watts: 30, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's4', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:15:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: -20, state_of_charge_percent: 98, battery_state: 'idle', external_input: false, discharge_watts: 0, charge_watts: 0, ambient_temperature_celsius: 20.0}
+    expect:
+      rows:
+        - {pulldown_key: 's1', date_key: 20260906, started_at: '2026-09-06 00:00:00+00', reached_at: '2026-09-06 00:10:00+00', ended_at: '2026-09-06 00:10:00+00', trigger: 'start_up', outcome: 'reached', interior_temperature_start_celsius: 25, setpoint_celsius: -20, state_of_charge_start_percent: 100, state_of_charge_delta_percent: -2, duration_seconds: 600.0, elapsed_seconds: 600.0, covered_seconds: 600.0, update_count: 3}
+
+  - name: lowering_the_setpoint_below_the_interior_starts_a_pulldown
+    model: fact_cooler_pulldown
+    description: The trigger is what put the interior above the setpoint, not the temperature itself.
+    given:
+      - input: ref('fact_cooler_state_update')
+        rows:
+          - {state_update_key: 's1', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:00:00+00', held_seconds: 300.0, setpoint_celsius: 5, interior_temperature_celsius: 2, state_of_charge_percent: 90, battery_state: 'idle', external_input: false, discharge_watts: 0, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's2', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:05:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: 2, state_of_charge_percent: 89, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's3', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:10:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: -19, state_of_charge_percent: 88, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+    expect:
+      rows:
+        - {pulldown_key: 's2', trigger: 'setpoint_change', outcome: 'reached', started_at: '2026-09-06 00:05:00+00', reached_at: '2026-09-06 00:10:00+00', update_count: 2}
+
+  - name: a_pulldown_is_interrupted_when_the_battery_is_taken_out
+    model: fact_cooler_pulldown
+    description: >
+      An episode that stops being recorded before the setpoint is reached is
+      interrupted: it has an end but no reached_at and no duration.
+    given:
+      - input: ref('fact_cooler_state_update')
+        rows:
+          - {state_update_key: 's1', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:00:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: -20, state_of_charge_percent: 90, battery_state: 'idle', external_input: false, discharge_watts: 0, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's2', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:05:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: -10, state_of_charge_percent: 89, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's3', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:10:00+00', held_seconds: 300.0, setpoint_celsius: -20, interior_temperature_celsius: -12, state_of_charge_percent: 0, battery_state: 'absent', external_input: false, discharge_watts: 0, charge_watts: 0, ambient_temperature_celsius: 20.0}
+    expect:
+      rows:
+        - {pulldown_key: 's2', trigger: 'rise', outcome: 'interrupted', started_at: '2026-09-06 00:05:00+00', reached_at: null, ended_at: '2026-09-06 00:10:00+00', duration_seconds: null, elapsed_seconds: 300.0, update_count: 2}
+
+  - name: a_wobble_over_the_threshold_does_not_cut_a_pulldown_in_two
+    model: fact_cooler_pulldown
+    description: >
+      The interior does not fall straight. It can dip below setpoint + 5 °C and come
+      back above it while the setpoint is still far off, and that report meets the
+      start rule — but an episode is already open, so it opens nothing. One pull-down
+      of fifteen minutes, not a first one left open for good and a second one of five.
+    given:
+      - input: ref('fact_cooler_state_update')
+        rows:
+          - {state_update_key: 's1', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:00:00+00', held_seconds: 300.0, setpoint_celsius: 0, interior_temperature_celsius: 10, state_of_charge_percent: 100, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's2', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:05:00+00', held_seconds: 300.0, setpoint_celsius: 0, interior_temperature_celsius: 4, state_of_charge_percent: 99, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's3', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:10:00+00', held_seconds: 300.0, setpoint_celsius: 0, interior_temperature_celsius: 6, state_of_charge_percent: 98, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's4', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:15:00+00', held_seconds: 300.0, setpoint_celsius: 0, interior_temperature_celsius: 1, state_of_charge_percent: 97, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+    expect:
+      rows:
+        - {pulldown_key: 's1', trigger: 'start_up', outcome: 'reached', started_at: '2026-09-06 00:00:00+00', reached_at: '2026-09-06 00:15:00+00', ended_at: '2026-09-06 00:15:00+00', interior_temperature_start_celsius: 10, duration_seconds: 900.0, elapsed_seconds: 900.0, state_of_charge_delta_percent: -3, covered_seconds: 900.0, update_count: 4}
+
+  - name: a_rise_after_the_setpoint_was_reached_is_its_own_pulldown
+    model: fact_cooler_pulldown
+    description: >
+      Once an episode has ended, the next report above setpoint + 5 °C opens one of
+      its own: only an open episode holds a later start off.
+    given:
+      - input: ref('fact_cooler_state_update')
+        rows:
+          - {state_update_key: 's1', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:00:00+00', held_seconds: 300.0, setpoint_celsius: 0, interior_temperature_celsius: 10, state_of_charge_percent: 100, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's2', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:05:00+00', held_seconds: 300.0, setpoint_celsius: 0, interior_temperature_celsius: 1, state_of_charge_percent: 99, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's3', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:10:00+00', held_seconds: 300.0, setpoint_celsius: 0, interior_temperature_celsius: 8, state_of_charge_percent: 98, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+          - {state_update_key: 's4', cooler_key: 11, battery_key: 22, boot_id: 'boot-1', updated_at: '2026-09-06 00:15:00+00', held_seconds: 300.0, setpoint_celsius: 0, interior_temperature_celsius: 0, state_of_charge_percent: 97, battery_state: 'discharging', external_input: false, discharge_watts: 60, charge_watts: 0, ambient_temperature_celsius: 20.0}
+    expect:
+      rows:
+        - {pulldown_key: 's1', trigger: 'start_up', outcome: 'reached', started_at: '2026-09-06 00:00:00+00', reached_at: '2026-09-06 00:05:00+00', duration_seconds: 300.0, update_count: 2}
+        - {pulldown_key: 's3', trigger: 'rise', outcome: 'reached', started_at: '2026-09-06 00:10:00+00', reached_at: '2026-09-06 00:15:00+00', duration_seconds: 300.0, update_count: 2}
+
+  - name: a_corrected_report_is_placed_on_the_date_it_really_happened
+    model: fact_cooler_state_update
+    overrides:
+      macros:
+        is_incremental: false
+    description: >
+      The JST date of a report is the date of its corrected time, not of the time the
+      Pi wrote down before NTP had caught up: the row moves from 2020 to the evening
+      it was really made. Its key does not depend on the time at all, so the merge
+      moves the row instead of writing a second copy on the new date.
+    given:
+      - input: ref('stg_cooler_state_update')
+        rows:
+          - {state_update_key: 'k1', boot_id: 'boot-1', uptime_seconds: 100.0, updated_at: '2026-09-06 15:30:00+00', updated_at_raw: '2020-01-01 00:00:00+00', timestamp_corrected: true, serial_number: 'COOLER-1', battery_serial_number: 'BATTERY-1', held_seconds: 600.0}
+          - {state_update_key: 'k2', boot_id: 'boot-1', uptime_seconds: 200.0, updated_at: '2026-09-06 15:40:00+00', updated_at_raw: '2026-09-06 15:40:00+00', timestamp_corrected: false, serial_number: 'COOLER-1', battery_serial_number: 'BATTERY-1', held_seconds: 600.0}
+      - input: ref('dim_cooler')
+        rows:
+          - {cooler_key: 11, serial_number: 'COOLER-1', valid_from: '2020-01-01 00:00:00+00', valid_to: null}
+      - input: ref('dim_battery')
+        rows:
+          - {battery_key: 22, serial_number: 'BATTERY-1'}
+    expect:
+      rows:
+        - {state_update_key: 'k1', cooler_key: 11, battery_key: 22, date_key: 20260907, partition_date: '2026-09-07', updated_at_raw: '2020-01-01 00:00:00+00', timestamp_corrected: true}
+        - {state_update_key: 'k2', cooler_key: 11, battery_key: 22, date_key: 20260907, partition_date: '2026-09-07', updated_at_raw: '2026-09-06 15:40:00+00', timestamp_corrected: false}
+
+  - name: a_full_battery_is_not_charging
+    model: fact_cooler_snapshot
+    overrides:
+      macros:
+        is_incremental: false
+    description: >
+      `full` is the fifth battery state: charging finished, the cooler on external
+      power at 100 % with nothing flowing either way. It is not charging, so only
+      the seconds actually spent charging count towards charging_ratio.
+    given:
+      - input: ref('fact_cooler_state_update')
+        rows:
+          - {state_update_key: 'a', cooler_key: 11, battery_key: 22, updated_at: '2026-09-05 15:00:00+00', held_seconds: 600.0, state_of_charge_percent: 99, discharge_watts: 0, charge_watts: 40, input_watts: 60, usb_a_output_watts: 0, usb_c_output_watts: 0, ambient_temperature_celsius: 20.0, ambient_humidity_percent: 50.0, interior_temperature_celsius: -18, setpoint_celsius: -20, external_input: true, battery_state: 'charging'}
+          - {state_update_key: 'b', cooler_key: 11, battery_key: 22, updated_at: '2026-09-05 15:10:00+00', held_seconds: 600.0, state_of_charge_percent: 100, discharge_watts: 0, charge_watts: 0, input_watts: 60, usb_a_output_watts: 0, usb_c_output_watts: 0, ambient_temperature_celsius: 20.0, ambient_humidity_percent: 50.0, interior_temperature_celsius: -19, setpoint_celsius: -20, external_input: true, battery_state: 'full'}
+    expect:
+      rows:
+        - {slot_key: '202609060000', covered_seconds: 900.0, update_count: 2, charging_ratio: 0.6666666666666666, external_input_ratio: 1.0, state_of_charge_end_percent: 100}
+        - {slot_key: '202609060015', covered_seconds: 300.0, update_count: 1, charging_ratio: 0.0, external_input_ratio: 1.0, state_of_charge_end_percent: 100}

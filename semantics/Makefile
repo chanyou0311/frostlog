@@ -1,0 +1,71 @@
+# Tasks for the semantic data product. Run them from this directory.
+#
+# Everything goes through the service's uv project, which holds dbt and
+# datacontract-cli in its `transform` dependency group.
+#
+# `check` needs nothing but a checkout. Every other target talks to BigQuery
+# through Application Default Credentials and reads FROSTLOG_BQ_PROJECT (the
+# project), FROSTLOG_BQ_DATASET (prod) or FROSTLOG_BQ_DATASET_CI (ci).
+
+UV := uv run --project service --group transform
+DBT := $(UV) dbt
+DIRS := --project-dir dbt --profiles-dir dbt
+CONTRACTS := ../contracts
+TARGET ?= prod
+#: Passed through to the contract-test job, e.g. CONTRACT_ARGS="--contract collection".
+CONTRACT_ARGS ?=
+
+.PHONY: install check lint test parse build unit-test contract-test ci-warehouse lint-contracts
+
+install:
+	uv sync --project service --group transform
+
+# Everything that needs no warehouse.
+check: lint test parse
+
+lint:
+	cd service && uv run ruff check .
+	cd service && uv run ruff format --check .
+	cd service && uv run ty check
+
+# The contract-rule tests transpile the contract SQL and run it on DuckDB (transform group).
+test:
+	cd service && uv run --group transform pytest
+
+parse:
+	$(DBT) parse $(DIRS)
+
+# A full rebuild; on arrival the service passes the dates instead.
+build:
+	$(DBT) build $(DIRS) --target $(TARGET) --full-refresh
+
+# The dbt unit tests. They run their fixtures as queries, so they need BigQuery.
+unit-test:
+	$(DBT) test $(DIRS) --target $(TARGET) --select test_type:unit
+
+# The data contracts against the data that is really there. Testing the raw
+# contract reads the bucket through its S3 API, so it wants
+# DATACONTRACT_S3_ACCESS_KEY_ID / DATACONTRACT_S3_SECRET_ACCESS_KEY (the service
+# reads them from Secret Manager; a person exports their own HMAC key).
+# Both contracts against production, through the job that does it daily — the same
+# code path, so what passes here is what passes there. `--contract collection` (or
+# semantics) narrows it, which is how one product is held to its word before the
+# other exists. Needs Application Default Credentials.
+contract-test:
+	$(UV) python -m frostlog_contracts $(CONTRACT_ARGS)
+
+# The whole warehouse, end to end, on the sample chunks in the repository: the CI
+# dataset's raw tables are rebuilt from them through the service's own load path,
+# the model is built from that, its unit tests run, and the result is held against
+# the contract. Any step that fails stops the target. Needs Application Default
+# Credentials and FROSTLOG_BQ_DATASET_CI.
+ci-warehouse:
+	$(UV) python -m frostlog_semantics.samples
+	$(DBT) build $(DIRS) --target ci --full-refresh \
+		--vars "$$($(UV) python -m frostlog_semantics.samples --target-dates)"
+	$(DBT) test $(DIRS) --target ci --select test_type:unit
+	$(UV) datacontract test $(CONTRACTS)/semantics.odcs.yaml --server ci
+
+lint-contracts:
+	$(UV) datacontract lint $(CONTRACTS)/collection.odcs.yaml
+	$(UV) datacontract lint $(CONTRACTS)/semantics.odcs.yaml

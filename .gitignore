@@ -4,3 +4,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 dist/
+
+# dbt writes its manifest, compiled SQL and logs next to the project.
+target/
+logs/
+dbt_packages/
+.user.yml

@@ -248,7 +248,7 @@ schema:
       - name: identity_unique
         type: sql
         dimension: uniqueness
-        query: SELECT COUNT(*) - COUNT(DISTINCT CONCAT(boot_id, '/', CAST(uptime_seconds AS STRING))) FROM {model}
+        query: SELECT COUNT(*) - COUNT(DISTINCT CONCAT(boot_id, '/', CAST(uptime_seconds AS STRING))) FROM {project}.{dataset}.{model}
         mustBe: 0
       - name: held_seconds_is_the_gap_to_the_next_update
         type: sql
@@ -269,20 +269,20 @@ schema:
                   - uptime_seconds,
                 600.0
               ))) AS expected
-            FROM {model}
+            FROM {project}.{dataset}.{model}
           )
           WHERE ABS(held_seconds - expected) > 0.001
         mustBe: 0
       - name: state_of_charge_in_range
         type: sql
         dimension: conformity
-        query: SELECT COUNT(*) FROM {model} WHERE state_of_charge_percent < 0 OR state_of_charge_percent > 100
+        query: SELECT COUNT(*) FROM {project}.{dataset}.{model} WHERE state_of_charge_percent < 0 OR state_of_charge_percent > 100
         mustBe: 0
       - name: temperatures_in_range
         type: sql
         dimension: conformity
         query: >
-          SELECT COUNT(*) FROM {model}
+          SELECT COUNT(*) FROM {project}.{dataset}.{model}
           WHERE setpoint_celsius NOT BETWEEN -40 AND 85
              OR interior_temperature_celsius NOT BETWEEN -40 AND 85
              OR ambient_temperature_celsius NOT BETWEEN -40 AND 85
@@ -294,22 +294,22 @@ schema:
           The definition of external_input, not a search for a bug: it cannot fail while
           the model computes it this way. It is here so that changing what "plugged in"
           means has to be agreed here first.
-        query: SELECT COUNT(*) FROM {model} WHERE external_input != (input_watts > 0)
+        query: SELECT COUNT(*) FROM {project}.{dataset}.{model} WHERE external_input != (input_watts > 0)
         mustBe: 0
       - name: date_key_matches_updated_at
         type: sql
         dimension: consistency
-        query: SELECT COUNT(*) FROM {model} WHERE date_key != CAST(FORMAT_DATE('%Y%m%d', DATE(updated_at, 'Asia/Tokyo')) AS INT64)
+        query: SELECT COUNT(*) FROM {project}.{dataset}.{model} WHERE date_key != CAST(FORMAT_DATE('%Y%m%d', DATE(updated_at, 'Asia/Tokyo')) AS INT64)
         mustBe: 0
       - name: keys_resolve
         type: sql
         dimension: consistency
         description: Every foreign key points at an existing dimension row (referential integrity).
         query: >
-          SELECT COUNT(*) FROM {model} f
-          LEFT JOIN dim_cooler c ON c.cooler_key = f.cooler_key
-          LEFT JOIN dim_battery b ON b.battery_key = f.battery_key
-          LEFT JOIN dim_date d ON d.date_key = f.date_key
+          SELECT COUNT(*) FROM {project}.{dataset}.{model} f
+          LEFT JOIN {project}.{dataset}.dim_cooler c ON c.cooler_key = f.cooler_key
+          LEFT JOIN {project}.{dataset}.dim_battery b ON b.battery_key = f.battery_key
+          LEFT JOIN {project}.{dataset}.dim_date d ON d.date_key = f.date_key
           WHERE c.cooler_key IS NULL OR b.battery_key IS NULL OR d.date_key IS NULL
         mustBe: 0
       - name: fresh_within_a_day
@@ -327,7 +327,7 @@ schema:
         query: >
           SELECT COUNT(*) FROM (
             SELECT DISTINCT r.boot_id, r.uptime_seconds
-            FROM raw_cooler r
+            FROM {project}.{dataset}.raw_cooler r
             WHERE r.cmd = '4402'
               AND r.boot_id IS NOT NULL AND r.uptime_seconds IS NOT NULL AND r.ts IS NOT NULL
               AND r.payload.serial_number IS NOT NULL
@@ -345,7 +345,7 @@ schema:
               AND r.payload.brightness IS NOT NULL
               AND r.uploaded_at < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
               AND NOT EXISTS (
-                SELECT 1 FROM {model} f
+                SELECT 1 FROM {project}.{dataset}.{model} f
                 WHERE f.boot_id = r.boot_id AND f.uptime_seconds = r.uptime_seconds
               )
           )
@@ -513,13 +513,13 @@ schema:
       - name: one_row_per_slot
         type: sql
         dimension: uniqueness
-        query: SELECT COUNT(*) - COUNT(DISTINCT slot_key) FROM {model}
+        query: SELECT COUNT(*) - COUNT(DISTINCT slot_key) FROM {project}.{dataset}.{model}
         mustBe: 0
       - name: slots_are_dense
         type: sql
         dimension: completeness
         description: No quarter hour is missing between the first and the last row.
-        query: SELECT COALESCE(TIMESTAMP_DIFF(MAX(slot_started_at), MIN(slot_started_at), MINUTE) / 15 + 1 - COUNT(*), 0) FROM {model}
+        query: SELECT COALESCE(TIMESTAMP_DIFF(MAX(slot_started_at), MIN(slot_started_at), MINUTE) / 15 + 1 - COUNT(*), 0) FROM {project}.{dataset}.{model}
         mustBe: 0
       - name: covered_seconds_in_range
         type: sql
@@ -527,12 +527,12 @@ schema:
         description: >
           A quarter hour holds 900 seconds and no more. Definitional, like the model's
           own clamp; it fails only if the two ever disagree.
-        query: SELECT COUNT(*) FROM {model} WHERE covered_seconds < 0 OR covered_seconds > 900
+        query: SELECT COUNT(*) FROM {project}.{dataset}.{model} WHERE covered_seconds < 0 OR covered_seconds > 900
         mustBe: 0
       - name: ratios_in_range
         type: sql
         dimension: conformity
-        query: SELECT COUNT(*) FROM {model} WHERE external_input_ratio NOT BETWEEN 0 AND 1 OR charging_ratio NOT BETWEEN 0 AND 1
+        query: SELECT COUNT(*) FROM {project}.{dataset}.{model} WHERE external_input_ratio NOT BETWEEN 0 AND 1 OR charging_ratio NOT BETWEEN 0 AND 1
         mustBe: 0
       - name: delta_is_end_minus_start
         type: sql
@@ -540,7 +540,7 @@ schema:
         description: >
           The definition of the delta. Consumers read it instead of subtracting, so what
           it means belongs in the contract rather than only in the model.
-        query: SELECT COUNT(*) FROM {model} WHERE state_of_charge_delta_percent != state_of_charge_end_percent - state_of_charge_start_percent
+        query: SELECT COUNT(*) FROM {project}.{dataset}.{model} WHERE state_of_charge_delta_percent != state_of_charge_end_percent - state_of_charge_start_percent
         mustBe: 0
       - name: energy_matches_state_updates
         type: sql
@@ -553,12 +553,12 @@ schema:
         query: >
           SELECT COUNT(*) FROM (
             SELECT
-              (SELECT SUM(discharged_watt_hours) FROM {model}) AS slot_discharged,
-              (SELECT SUM(charged_watt_hours) FROM {model}) AS slot_charged,
-              (SELECT SUM(input_watt_hours) FROM {model}) AS slot_input,
-              (SELECT SUM(discharged_watt_hours) FROM fact_cooler_state_update) AS atomic_discharged,
-              (SELECT SUM(charged_watt_hours) FROM fact_cooler_state_update) AS atomic_charged,
-              (SELECT SUM(input_watt_hours) FROM fact_cooler_state_update) AS atomic_input
+              (SELECT SUM(discharged_watt_hours) FROM {project}.{dataset}.{model}) AS slot_discharged,
+              (SELECT SUM(charged_watt_hours) FROM {project}.{dataset}.{model}) AS slot_charged,
+              (SELECT SUM(input_watt_hours) FROM {project}.{dataset}.{model}) AS slot_input,
+              (SELECT SUM(discharged_watt_hours) FROM {project}.{dataset}.fact_cooler_state_update) AS atomic_discharged,
+              (SELECT SUM(charged_watt_hours) FROM {project}.{dataset}.fact_cooler_state_update) AS atomic_charged,
+              (SELECT SUM(input_watt_hours) FROM {project}.{dataset}.fact_cooler_state_update) AS atomic_input
           ) WHERE ABS(slot_discharged - atomic_discharged) > 1
              OR ABS(slot_charged - atomic_charged) > 1
              OR ABS(slot_input - atomic_input) > 1
@@ -567,7 +567,7 @@ schema:
         type: sql
         dimension: accuracy
         description: No slot discharges more than the cooler can physically draw in a quarter hour.
-        query: SELECT COUNT(*) FROM {model} WHERE discharged_watt_hours > 25 OR charged_watt_hours > 38
+        query: SELECT COUNT(*) FROM {project}.{dataset}.{model} WHERE discharged_watt_hours > 25 OR charged_watt_hours > 38
         mustBe: 0
 
   - name: fact_cooler_pulldown
@@ -720,22 +720,22 @@ schema:
       - name: one_row_per_episode
         type: sql
         dimension: uniqueness
-        query: SELECT COUNT(*) - COUNT(DISTINCT pulldown_key) FROM {model}
+        query: SELECT COUNT(*) - COUNT(DISTINCT pulldown_key) FROM {project}.{dataset}.{model}
         mustBe: 0
       - name: milestones_ordered
         type: sql
         dimension: consistency
-        query: SELECT COUNT(*) FROM {model} WHERE reached_at < started_at OR ended_at < started_at
+        query: SELECT COUNT(*) FROM {project}.{dataset}.{model} WHERE reached_at < started_at OR ended_at < started_at
         mustBe: 0
       - name: outcome_and_end_agree
         type: sql
         dimension: consistency
-        query: SELECT COUNT(*) FROM {model} WHERE (outcome IS NULL) != (ended_at IS NULL) OR COALESCE(outcome = 'reached', FALSE) != (reached_at IS NOT NULL)
+        query: SELECT COUNT(*) FROM {project}.{dataset}.{model} WHERE (outcome IS NULL) != (ended_at IS NULL) OR COALESCE(outcome = 'reached', FALSE) != (reached_at IS NOT NULL)
         mustBe: 0
       - name: duration_plausible
         type: sql
         dimension: accuracy
-        query: SELECT COUNT(*) FROM {model} WHERE duration_seconds > 86400
+        query: SELECT COUNT(*) FROM {project}.{dataset}.{model} WHERE duration_seconds > 86400
         mustBe: 0
 
   # ------------------------------------------------------------ dimensions
@@ -793,13 +793,13 @@ schema:
       - name: one_current_row_per_cooler
         type: sql
         dimension: uniqueness
-        query: SELECT COUNT(*) FROM (SELECT serial_number FROM {model} WHERE is_current GROUP BY serial_number HAVING COUNT(*) != 1)
+        query: SELECT COUNT(*) FROM (SELECT serial_number FROM {project}.{dataset}.{model} WHERE is_current GROUP BY serial_number HAVING COUNT(*) != 1)
         mustBe: 0
       - name: validity_does_not_overlap
         type: sql
         dimension: consistency
         query: >
-          SELECT COUNT(*) FROM {model} a JOIN {model} b
+          SELECT COUNT(*) FROM {project}.{dataset}.{model} a JOIN {project}.{dataset}.{model} b
             ON a.serial_number = b.serial_number AND a.cooler_key < b.cooler_key
            AND a.valid_from < COALESCE(b.valid_to, TIMESTAMP '9999-12-31')
            AND b.valid_from < COALESCE(a.valid_to, TIMESTAMP '9999-12-31')

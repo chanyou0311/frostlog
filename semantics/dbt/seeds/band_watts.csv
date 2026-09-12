@@ -1,0 +1,16 @@
+band,band_key,label,lower_watts,upper_watts,sort_order
+input_power,1,0 W,,1,1
+input_power,2,< 10 W,1,10,2
+input_power,3,10..40 W,10,40,3
+input_power,4,40..70 W,40,70,4
+input_power,5,>= 70 W,70,,5
+charge_power,1,0 W,,1,1
+charge_power,2,< 10 W,1,10,2
+charge_power,3,10..30 W,10,30,3
+charge_power,4,30..60 W,30,60,4
+charge_power,5,>= 60 W,60,,5
+discharge_power,1,0 W,,1,1
+discharge_power,2,< 10 W,1,10,2
+discharge_power,3,10..30 W,10,30,3
+discharge_power,4,30..50 W,30,50,4
+discharge_power,5,>= 50 W,50,,5

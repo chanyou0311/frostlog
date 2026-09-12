@@ -1,0 +1,24 @@
+name: frostlog
+version: 1.0.0
+config-version: 2
+profile: frostlog
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # JST dates (YYYY-MM-DD) whose partitions this run rebuilds. The service passes the
+  # dates the arrived chunk touches; empty means "nothing to rebuild", so an incremental
+  # run without it is a no-op and a full rebuild is asked for with --full-refresh.
+  target_dates: []
+  # Span of dim_date. It is a calendar, not data: it may reach past the last record.
+  calendar_start: "2026-01-01"
+  calendar_end: "2027-12-31"
+
+models:
+  frostlog:
+    +materialized: table
+    staging:
+      +materialized: view
