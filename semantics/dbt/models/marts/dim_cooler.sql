@@ -4,9 +4,10 @@
 --
 -- Every BLE handshake reports the chip and the firmware version; a new row opens
 -- when either of them (or the address) changes, and the row that was open closes
--- at that moment. A cooler that has only ever been seen in state reports — the
--- handshake event for it arrived in a chunk that is not here yet — still gets a
--- row, with an unknown firmware, so that no fact is left without a cooler.
+-- at that moment. Every cooler also keeps a row with an unknown firmware, from
+-- its first sign until its first handshake. That handshake may arrive in a later
+-- chunk, after a fact from another boot has already taken the unknown row's key;
+-- closing the row must not take the key away from a fact that this run leaves alone.
 
 with updates as (
 
@@ -39,28 +40,6 @@ negotiated as (
 
 ),
 
-unnegotiated as (
-
-    select
-        serial_number,
-        bluetooth_address,
-        cast(null as string) as chip,
-        cast(null as string) as firmware_version,
-        min(updated_at) as observed_at
-    from updates
-    where serial_number not in (select serial_number from negotiated)
-    group by serial_number, bluetooth_address
-
-),
-
-observations as (
-
-    select * from negotiated
-    union all
-    select * from unnegotiated
-
-),
-
 -- The cooler's model name is the decoder that read its messages.
 named as (
 
@@ -74,7 +53,7 @@ first_seen as (
 
     select serial_number, min(seen_at) as first_seen_at
     from (
-        select serial_number, observed_at as seen_at from observations
+        select serial_number, observed_at as seen_at from negotiated
         union all
         select serial_number, updated_at as seen_at from updates
     )
@@ -91,7 +70,7 @@ versioned as (
             coalesce(chip, ''), '|',
             coalesce(firmware_version, '')
         ) as version
-    from observations
+    from negotiated
 
 ),
 
@@ -110,20 +89,77 @@ opened as (
 
     select
         *,
-        row_number() over (partition by serial_number order by observed_at, version)
-            as version_index
+        row_number() over (partition by serial_number, version order by observed_at)
+            as version_episode
     from changes
     where previous_version is null or previous_version != version
+
+),
+
+-- This row belongs to the cooler, not to an address it happened to report. A
+-- later state report can fill in or change that address without replacing the
+-- unknown key. It also belongs to a cooler known only from handshakes: in that
+-- case its window is empty, but keeping it means the order in which the two
+-- streams arrive cannot decide whether the key exists.
+unnegotiated as (
+
+    select
+        f.serial_number,
+        a.bluetooth_address,
+        cast(null as string) as chip,
+        cast(null as string) as firmware_version,
+        f.first_seen_at as observed_at,
+        'unnegotiated' as version,
+        1 as version_episode,
+        true as is_unnegotiated
+    from first_seen f
+    left join addresses a using (serial_number)
+
+),
+
+episodes as (
+
+    select
+        serial_number, bluetooth_address, chip, firmware_version, observed_at,
+        version, version_episode, false as is_unnegotiated
+    from opened
+    union all
+    select * from unnegotiated
+
+),
+
+ordered as (
+
+    select
+        *,
+        -- When the first sign is the handshake itself, the unknown row closes
+        -- exactly where it opens. It must sort first even if the address or the
+        -- firmware is missing, so a report at that instant joins only the handshake.
+        row_number() over (
+            partition by serial_number order by observed_at, is_unnegotiated desc, version
+        ) as version_index
+    from episodes
 
 )
 
 select
-    -- The key is made of when the version opened, never of how many came before it:
-    -- a handshake that arrives late, or one whose time a clock anchor has just
-    -- corrected, inserts a version in the middle and would renumber every version
-    -- after it. The facts are rebuilt a batch of boots at a time, so the ones left
-    -- alone would keep a key that had come to mean another firmware.
-    {{ frostlog_integer_key("concat(o.serial_number, '|', cast(o.observed_at as string))") }}
+    -- The first handshake we received is not necessarily the first one that
+    -- happened. An earlier handshake with the same version, or a corrected clock,
+    -- can move the opening time without replacing the firmware. Facts are rebuilt
+    -- a batch of boots at a time; hashing that time would strand the keys held by
+    -- the boots left alone. Count only episodes of this particular version, so
+    -- inserting another firmware does not renumber it, while returning to an old
+    -- firmware still gets a distinct key.
+    --
+    -- A repeated version can still lose its later key if a clock correction merges
+    -- its two visits: A -> B -> A becomes A -> A -> B. For firmware on this consumer
+    -- cooler that takes a downgrade as well as the clock correction, whereas the
+    -- failures above need only the ordinary arrival of chunks out of order. The
+    -- daily frostlog-contracts job checks every fact's dimension keys and catches
+    -- that remaining case. Retaining vanished episodes would change how this
+    -- dimension is materialized; that decision is still open together with the
+    -- snapshot's incremental materialization and how often dbt runs.
+    {{ frostlog_integer_key("concat(o.serial_number, '|', o.version, '|', cast(o.version_episode as string))") }}
         as cooler_key,
     o.serial_number,
     coalesce(n.model, 'everfrost') as model,
@@ -137,6 +173,6 @@ select
         as valid_to,
     lead(o.observed_at) over (partition by o.serial_number order by o.version_index) is null
         as is_current
-from opened o
+from ordered o
 left join named n using (serial_number)
 left join first_seen f using (serial_number)

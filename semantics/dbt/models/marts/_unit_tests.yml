@@ -6,8 +6,8 @@ unit_tests:
     description: >
       A handshake that reports a firmware the cooler did not have before closes the
       row that was open and opens a new one; repeating the same firmware changes
-      nothing. The first row reaches back to the first sign of the cooler, so a state
-      update recorded before the first handshake still finds its version.
+      nothing. The unknown row reaches back to the first sign of the cooler, so a
+      state update recorded before the first handshake still finds its version.
     given:
       - input: ref('stg_cooler_negotiation')
         rows:
@@ -19,8 +19,129 @@ unit_tests:
           - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-08-31 00:00:00+00'}
     expect:
       rows:
-        - {serial_number: 'COOLER-1', model: 'everfrost', firmware_version: '1.0.0', valid_from: '2026-08-31 00:00:00+00', valid_to: '2026-09-05 00:00:00+00', is_current: false}
+        - {serial_number: 'COOLER-1', model: 'everfrost', firmware_version: null, valid_from: '2026-08-31 00:00:00+00', valid_to: '2026-09-01 00:00:00+00', is_current: false}
+        - {serial_number: 'COOLER-1', model: 'everfrost', firmware_version: '1.0.0', valid_from: '2026-09-01 00:00:00+00', valid_to: '2026-09-05 00:00:00+00', is_current: false}
         - {serial_number: 'COOLER-1', model: 'everfrost', firmware_version: '1.1.0', valid_from: '2026-09-05 00:00:00+00', valid_to: null, is_current: true}
+
+  # These pairs describe two arrivals separately: dbt unit tests do not keep a
+  # fact from one build to the next. The expected keys are hashes of literal
+  # identities, so checking only the windows cannot hide a key that changed when
+  # the earlier chunk arrived. SQL expectations let BigQuery compute its own hash.
+  - name: a_later_boot_arrives_before_the_earliest_handshake
+    model: dim_cooler
+    description: >
+      Boot 2 lands first. Its firmware key must already be the one that boot 1
+      will use when its earlier handshake arrives, even though the opening time
+      is not yet known. The unknown row is kept with an empty window because the
+      first sign of this cooler is already a handshake.
+    given:
+      - input: ref('stg_cooler_negotiation')
+        rows:
+          - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.0.0', negotiated_at: '2026-09-02 00:00:00+00'}
+      - input: ref('stg_cooler_state_update')
+        rows:
+          - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-09-02 00:01:00+00'}
+    expect:
+      format: sql
+      rows: |
+        select
+          abs(farm_fingerprint('COOLER-1|unnegotiated|1')) as cooler_key,
+          'COOLER-1' as serial_number, 'everfrost' as model,
+          'F4:9D:8A:C3:4F:84' as bluetooth_address,
+          cast(null as string) as chip, cast(null as string) as firmware_version,
+          timestamp '2026-09-02 00:00:00+00' as valid_from,
+          timestamp '2026-09-02 00:00:00+00' as valid_to, false as is_current
+        union all
+        select
+          abs(farm_fingerprint('COOLER-1|F4:9D:8A:C3:4F:84|A1|1.0.0|1')),
+          'COOLER-1', 'everfrost', 'F4:9D:8A:C3:4F:84', 'A1', '1.0.0',
+          timestamp '2026-09-02 00:00:00+00', cast(null as timestamp), true
+
+  - name: an_earlier_same_firmware_handshake_keeps_the_cooler_key
+    model: dim_cooler
+    description: >
+      Boot 1's handshake arrives after boot 2's with the same firmware and an
+      earlier time. The episode now opens a day earlier, but both keys are the
+      ones from the preceding test; facts from boot 2 can still resolve them.
+    given:
+      - input: ref('stg_cooler_negotiation')
+        rows:
+          - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.0.0', negotiated_at: '2026-09-02 00:00:00+00'}
+          - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.0.0', negotiated_at: '2026-09-01 00:00:00+00'}
+      - input: ref('stg_cooler_state_update')
+        rows:
+          - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-09-02 00:01:00+00'}
+          - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-09-01 00:01:00+00'}
+    expect:
+      format: sql
+      rows: |
+        select
+          abs(farm_fingerprint('COOLER-1|unnegotiated|1')) as cooler_key,
+          'COOLER-1' as serial_number, 'everfrost' as model,
+          'F4:9D:8A:C3:4F:84' as bluetooth_address,
+          cast(null as string) as chip, cast(null as string) as firmware_version,
+          timestamp '2026-09-01 00:00:00+00' as valid_from,
+          timestamp '2026-09-01 00:00:00+00' as valid_to, false as is_current
+        union all
+        select
+          abs(farm_fingerprint('COOLER-1|F4:9D:8A:C3:4F:84|A1|1.0.0|1')),
+          'COOLER-1', 'everfrost', 'F4:9D:8A:C3:4F:84', 'A1', '1.0.0',
+          timestamp '2026-09-01 00:00:00+00', cast(null as timestamp), true
+
+  - name: a_state_only_cooler_has_a_persistent_unknown_key
+    model: dim_cooler
+    description: >
+      A state report can arrive before any handshake. The unknown key belongs to
+      the serial alone, so neither an earlier first sign nor a different address
+      in a later chunk can take it away from this boot's facts.
+    given:
+      - input: ref('stg_cooler_negotiation')
+        rows: []
+      - input: ref('stg_cooler_state_update')
+        rows:
+          - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-09-02 00:01:00+00'}
+    expect:
+      format: sql
+      rows: |
+        select
+          abs(farm_fingerprint('COOLER-1|unnegotiated|1')) as cooler_key,
+          'COOLER-1' as serial_number, 'everfrost' as model,
+          'F4:9D:8A:C3:4F:84' as bluetooth_address,
+          cast(null as string) as chip, cast(null as string) as firmware_version,
+          timestamp '2026-09-02 00:01:00+00' as valid_from,
+          cast(null as timestamp) as valid_to, true as is_current
+
+  - name: the_first_handshake_closes_but_keeps_the_unknown_key
+    model: dim_cooler
+    description: >
+      The first handshake turns up in a later batch, dated before the state
+      report. The unknown window is now empty, but the preceding test's key
+      remains, even though a new state report has changed the last address seen.
+      The old fact can name unknown firmware until its boot is rebuilt without
+      becoming a dangling reference in the meantime.
+    given:
+      - input: ref('stg_cooler_negotiation')
+        rows:
+          - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.0.0', negotiated_at: '2026-09-01 00:00:00+00'}
+      - input: ref('stg_cooler_state_update')
+        rows:
+          - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-09-02 00:01:00+00'}
+          - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:85', model: 'everfrost', updated_at: '2026-09-03 00:01:00+00'}
+    expect:
+      format: sql
+      rows: |
+        select
+          abs(farm_fingerprint('COOLER-1|unnegotiated|1')) as cooler_key,
+          'COOLER-1' as serial_number, 'everfrost' as model,
+          'F4:9D:8A:C3:4F:85' as bluetooth_address,
+          cast(null as string) as chip, cast(null as string) as firmware_version,
+          timestamp '2026-09-01 00:00:00+00' as valid_from,
+          timestamp '2026-09-01 00:00:00+00' as valid_to, false as is_current
+        union all
+        select
+          abs(farm_fingerprint('COOLER-1|F4:9D:8A:C3:4F:84|A1|1.0.0|1')),
+          'COOLER-1', 'everfrost', 'F4:9D:8A:C3:4F:84', 'A1', '1.0.0',
+          timestamp '2026-09-01 00:00:00+00', cast(null as timestamp), true
 
   - name: slots_are_dense_and_energy_is_integrated_over_the_covered_seconds
     model: fact_cooler_snapshot
