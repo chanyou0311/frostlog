@@ -77,6 +77,21 @@ def build_services(settings: Settings | None = None) -> Services:
 #: semantics product says is only as good as what the collection product gave it.
 CONTRACTS = ("collection", "semantics")
 
+#: Which categories of check the collection contract is held to in the bucket.
+#:
+#: The chunks there are gzipped, and datacontract-cli has two engines that disagree
+#: about that: the DuckDB one decompresses them, the JSON Schema one reads the bytes
+#: as text and dies on the gzip magic number before any check has run. There is no
+#: way to declare the compression, so the run is narrowed to the categories DuckDB
+#: answers — which is where the contract's own rules live, and the only place a
+#: whole-table rule can be checked at all.
+#:
+#: Nothing is lost that is not checked elsewhere: the per-field schema checks run in
+#: CI against the sample chunks (uncompressed, for this same reason), and every field
+#: that reaches the warehouse is declared again in the semantics contract, which is
+#: tested here in full.
+COLLECTION_CHECKS = "quality"
+
 
 def run(services: Services, contracts: Sequence[str] = CONTRACTS) -> bool:
     """Test the contracts named, report what failed, and say whether they all passed."""
@@ -88,20 +103,22 @@ def run(services: Services, contracts: Sequence[str] = CONTRACTS) -> bool:
             settings.contracts_dir / "collection.odcs.yaml",
             settings.collection_contract_server,
             _collection_test_environment,
+            COLLECTION_CHECKS,
         ),
         "semantics": (
             "frostlog-semantics",
             settings.contracts_dir / "semantics.odcs.yaml",
             settings.semantics_contract_server,
             lambda _: {},
+            None,
         ),
     }
     chosen = [name for name in CONTRACTS if name in contracts]
     results = []
     for name in chosen:
-        contract_id, path, server, environment_for = wanted[name]
+        contract_id, path, server, environment_for, checks = wanted[name]
         results.append(
-            _test_contract(services, contract_id, path, server, environment_for(services))
+            _test_contract(services, contract_id, path, server, environment_for(services), checks)
         )
     for result in results:
         _publish_report(services, run_id, result)
@@ -120,6 +137,7 @@ def _test_contract(
     path: Path,
     server: str,
     environment: dict[str, str] | None,
+    checks: str | None = None,
 ) -> ContractTestResult:
     """One contract's result, whatever happens: a crash is a finding, not a stack trace."""
     if environment is None:
@@ -127,7 +145,7 @@ def _test_contract(
             contract_id, passed=False, failed_checks=["not tested: no collection HMAC secret"]
         )
     try:
-        return services.tester.test(path, server, contract_id, environment)
+        return services.tester.test(path, server, contract_id, environment, checks)
     except Exception as exc:  # a timeout, a missing binary, anything
         log.exception("testing %s failed", contract_id)
         return ContractTestResult(

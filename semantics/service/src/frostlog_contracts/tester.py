@@ -42,6 +42,7 @@ class ContractTester(Protocol):
         server: str,
         contract_id: str,
         environment: dict[str, str] | None = None,
+        checks: str | None = None,
     ) -> ContractTestResult: ...
 
 
@@ -72,6 +73,7 @@ class DatacontractTester:
         server: str,
         contract_id: str,
         environment: dict[str, str] | None = None,
+        checks: str | None = None,
     ) -> ContractTestResult:
         with tempfile.TemporaryDirectory() as workspace:
             report = Path(workspace) / "test-results.json"
@@ -86,6 +88,8 @@ class DatacontractTester:
                 "--output-format",
                 "json",
             ]
+            if checks:
+                command += ["--checks", checks]
             completed = shell.run(
                 command,
                 timeout=TEST_TIMEOUT_SECONDS,

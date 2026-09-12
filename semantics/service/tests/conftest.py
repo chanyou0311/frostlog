@@ -80,6 +80,7 @@ class FakeTester:
         self.raises: dict[str, Exception] = {}
         self.tested: list[tuple[str, str]] = []
         self.environments: list[dict[str, str]] = []
+        self.checks: list[str | None] = []
 
     def test(
         self,
@@ -87,8 +88,10 @@ class FakeTester:
         server: str,
         contract_id: str,
         environment: dict[str, str] | None = None,
+        checks: str | None = None,
     ) -> ContractTestResult:
         self.tested.append((contract.name, server))
+        self.checks.append(checks)
         self.environments.append(environment or {})
         if contract_id in self.raises:
             raise self.raises[contract_id]

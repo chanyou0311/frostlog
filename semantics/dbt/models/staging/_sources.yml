@@ -17,7 +17,47 @@ sources:
         warn_after: {count: 1, period: day}
         error_after: {count: 7, period: day}
     tables:
+      # The columns tested here are the ones the collection contract declares as
+      # mandatory. That contract is also tested against the bucket every day, but
+      # only for the rules DuckDB can answer: its chunks are gzipped, and the engine
+      # that would run the field checks cannot decompress them (see the contract-test
+      # job). Presence needs no test — raw_schema.py fixes the table's columns, so a
+      # field the collector stops writing arrives as NULL rather than disappearing.
+      # Being NULL is exactly what these catch, one transform after the data lands.
       - name: raw_cooler
         description: One row per BLE message from the cooler, with the air around it at that moment.
+        columns:
+          - name: ts
+            data_tests: [not_null]
+          - name: uptime_seconds
+            data_tests: [not_null]
+          - name: boot_id
+            data_tests: [not_null]
+          - name: type
+            data_tests:
+              - not_null
+              - accepted_values:
+                  arguments: {values: ["cooler"]}
+          - name: model
+            data_tests: [not_null]
+          - name: address
+            data_tests: [not_null]
+          # `frames` is not here: it is REPEATED, so BigQuery gives an absent one as an
+          # empty array and not_null would pass on it. The contract's own frames_present
+          # rule asks the question properly (`len(frames) = 0`) and runs on the bucket.
       - name: raw_events
         description: One row per operational event of the collector.
+        columns:
+          - name: ts
+            data_tests: [not_null]
+          - name: uptime_seconds
+            data_tests: [not_null]
+          - name: boot_id
+            data_tests: [not_null]
+          - name: type
+            data_tests:
+              - not_null
+              - accepted_values:
+                  arguments: {values: ["event"]}
+          - name: kind
+            data_tests: [not_null]

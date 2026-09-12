@@ -107,3 +107,15 @@ def test_without_a_healthcheck_url_a_clean_run_simply_reports_nothing(job: Contr
 
     assert run(job.services) is True
     assert job.pinged == []
+
+
+def test_the_collection_contract_is_held_only_to_what_duckdb_can_read(job: ContractFakes) -> None:
+    """Gzipped chunks crash datacontract-cli's JSON Schema engine, so it is left out.
+
+    The semantics contract lives in BigQuery and has no such trouble, so it is asked
+    for everything. Getting this backwards makes the daily job fail every day.
+    """
+    assert run(job.services) is True
+    narrowed = dict(zip([name for name, _ in job.tester.tested], job.tester.checks, strict=True))
+    assert narrowed["collection.odcs.yaml"] == "quality"
+    assert narrowed["semantics.odcs.yaml"] is None
