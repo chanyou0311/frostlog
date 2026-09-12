@@ -54,6 +54,15 @@ class S3ObjectStore:
                 connect_timeout=10,
                 read_timeout=60,
                 retries={"max_attempts": 3, "mode": "standard"},
+                # botocore 1.36 began adding a CRC32 checksum header to every PUT.
+                # Google Cloud Storage's S3-compatible API does not take those headers
+                # and refuses the request as SignatureDoesNotMatch ("Invalid argument"),
+                # which reads as a credentials problem and is not one — LIST and HEAD,
+                # which carry no checksum, go through on the same key. R2 accepted them,
+                # so this only surfaced when the bucket moved. Ask for a checksum only
+                # where the protocol itself requires one.
+                request_checksum_calculation="when_required",
+                response_checksum_validation="when_required",
             ),
         )
 

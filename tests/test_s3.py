@@ -48,3 +48,17 @@ def test_a_refused_put_over_a_different_object_is_a_failure() -> None:
     store = _store(_Client({"start": "0", "end": "1024", "uploaded-at": "t"}))
     with pytest.raises(ClientError):
         store.put(KEY, b"data", {"start": "0", "end": "4096", "uploaded-at": "t"})
+
+
+def test_the_client_asks_for_no_checksum_google_cloud_storage_would_refuse() -> None:
+    """botocore's default CRC32 header on PUT is one GCS's S3 API will not take.
+
+    It answers ``SignatureDoesNotMatch``, which accuses the credentials rather than
+    the request — and LIST and HEAD, which carry no checksum, keep working on the
+    same key. Nothing in a stand-in client would catch that, so the real client's
+    configuration is what this holds.
+    """
+    store = S3ObjectStore("https://storage.googleapis.com", "bucket", "id", "secret")
+    config = store._client.meta.config
+    assert config.request_checksum_calculation == "when_required"
+    assert config.response_checksum_validation == "when_required"
