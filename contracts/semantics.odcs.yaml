@@ -356,8 +356,16 @@ schema:
       observed slot, including slots with no data (covered_seconds = 0, measures null).
       Energy columns are additive; condition columns are time-weighted averages over the
       covered seconds. A quarter hour rather than an hour because this is the grain
-      consumers present at: four of these fold into an hour exactly — sums add, averages
-      weight by covered_seconds — while nothing can take an hour apart again.
+      consumers present at, and because cutting a held interval at the boundaries is the
+      part that cannot be done again downstream — folding slots into an hour can.
+
+      Folding into a coarser grain (an hour, two, a day) is exact when it follows four
+      rules. Sums add: covered_seconds, the watt-hours, update_count. Averages weight by
+      covered_seconds and not by slot, so a slot that was only recorded for a third of
+      itself counts for a third: the temperatures, setpoint, external_input_ratio,
+      charging_ratio. State of charge is read at the ends — the first slot's start, the
+      last slot's end — and the change is their difference, not the sum of the slots'.
+      And a group starts on a boundary of the grain it is folded to.
     dataGranularityDescription: One quarter hour (JST) of cooler operation.
     properties:
       - name: slot_key
