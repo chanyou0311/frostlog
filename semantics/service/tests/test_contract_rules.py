@@ -5,7 +5,6 @@ pins is the logic of the rule, not BigQuery's own behaviour.
 """
 
 import re
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -16,9 +15,6 @@ yaml = pytest.importorskip("yaml")
 
 CONTRACT = Path(__file__).resolve().parents[3] / "contracts" / "semantics.odcs.yaml"
 FACT = "fact_cooler_state_update"
-NOW = datetime.now(UTC)
-OLD = NOW - timedelta(hours=48)  # arrived well beyond the 24 h the rule allows
-RECENT = NOW - timedelta(hours=1)
 
 PAYLOAD = (
     "{'serial_number': 'S1', 'setpoint_celsius': -20, 'interior_temperature_celsius': -18, "
@@ -44,11 +40,11 @@ def rule(name: str) -> str:
 
 
 def warehouse(raw: list[tuple], fact: list[tuple]) -> duckdb.DuckDBPyConnection:
-    """raw rows: (boot_id, uptime, loaded_at, decodable); fact: (boot_id, uptime)."""
+    """raw rows: (boot_id, uptime, decodable); fact rows: (boot_id, uptime)."""
     con = duckdb.connect()
     con.execute(
         "CREATE TABLE raw_cooler (boot_id VARCHAR, uptime_seconds DOUBLE, ts TIMESTAMP, "
-        "cmd VARCHAR, _loaded_at TIMESTAMPTZ, payload STRUCT("
+        "cmd VARCHAR, payload STRUCT("
         "serial_number VARCHAR, setpoint_celsius INTEGER, interior_temperature_celsius INTEGER, "
         "state_of_charge_percent INTEGER, input_watts INTEGER, charge_watts INTEGER, "
         "discharge_watts INTEGER, usb_a_output_watts INTEGER, usb_c_output_watts INTEGER, "
@@ -56,12 +52,12 @@ def warehouse(raw: list[tuple], fact: list[tuple]) -> duckdb.DuckDBPyConnection:
         "brightness VARCHAR))"
     )
     con.execute(f"CREATE TABLE {FACT} (boot_id VARCHAR, uptime_seconds DOUBLE)")
-    for boot_id, uptime, loaded_at, decodable in raw:
+    for boot_id, uptime, decodable in raw:
         payload = PAYLOAD if decodable else "NULL"
         con.execute(
-            "INSERT INTO raw_cooler VALUES (?, ?, TIMESTAMP '2026-09-01 00:00:00', '4402', ?, "
+            "INSERT INTO raw_cooler VALUES (?, ?, TIMESTAMP '2026-09-01 00:00:00', '4402', "
             f"{payload})",
-            [boot_id, uptime, loaded_at],
+            [boot_id, uptime],
         )
     for boot_id, uptime in fact:
         con.execute(f"INSERT INTO {FACT} VALUES (?, ?)", [boot_id, uptime])
@@ -69,31 +65,26 @@ def warehouse(raw: list[tuple], fact: list[tuple]) -> duckdb.DuckDBPyConnection:
 
 
 def unreflected(raw: list[tuple], fact: list[tuple]) -> int:
-    return warehouse(raw, fact).execute(rule("fresh_within_a_day")).fetchone()[0]
+    return warehouse(raw, fact).execute(rule("every_report_is_reflected")).fetchone()[0]
 
 
-def test_an_old_chunk_that_is_fully_reflected_passes() -> None:
-    assert unreflected([("b", 1, OLD, True), ("b", 2, OLD, True)], [("b", 1), ("b", 2)]) == 0
+def test_a_chunk_that_is_fully_reflected_passes() -> None:
+    assert unreflected([("b", 1, True), ("b", 2, True)], [("b", 1), ("b", 2)]) == 0
 
 
-def test_an_old_chunk_that_was_never_loaded_fails() -> None:
-    assert unreflected([("b", 1, OLD, True), ("b", 2, OLD, True)], []) == 2
+def test_a_chunk_that_was_never_built_fails() -> None:
+    assert unreflected([("b", 1, True), ("b", 2, True)], []) == 2
 
 
 def test_a_chunk_of_which_only_some_reports_were_loaded_fails() -> None:
-    assert unreflected([("b", 1, OLD, True), ("b", 2, OLD, True)], [("b", 1)]) == 1
+    assert unreflected([("b", 1, True), ("b", 2, True)], [("b", 1)]) == 1
 
 
 def test_a_report_delivered_twice_counts_once() -> None:
     # A re-cut chunk brings the same report again, in a later load. The staging
     # model keeps one copy, so one row in the fact settles both.
-    raw = [("b", 1, OLD, True), ("b", 1, OLD + timedelta(hours=1), True)]
-    assert unreflected(raw, [("b", 1)]) == 0
-
-
-def test_a_recent_arrival_is_not_due_yet() -> None:
-    assert unreflected([("b", 1, RECENT, True)], []) == 0
+    assert unreflected([("b", 1, True), ("b", 1, True)], [("b", 1)]) == 0
 
 
 def test_a_report_the_staging_model_drops_is_not_expected_in_the_table() -> None:
-    assert unreflected([("b", 1, OLD, False)], []) == 0
+    assert unreflected([("b", 1, False)], []) == 0

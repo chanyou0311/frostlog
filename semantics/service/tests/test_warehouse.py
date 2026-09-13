@@ -9,38 +9,28 @@ from pathlib import Path
 from typing import Any
 
 from frostlog_semantics import raw_schema
-from frostlog_semantics.warehouse import (
-    BigQueryWarehouse,
-    arrived_dates_sql,
-    upload_runs_sql,
-)
-
-
-def test_the_arrived_dates_query_asks_both_streams_what_landed_lately() -> None:
-    sql = arrived_dates_sql("p.d.raw_cooler", "p.d.raw_events")
-
-    assert sql.count("_loaded_at >= @since") == 2
-    assert "`p.d.raw_cooler`" in sql and "`p.d.raw_events`" in sql
-    # The days reported are the days of the records, not of the load.
-    assert "DATE(ts, 'Asia/Tokyo')" in sql
+from frostlog_semantics.warehouse import Arrivals, BigQueryWarehouse, upload_runs_sql
 
 
 def test_the_upload_run_query_reads_a_window_and_the_whole_stream() -> None:
     sql = upload_runs_sql("p.d.raw_events")
 
     # The runs themselves are the window's; what came before one is not.
-    assert "_loaded_at >= @since" in sql
+    assert "ts >= @since" in sql
     assert sql.count("kind = 'upload_started'") == 1
     assert sql.count("kind = 'upload_done'") == 2
 
 
-def test_the_raw_schema_carries_the_column_only_bigquery_fills_in() -> None:
-    for table in ("raw_cooler", "raw_events"):
-        loaded = {field.name: field for field in raw_schema.SCHEMAS[table]}
+def test_the_raw_schema_is_the_chunk_and_nothing_else() -> None:
+    """A transfer loads the bytes as they are; a column of ours would have to be written.
 
-        assert loaded["_loaded_at"].default_value_expression == "CURRENT_TIMESTAMP()"
-        # A chunk in the bucket has every other column and not this one.
-        assert "_loaded_at" not in {f.name for f in raw_schema.chunk_schema(table)}
+    And a written column costs a statement, which is what moving to a transfer was
+    for. Arrival is asked of the table's row count instead.
+    """
+    for table in ("raw_cooler", "raw_events"):
+        names = {field.name for field in raw_schema.SCHEMAS[table]}
+
+        assert not any(name.startswith("_") for name in names)
 
 
 class _Client:
@@ -77,9 +67,51 @@ def test_a_sample_is_loaded_the_way_the_transfer_loads_a_chunk(tmp_path: Path) -
     # _loaded_at to the default the schema carries.
     assert job["config"].write_disposition == "WRITE_APPEND"
     assert job["config"].ignore_unknown_values is True
-    # The schema names the file's fields only. Naming _loaded_at would make BigQuery
-    # look for it in the data and write NULL instead of evaluating its default.
     assert {f.name for f in job["config"].schema} == {
-        f.name for f in raw_schema.chunk_schema("raw_events")
+        f.name for f in raw_schema.SCHEMAS["raw_events"]
     }
-    assert "_loaded_at" not in {f.name for f in job["config"].schema}
+
+
+class _Tables:
+    """A client that answers only what a table's metadata says."""
+
+    def __init__(self, rows: dict[str, int]) -> None:
+        self.rows = rows
+        self.asked: list[str] = []
+
+    def get_table(self, name: str) -> Any:
+        self.asked.append(name)
+        return type("T", (), {"num_rows": self.rows[name.rsplit(".", 1)[-1]]})()
+
+
+def _counts(rows: dict[str, int], built: dict[str, int]) -> Arrivals:
+    client = _Tables(rows)
+    return BigQueryWarehouse(client, "p", "d", "us-central1").arrivals(built)  # ty: ignore
+
+
+def test_nothing_new_when_the_counts_have_not_moved() -> None:
+    """A transfer that finds nothing still touches the table, so the count is asked."""
+    arrivals = _counts({"raw_cooler": 100, "raw_events": 5}, {"raw_cooler": 100, "raw_events": 5})
+
+    assert arrivals.rows == 0
+
+
+def test_rows_above_the_mark_are_what_arrived() -> None:
+    arrivals = _counts({"raw_cooler": 120, "raw_events": 7}, {"raw_cooler": 100, "raw_events": 5})
+
+    assert arrivals.rows == 22
+    assert arrivals.counts == {"raw_cooler": 120, "raw_events": 7}
+
+
+def test_no_mark_at_all_means_everything_is_new() -> None:
+    """A lost mark rebuilds once more than it had to, which is the safe way to fail."""
+    arrivals = _counts({"raw_cooler": 100, "raw_events": 5}, {})
+
+    assert arrivals.rows == 105
+
+
+def test_a_table_that_shrank_is_not_counted_backwards() -> None:
+    """Raw is append-only; a smaller count means it was rebuilt, not that rows left."""
+    arrivals = _counts({"raw_cooler": 10, "raw_events": 5}, {"raw_cooler": 100, "raw_events": 5})
+
+    assert arrivals.rows == 0

@@ -37,8 +37,7 @@ class SemanticUpdated(BaseModel):
     event: Literal["semantic_updated"] = "semantic_updated"
     run_id: str
     published_at: datetime
-    date_keys: list[int]
-    raw_loaded_since: datetime
+    rows_arrived: int
     #: Always true: a run whose build failed publishes nothing (reserved field).
     build_passed: bool
     #: Filled when the run was triggered by an events chunk; empty otherwise.

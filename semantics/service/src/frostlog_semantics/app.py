@@ -34,7 +34,7 @@ from fastapi import FastAPI, HTTPException
 
 from frostlog_platform.events import Publisher, publisher_for
 from frostlog_platform.project import resolve_project
-from frostlog_semantics import raw_objects
+from frostlog_semantics.built_through import BucketBuiltThrough, BuiltThrough
 from frostlog_semantics.events import SemanticUpdated
 from frostlog_semantics.settings import Settings
 from frostlog_semantics.transform import DbtTransform, Transform
@@ -52,13 +52,14 @@ class Services:
 
     settings: Settings
     warehouse: Warehouse
+    built_through: BuiltThrough
     transform: Transform
     publisher: Publisher
 
 
 def build_services(settings: Settings | None = None) -> Services:
     """The production wiring: BigQuery, Cloud Storage and Pub/Sub through ADC."""
-    from google.cloud import bigquery
+    from google.cloud import bigquery, storage
 
     settings = settings or Settings()
     project = resolve_project(settings.gcp_project)
@@ -66,6 +67,9 @@ def build_services(settings: Settings | None = None) -> Services:
     return Services(
         settings=settings,
         warehouse=BigQueryWarehouse(client, project, settings.raw_dataset, settings.bq_location),
+        built_through=BucketBuiltThrough(
+            storage.Client(project=project), settings.collection_bucket
+        ),
         transform=DbtTransform(
             project_dir=settings.dbt_project_dir,
             profiles_dir=settings.dbt_profiles_dir,
@@ -107,13 +111,13 @@ def transform_due(services: Services) -> dict[str, Any]:
     schedule steps so that a run the scheduler missed is made good by the next one.
     """
     since = datetime.now(UTC) - timedelta(hours=services.settings.transform_lookback_hours)
-    arrivals = services.warehouse.arrivals(since)
+    arrivals = services.warehouse.arrivals(services.built_through.read())
     if not arrivals.rows:
         # Nothing came in. Replacing every table would repeat work with no new input,
         # and publishing would announce a change that did not happen. Whether to run
         # is decided by rows arriving, not by the days they fall on: a row the
         # collector could not stamp has no day and is still a reason to build.
-        log.info("nothing arrived since %s; nothing to rebuild", since)
+        log.info("raw holds nothing a build has not been given; nothing to rebuild")
         return {"status": "idle", "since": since.isoformat()}
 
     build = services.transform.build()
@@ -131,16 +135,18 @@ def transform_due(services: Services) -> dict[str, Any]:
         SemanticUpdated(
             run_id=uuid4().hex,
             published_at=datetime.now(UTC),
-            date_keys=[raw_objects.date_key(day) for day in arrivals.days],
-            raw_loaded_since=since,
+            rows_arrived=arrivals.rows,
             build_passed=True,
             upload_runs=upload_runs,
         )
     )
+    # Only now, when the build stood and the change was announced: a mark written
+    # before either would hide rows a consumer was never told about.
+    services.built_through.write(arrivals.counts)
     return {
         "status": "built",
         "since": since.isoformat(),
-        "date_keys": [raw_objects.date_key(day) for day in arrivals.days],
+        "rows_arrived": arrivals.rows,
         "upload_runs": len(upload_runs),
     }
 

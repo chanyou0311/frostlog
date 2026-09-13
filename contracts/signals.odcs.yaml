@@ -55,16 +55,10 @@ schema:
       - name: published_at
         logicalType: timestamp
         required: true
-      - name: date_keys
-        logicalType: array
+      - name: rows_arrived
+        logicalType: integer
         required: true
-        description: JST dates (yyyymmdd) of the records the warehouse loaded within the transform's lookback window, read from each record's own timestamp. These dates describe the arrivals that triggered the run; every table is rebuilt in full.
-        items:
-          logicalType: integer
-      - name: raw_loaded_since
-        logicalType: timestamp
-        required: true
-        description: The start of the window this run asked about; rows the warehouse loaded after it are what made a build due.
+        description: How many raw rows this run was given that the previous one was not. Every table is rebuilt in full regardless, so this says how much was new, not what was rebuilt.
       - name: build_passed
         logicalType: boolean
         required: true

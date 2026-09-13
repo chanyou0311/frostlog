@@ -1,7 +1,8 @@
 """Fakes for everything the two components talk to, so each can be run whole."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -25,16 +26,30 @@ HMAC_SECRET = "frostlog-collection-hmac"
 class FakeWarehouse:
     def __init__(self) -> None:
         self.runs: list[UploadRun] = []
-        self.arrived = Arrivals(rows=3, days=[date(2026, 9, 6), date(2026, 9, 7)])
+        self.arrived = Arrivals(rows=3, counts={"raw_cooler": 50, "raw_events": 5})
         self.asked_since: list[datetime] = []
+        self.asked_built_through: list[dict[str, int]] = []
 
-    def arrivals(self, since: datetime) -> Arrivals:
-        self.asked_since.append(since)
+    def arrivals(self, built_through: Mapping[str, int]) -> Arrivals:
+        self.asked_built_through.append(dict(built_through))
         return self.arrived
 
     def upload_runs(self, since: datetime) -> list[UploadRun]:
         self.asked_since.append(since)
         return self.runs
+
+
+class FakeBuiltThrough:
+    def __init__(self) -> None:
+        self.mark: dict[str, int] = {}
+        self.written: list[dict[str, int]] = []
+
+    def read(self) -> dict[str, int]:
+        return self.mark
+
+    def write(self, counts: dict[str, int]) -> None:
+        self.written.append(counts)
+        self.mark = counts
 
 
 class FakeTransform:
@@ -98,21 +113,23 @@ class Fakes:
 
     services: Services
     warehouse: FakeWarehouse
+    built_through: FakeBuiltThrough
     transform: FakeTransform
     publisher: FakePublisher
 
 
 @pytest.fixture
 def fakes() -> Fakes:
-    warehouse = FakeWarehouse()
+    warehouse, built_through = FakeWarehouse(), FakeBuiltThrough()
     transform, publisher = FakeTransform(), FakePublisher()
     services = Services(
         settings=Settings(collection_bucket=COLLECTION_BUCKET, signals_topic="frostlog-signals"),
         warehouse=warehouse,
+        built_through=built_through,
         transform=transform,
         publisher=publisher,
     )
-    return Fakes(services, warehouse, transform, publisher)
+    return Fakes(services, warehouse, built_through, transform, publisher)
 
 
 @dataclass

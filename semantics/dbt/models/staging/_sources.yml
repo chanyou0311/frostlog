@@ -10,12 +10,6 @@ sources:
     # otherwise, so the CI target finds the CI dataset without another variable.
     database: "{{ target.project }}"
     schema: "{{ env_var('FROSTLOG_BQ_RAW_DATASET', target.dataset) }}"
-    config:
-      loaded_at_field: _loaded_at
-      # The car comes home almost daily; a trip of a few days is not an incident.
-      freshness:
-        warn_after: {count: 1, period: day}
-        error_after: {count: 7, period: day}
     tables:
       # The columns tested here are the ones the collection contract declares as
       # mandatory. That contract is also tested against the bucket every day, but
