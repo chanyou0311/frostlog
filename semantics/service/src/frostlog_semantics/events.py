@@ -26,7 +26,7 @@ class UploadRun(BaseModel):
 
 
 class SemanticUpdated(BaseModel):
-    """Published after a transform run that rebuilt date partitions.
+    """Published after a transform run that rebuilt the warehouse tables.
 
     The consumer keeps its own copy of these models (notifier/src/frostlog_notifier/
     events.py): the two services deploy separately, and the contract in
@@ -37,8 +37,7 @@ class SemanticUpdated(BaseModel):
     event: Literal["semantic_updated"] = "semantic_updated"
     run_id: str
     published_at: datetime
-    date_keys: list[int]
-    raw_uploaded_at_max: datetime
+    rows_arrived: int
     #: Always true: a run whose build failed publishes nothing (reserved field).
     build_passed: bool
     #: Filled when the run was triggered by an events chunk; empty otherwise.

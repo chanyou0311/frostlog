@@ -1,18 +1,20 @@
-"""The Cloud Run service of the semantics data product: loading, and transforming.
+"""The Cloud Run service of the semantics data product: transforming.
 
-``POST /events/gcs`` is what Eventarc calls when a chunk lands in the collection
-bucket, and all it does is put the chunk into its BigQuery raw table. That happens
-every five minutes while the cooler records, which a load job is happy to do —
-BigQuery does not charge for one.
+``POST /jobs/transform`` is what Cloud Scheduler calls every hour: when rows have
+arrived lately, dbt rebuilds every table and a ``semantic_updated`` event says what
+changed. Running it on every chunk instead would cost 288 builds a day, which leaves
+both BigQuery's and Cloud Run's free tiers inside a couple of months; the contract's
+promise is a day, so an hour is not a loss.
 
-``POST /jobs/transform`` is what Cloud Scheduler calls every 30 minutes: dbt
-rebuilds the JST dates whose chunks have arrived lately and a ``semantic_updated``
-event says what changed. Running it on every chunk instead would cost 288 builds a
-day, which leaves both BigQuery's and Cloud Run's free tiers inside a couple of
-months; the contract's promise is a day, so half-hourly is not a loss.
+Getting the chunks into raw is no longer done here, or anywhere in this repository:
+a BigQuery Data Transfer Service config reads the bucket on its own schedule. The
+chunks are newline-delimited JSON whose fields are the table's, so a load needs
+nothing added to them, and loads are not billed. What used to be here was a load
+followed by a statement whose only purpose was to add two columns, and statements
+are billed -- about 11 GiB a day of a 1 TiB month, for two columns.
 
-Failing with 500 is how either endpoint asks its caller to deliver again, and a
-transform that fails publishes nothing — consumers hear about a build only once it
+Failing with 500 is how the endpoint asks Cloud Scheduler to try again, and a
+transform that fails publishes nothing -- consumers hear about a build only once it
 stands.
 
 Whether the contracts are being kept is a different question, asked once a day by
@@ -25,21 +27,19 @@ The endpoint does not authenticate: only Cloud Run IAM (OIDC) may call it.
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any
+from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, HTTPException
 
 from frostlog_platform.events import Publisher, publisher_for
 from frostlog_platform.project import resolve_project
-from frostlog_semantics import raw_objects
+from frostlog_semantics.built_through import BucketBuiltThrough, BuiltThrough
 from frostlog_semantics.events import SemanticUpdated
 from frostlog_semantics.settings import Settings
 from frostlog_semantics.transform import DbtTransform, Transform
 from frostlog_semantics.warehouse import (
     BigQueryWarehouse,
-    ObjectMetadata,
-    StorageObjectMetadata,
     Warehouse,
 )
 
@@ -52,7 +52,7 @@ class Services:
 
     settings: Settings
     warehouse: Warehouse
-    metadata: ObjectMetadata
+    built_through: BuiltThrough
     transform: Transform
     publisher: Publisher
 
@@ -67,7 +67,9 @@ def build_services(settings: Settings | None = None) -> Services:
     return Services(
         settings=settings,
         warehouse=BigQueryWarehouse(client, project, settings.raw_dataset, settings.bq_location),
-        metadata=StorageObjectMetadata(storage.Client(project=project)),
+        built_through=BucketBuiltThrough(
+            storage.Client(project=project), settings.collection_bucket
+        ),
         transform=DbtTransform(
             project_dir=settings.dbt_project_dir,
             profiles_dir=settings.dbt_profiles_dir,
@@ -93,13 +95,6 @@ def create_app(services: Services | None = None) -> FastAPI:
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.post("/events/gcs")
-    def gcs_event(
-        payload: dict[str, Any],
-        ce_time: Annotated[str | None, Header(alias="ce-time")] = None,
-    ) -> dict[str, Any]:
-        return chunk_arrived(current(), payload, ce_time)
-
     @app.post("/jobs/transform")
     def transform_job() -> dict[str, Any]:
         return transform_due(current())
@@ -107,56 +102,25 @@ def create_app(services: Services | None = None) -> FastAPI:
     return app
 
 
-def chunk_arrived(
-    services: Services, payload: dict[str, Any], ce_time: str | None = None
-) -> dict[str, Any]:
-    """Load the chunk the event describes. Rebuilding it is the transform job's work."""
-    # Eventarc sends the object either as the body (binary mode) or under `data`.
-    nested = payload.get("data")
-    body: dict[str, Any] = nested if isinstance(nested, dict) else payload
-    bucket, name = body.get("bucket"), body.get("name")
-    if not bucket or not name:
-        raise HTTPException(status_code=400, detail="event carries no bucket/name")
-
-    wanted = services.settings.collection_bucket
-    if wanted and bucket != wanted:
-        log.info("%s: not the collection bucket, ignored", bucket)
-        return {"status": "ignored", "bucket": bucket, "object": name}
-
-    chunk = raw_objects.parse(bucket, name)
-    if chunk is None:
-        log.info("%s: not a raw chunk, ignored", name)
-        return {"status": "ignored", "object": name}
-
-    uploaded_at = services.metadata.uploaded_at(chunk) or _event_time(payload, ce_time)
-    load = services.warehouse.load(chunk, uploaded_at)
-    return {
-        "status": "loaded",
-        "object": name,
-        "table": load.table,
-        "rows": load.rows,
-        "already_loaded": load.already_loaded,
-    }
-
-
 def transform_due(services: Services) -> dict[str, Any]:
-    """Rebuild for the chunks that have arrived lately, and say so if any did.
+    """Rebuild the warehouse when chunks have arrived lately, and say so if any did.
 
     The window is on arrival, not on the dates in the data: a trip's records are days
-    old when they land, and asking for "the last week of readings" would rebuild a
-    week of partitions every half hour, which is the cost this schedule exists to
-    avoid. It reaches back further than the schedule steps so that a run the
-    scheduler missed is made good by the next one rather than leaving a hole.
+    old when they land, but still need a build. The window decides whether to run,
+    while the build reads all the raw history. It reaches back further than the
+    schedule steps so that a run the scheduler missed is made good by the next one.
     """
     since = datetime.now(UTC) - timedelta(hours=services.settings.transform_lookback_hours)
-    dates = services.warehouse.arrived_dates(since)
-    if not dates:
-        # Nothing came in. Building anyway would rebuild whatever the empty date list
-        # falls back to, and publishing would announce a change that did not happen.
-        log.info("no chunk arrived since %s; nothing to rebuild", since)
+    arrivals = services.warehouse.arrivals(services.built_through.read())
+    if not arrivals.rows:
+        # Nothing came in. Replacing every table would repeat work with no new input,
+        # and publishing would announce a change that did not happen. Whether to run
+        # is decided by rows arriving, not by the days they fall on: a row the
+        # collector could not stamp has no day and is still a reason to build.
+        log.info("raw holds nothing a build has not been given; nothing to rebuild")
         return {"status": "idle", "since": since.isoformat()}
 
-    build = services.transform.build(dates)
+    build = services.transform.build()
     if not build.passed:
         # Scheduler retries; the build is idempotent and the window still holds.
         raise HTTPException(status_code=500, detail="dbt build failed")
@@ -171,29 +135,22 @@ def transform_due(services: Services) -> dict[str, Any]:
         SemanticUpdated(
             run_id=uuid4().hex,
             published_at=datetime.now(UTC),
-            date_keys=[raw_objects.date_key(day) for day in dates],
-            raw_uploaded_at_max=since,
+            rows_arrived=arrivals.rows,
             build_passed=True,
             upload_runs=upload_runs,
         )
     )
+    # Only now, when the build stood and the change was announced: a mark written
+    # before either would hide rows a consumer was never told about.
+    services.built_through.write(arrivals.counts)
     return {
         "status": "built",
         "since": since.isoformat(),
-        "date_keys": [raw_objects.date_key(day) for day in dates],
+        "rows_arrived": arrivals.rows,
         "upload_runs": len(upload_runs),
     }
 
 
-def _event_time(payload: dict[str, Any], ce_time: str | None) -> datetime:
-    """When the object was finalized, as a last resort for its upload time."""
-    for candidate in (payload.get("time"), ce_time, payload.get("timeCreated")):
-        if isinstance(candidate, str):
-            try:
-                return datetime.fromisoformat(candidate)
-            except ValueError:
-                log.warning("unreadable event time %r", candidate)
-    return datetime.now(UTC)
-
-
+#: What ``uvicorn frostlog_semantics.app:app`` imports (see semantics/Dockerfile).
+#: Building the services is deferred to the first request, so importing is cheap.
 app = create_app()

@@ -1,4 +1,4 @@
-"""The endpoints, end to end against the fakes: loading, and transforming."""
+"""The endpoints, end to end against the fakes."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -6,28 +6,17 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from frostlog_semantics.app import chunk_arrived, create_app, transform_due
+from frostlog_semantics.app import create_app, transform_due
 from frostlog_semantics.events import SemanticUpdated, UploadRun
-from tests.conftest import COLLECTION_BUCKET, Fakes
+from frostlog_semantics.warehouse import Arrivals
+from tests.conftest import Fakes
 
 
-def test_a_chunk_is_loaded_and_nothing_more(fakes: Fakes, finalized: dict) -> None:
-    """Arrival is a load. Rebuilding on every one of them is what this schedule avoids."""
-    result = chunk_arrived(fakes.services, finalized)
-
-    assert result["status"] == "loaded"
-    assert result["table"] == "raw_cooler"
-    assert fakes.warehouse.loaded[0][0] == finalized["name"]
-    assert fakes.transform.builds == []
-    assert fakes.publisher.published == []
-
-
-def test_the_transform_rebuilds_the_dates_whose_chunks_arrived(fakes: Fakes) -> None:
+def test_a_build_runs_and_announces_the_dates_whose_chunks_arrived(fakes: Fakes) -> None:
     result = transform_due(fakes.services)
 
     assert result["status"] == "built"
-    assert result["date_keys"] == [20260906, 20260907]
-    assert fakes.transform.builds == [["2026-09-06", "2026-09-07"]]
+    assert fakes.transform.builds == 1
 
 
 def test_the_update_is_announced_with_what_it_rebuilt(fakes: Fakes) -> None:
@@ -35,86 +24,41 @@ def test_the_update_is_announced_with_what_it_rebuilt(fakes: Fakes) -> None:
 
     (event,) = fakes.publisher.published
     assert isinstance(event, SemanticUpdated)
-    assert event.date_keys == [20260906, 20260907]
+    assert event.rows_arrived == 3
     assert event.build_passed is True
 
 
-def test_the_window_reaches_back_further_than_the_schedule_steps(fakes: Fakes) -> None:
-    """A missed run is made good by the next one rather than leaving a date unbuilt."""
+def test_the_upload_runs_window_reaches_past_a_single_build(fakes: Fakes) -> None:
+    """It reports runs, not arrivals: one finishing between builds must still be seen."""
     transform_due(fakes.services)
 
-    (since, _) = fakes.warehouse.asked_since
-    lookback = datetime.now(UTC) - since
-    assert lookback > timedelta(hours=24)
+    (since,) = fakes.warehouse.asked_since
+    assert datetime.now(UTC) - since > timedelta(hours=24)
 
 
 def test_nothing_arrived_means_nothing_is_built_or_announced(fakes: Fakes) -> None:
-    """An empty date list would otherwise fall back to the macro's no-op date."""
-    fakes.warehouse.arrived = []
+    fakes.warehouse.arrived = Arrivals(rows=0, counts={})
 
     result = transform_due(fakes.services)
 
     assert result["status"] == "idle"
-    assert fakes.transform.builds == []
+    assert fakes.transform.builds == 0
     assert fakes.publisher.published == []
 
 
-def test_the_upload_time_comes_from_the_object_metadata(fakes: Fakes, finalized: dict) -> None:
-    fakes.metadata.uploaded = datetime(2026, 9, 6, 11, 30, tzinfo=UTC)
+def test_rows_without_a_day_are_still_a_reason_to_build(fakes: Fakes) -> None:
+    """A record the collector could not stamp has no JST day and is still an arrival.
 
-    chunk_arrived(fakes.services, finalized)
+    Deciding on the days instead of the rows would leave the build undone until
+    something stampable happened to turn up.
+    """
+    fakes.warehouse.arrived = Arrivals(rows=2, counts={"raw_cooler": 2})
 
-    assert fakes.warehouse.loaded[0][1] == datetime(2026, 9, 6, 11, 30, tzinfo=UTC)
+    result = transform_due(fakes.services)
 
-
-def test_the_event_time_stands_in_when_the_object_has_no_metadata(
-    fakes: Fakes, finalized: dict
-) -> None:
-    del finalized["timeCreated"]
-
-    chunk_arrived(fakes.services, finalized, ce_time="2026-09-06T12:34:56+00:00")
-
-    assert fakes.warehouse.loaded[0][1] == datetime(2026, 9, 6, 12, 34, 56, tzinfo=UTC)
-
-
-def test_a_structured_cloudevent_is_understood_too(fakes: Fakes, finalized: dict) -> None:
-    result = chunk_arrived(fakes.services, {"time": "2026-09-06T12:00:00+00:00", "data": finalized})
-
-    assert result["status"] == "loaded"
-
-
-def test_an_object_that_is_not_a_chunk_is_left_alone(fakes: Fakes) -> None:
-    result = chunk_arrived(fakes.services, {"bucket": COLLECTION_BUCKET, "name": "logs/upload.txt"})
-
-    assert result["status"] == "ignored"
-    assert fakes.warehouse.loaded == []
-    assert fakes.transform.builds == []
-    assert fakes.publisher.published == []
-
-
-def test_an_event_about_another_bucket_is_ignored(fakes: Fakes, finalized: dict) -> None:
-    finalized["bucket"] = "somebody-elses-bucket"
-
-    result = chunk_arrived(fakes.services, finalized)
-
-    assert result["status"] == "ignored"
-    assert fakes.warehouse.loaded == []
-    assert fakes.transform.builds == []
-
-
-def test_an_event_without_an_object_is_a_bad_request(fakes: Fakes) -> None:
-    with pytest.raises(HTTPException) as raised:
-        chunk_arrived(fakes.services, {"kind": "storage#object"})
-
-    assert raised.value.status_code == 400
-
-
-def test_a_redelivery_is_still_a_load(fakes: Fakes, finalized: dict) -> None:
-    fakes.warehouse.already_loaded = True
-
-    result = chunk_arrived(fakes.services, finalized)
-
-    assert result["already_loaded"] is True
+    assert result["status"] == "built"
+    assert fakes.transform.builds == 1
+    assert result["rows_arrived"] == 2
 
 
 def test_a_failed_build_asks_for_another_run_and_announces_nothing(fakes: Fakes) -> None:
@@ -155,9 +99,37 @@ def test_the_runs_of_every_events_chunk_in_the_window_are_announced(fakes: Fakes
     assert result["upload_runs"] == 2
 
 
-def test_the_routes_are_wired(fakes: Fakes, finalized: dict) -> None:
+def test_the_routes_are_wired(fakes: Fakes) -> None:
+    """Two of them now: the service stopped being the way chunks get in."""
     client = TestClient(create_app(fakes.services))
 
     assert client.get("/healthz").json() == {"status": "ok"}
-    assert client.post("/events/gcs", json=finalized).json()["status"] == "loaded"
     assert client.post("/jobs/transform").json()["status"] == "built"
+    assert client.post("/events/gcs", json={}).status_code == 404
+
+
+def test_a_failed_build_leaves_the_mark_where_it_was(fakes: Fakes) -> None:
+    """The mark is a promise that a build was given those rows. A failure made none."""
+    fakes.transform.passed = False
+
+    with pytest.raises(HTTPException):
+        transform_due(fakes.services)
+
+    assert fakes.built_through.written == []
+
+
+def test_an_unannounced_build_leaves_the_mark_where_it_was(fakes: Fakes) -> None:
+    """A build nobody was told about must be redone; moving the mark would hide it."""
+    fakes.publisher.fails = True
+
+    with pytest.raises(RuntimeError):
+        transform_due(fakes.services)
+
+    assert fakes.built_through.written == []
+
+
+def test_the_mark_records_what_the_build_was_given(fakes: Fakes) -> None:
+    """Not the rows that arrived -- the counts the tables stood at when it ran."""
+    transform_due(fakes.services)
+
+    assert fakes.built_through.written == [fakes.warehouse.arrived.counts]

@@ -9,12 +9,12 @@ unit_tests:
       nothing. The unknown row reaches back to the first sign of the cooler, so a
       state update recorded before the first handshake still finds its version.
     given:
-      - input: ref('stg_cooler_negotiation')
+      - input: ref('stg_collection__cooler_negotiation')
         rows:
           - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.0.0', negotiated_at: '2026-09-01 00:00:00+00'}
           - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.1.0', negotiated_at: '2026-09-05 00:00:00+00'}
           - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.1.0', negotiated_at: '2026-09-06 00:00:00+00'}
-      - input: ref('stg_cooler_state_update')
+      - input: ref('stg_collection__cooler_state_update')
         rows:
           - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-08-31 00:00:00+00'}
     expect:
@@ -35,10 +35,10 @@ unit_tests:
       is not yet known. The unknown row is kept with an empty window because the
       first sign of this cooler is already a handshake.
     given:
-      - input: ref('stg_cooler_negotiation')
+      - input: ref('stg_collection__cooler_negotiation')
         rows:
           - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.0.0', negotiated_at: '2026-09-02 00:00:00+00'}
-      - input: ref('stg_cooler_state_update')
+      - input: ref('stg_collection__cooler_state_update')
         rows:
           - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-09-02 00:01:00+00'}
     expect:
@@ -64,11 +64,11 @@ unit_tests:
       earlier time. The episode now opens a day earlier, but both keys are the
       ones from the preceding test; facts from boot 2 can still resolve them.
     given:
-      - input: ref('stg_cooler_negotiation')
+      - input: ref('stg_collection__cooler_negotiation')
         rows:
           - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.0.0', negotiated_at: '2026-09-02 00:00:00+00'}
           - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.0.0', negotiated_at: '2026-09-01 00:00:00+00'}
-      - input: ref('stg_cooler_state_update')
+      - input: ref('stg_collection__cooler_state_update')
         rows:
           - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-09-02 00:01:00+00'}
           - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-09-01 00:01:00+00'}
@@ -95,9 +95,9 @@ unit_tests:
       the serial alone, so neither an earlier first sign nor a different address
       in a later chunk can take it away from this boot's facts.
     given:
-      - input: ref('stg_cooler_negotiation')
+      - input: ref('stg_collection__cooler_negotiation')
         rows: []
-      - input: ref('stg_cooler_state_update')
+      - input: ref('stg_collection__cooler_state_update')
         rows:
           - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-09-02 00:01:00+00'}
     expect:
@@ -117,13 +117,13 @@ unit_tests:
       The first handshake turns up in a later batch, dated before the state
       report. The unknown window is now empty, but the preceding test's key
       remains, even though a new state report has changed the last address seen.
-      The old fact can name unknown firmware until its boot is rebuilt without
+      The old fact can name unknown firmware until the fact table is rebuilt without
       becoming a dangling reference in the meantime.
     given:
-      - input: ref('stg_cooler_negotiation')
+      - input: ref('stg_collection__cooler_negotiation')
         rows:
           - {serial_number: 'COOLER-1', bluetooth_address: 'F4:9D:8A:C3:4F:84', chip: 'A1', firmware_version: '1.0.0', negotiated_at: '2026-09-01 00:00:00+00'}
-      - input: ref('stg_cooler_state_update')
+      - input: ref('stg_collection__cooler_state_update')
         rows:
           - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:84', model: 'everfrost', updated_at: '2026-09-02 00:01:00+00'}
           - {serial_number: 'COOLER-1', address: 'F4:9D:8A:C3:4F:85', model: 'everfrost', updated_at: '2026-09-03 00:01:00+00'}
@@ -145,9 +145,6 @@ unit_tests:
 
   - name: slots_are_dense_and_energy_is_integrated_over_the_covered_seconds
     model: fact_cooler_snapshot
-    overrides:
-      macros:
-        is_incremental: false
     description: >
       Watt-hours are the sum of watts times the seconds inside the slot, conditions
       are averages weighted the same way, a report that straddles a boundary is cut
@@ -248,16 +245,12 @@ unit_tests:
 
   - name: a_corrected_report_is_placed_on_the_date_it_really_happened
     model: fact_cooler_state_update
-    overrides:
-      macros:
-        is_incremental: false
     description: >
       The JST date of a report is the date of its corrected time, not of the time the
-      Pi wrote down before NTP had caught up: the row moves from 2020 to the evening
-      it was really made. Its key does not depend on the time at all, so the merge
-      moves the row instead of writing a second copy on the new date.
+      Pi wrote down before NTP had caught up. Rebuilding places the row on that date
+      while preserving its key and the raw timestamp for comparison.
     given:
-      - input: ref('stg_cooler_state_update')
+      - input: ref('stg_collection__cooler_state_update')
         rows:
           - {state_update_key: 'k1', boot_id: 'boot-1', uptime_seconds: 100.0, updated_at: '2026-09-06 15:30:00+00', updated_at_raw: '2020-01-01 00:00:00+00', timestamp_corrected: true, serial_number: 'COOLER-1', battery_serial_number: 'BATTERY-1', held_seconds: 600.0}
           - {state_update_key: 'k2', boot_id: 'boot-1', uptime_seconds: 200.0, updated_at: '2026-09-06 15:40:00+00', updated_at_raw: '2026-09-06 15:40:00+00', timestamp_corrected: false, serial_number: 'COOLER-1', battery_serial_number: 'BATTERY-1', held_seconds: 600.0}
@@ -274,9 +267,6 @@ unit_tests:
 
   - name: a_full_battery_is_not_charging
     model: fact_cooler_snapshot
-    overrides:
-      macros:
-        is_incremental: false
     description: >
       `full` is the fifth battery state: charging finished, the cooler on external
       power at 100 % with nothing flowing either way. It is not charging, so only

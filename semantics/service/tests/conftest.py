@@ -1,8 +1,8 @@
 """Fakes for everything the two components talk to, so each can be run whole."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -13,12 +13,11 @@ from frostlog_contracts.tester import ContractTestResult
 from frostlog_platform.events import Event
 from frostlog_semantics.app import Services
 from frostlog_semantics.events import UploadRun
-from frostlog_semantics.raw_objects import RawObject
 from frostlog_semantics.settings import Settings
 from frostlog_semantics.transform import BuildResult
-from frostlog_semantics.warehouse import LoadResult
+from frostlog_semantics.warehouse import Arrivals
 
-#: The bucket the deployment watches; anything else is somebody else's event.
+#: The collection product's bucket, as the settings carry it.
 COLLECTION_BUCKET = "chanyou-frostlog-collection"
 #: The HMAC secret the contract test reads before it can look in that bucket.
 HMAC_SECRET = "frostlog-collection-hmac"
@@ -26,18 +25,13 @@ HMAC_SECRET = "frostlog-collection-hmac"
 
 class FakeWarehouse:
     def __init__(self) -> None:
-        self.loaded: list[tuple[str, datetime]] = []
-        self.already_loaded = False
         self.runs: list[UploadRun] = []
-        self.arrived: list[date] = [date(2026, 9, 6), date(2026, 9, 7)]
+        self.arrived = Arrivals(rows=3, counts={"raw_cooler": 50, "raw_events": 5})
         self.asked_since: list[datetime] = []
+        self.asked_built_through: list[dict[str, int]] = []
 
-    def load(self, chunk: RawObject, uploaded_at: datetime) -> LoadResult:
-        self.loaded.append((chunk.name, uploaded_at))
-        return LoadResult(table=chunk.table, rows=3, already_loaded=self.already_loaded)
-
-    def arrived_dates(self, since: datetime) -> list[date]:
-        self.asked_since.append(since)
+    def arrivals(self, built_through: Mapping[str, int]) -> Arrivals:
+        self.asked_built_through.append(dict(built_through))
         return self.arrived
 
     def upload_runs(self, since: datetime) -> list[UploadRun]:
@@ -45,21 +39,26 @@ class FakeWarehouse:
         return self.runs
 
 
-class FakeMetadata:
+class FakeBuiltThrough:
     def __init__(self) -> None:
-        self.uploaded: datetime | None = None
+        self.mark: dict[str, int] = {}
+        self.written: list[dict[str, int]] = []
 
-    def uploaded_at(self, chunk: RawObject) -> datetime | None:
-        return self.uploaded
+    def read(self) -> dict[str, int]:
+        return self.mark
+
+    def write(self, counts: dict[str, int]) -> None:
+        self.written.append(counts)
+        self.mark = counts
 
 
 class FakeTransform:
     def __init__(self) -> None:
         self.passed = True
-        self.builds: list[list[str]] = []
+        self.builds = 0
 
-    def build(self, target_dates: Sequence[date]) -> BuildResult:
-        self.builds.append([day.isoformat() for day in target_dates])
+    def build(self) -> BuildResult:
+        self.builds += 1
         return BuildResult(passed=self.passed, command=["dbt", "build"], output="")
 
 
@@ -114,23 +113,23 @@ class Fakes:
 
     services: Services
     warehouse: FakeWarehouse
-    metadata: FakeMetadata
+    built_through: FakeBuiltThrough
     transform: FakeTransform
     publisher: FakePublisher
 
 
 @pytest.fixture
 def fakes() -> Fakes:
-    warehouse, metadata = FakeWarehouse(), FakeMetadata()
+    warehouse, built_through = FakeWarehouse(), FakeBuiltThrough()
     transform, publisher = FakeTransform(), FakePublisher()
     services = Services(
         settings=Settings(collection_bucket=COLLECTION_BUCKET, signals_topic="frostlog-signals"),
         warehouse=warehouse,
-        metadata=metadata,
+        built_through=built_through,
         transform=transform,
         publisher=publisher,
     )
-    return Fakes(services, warehouse, metadata, transform, publisher)
+    return Fakes(services, warehouse, built_through, transform, publisher)
 
 
 @dataclass
@@ -161,13 +160,3 @@ def job() -> ContractFakes:
         ping=pinged.append,
     )
     return ContractFakes(services, tester, publisher, secrets, pinged)
-
-
-@pytest.fixture
-def finalized() -> dict:
-    """The body Eventarc sends for a finalized object."""
-    return {
-        "bucket": COLLECTION_BUCKET,
-        "name": "v1/cooler/dt=2026-09-06/000000122880.jsonl.gz",
-        "timeCreated": datetime(2026, 9, 6, 12, tzinfo=UTC).isoformat(),
-    }

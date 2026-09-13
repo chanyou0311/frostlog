@@ -4,18 +4,13 @@ sources:
   - name: raw
     description: >
       The collection data product (contracts/collection.odcs.yaml) as loaded into BigQuery,
-      one table per stream. Rows are immutable; a chunk that arrives late simply adds
-      rows to an old day.
+      one table per stream. Rows are only ever appended: a chunk that waited for the car to
+      come home lands now, carrying the timestamps of the days it was recorded on, and never
+      rewrites a row already here.
     # The raw tables live beside the models unless FROSTLOG_BQ_RAW_DATASET says
     # otherwise, so the CI target finds the CI dataset without another variable.
     database: "{{ target.project }}"
     schema: "{{ env_var('FROSTLOG_BQ_RAW_DATASET', target.dataset) }}"
-    config:
-      loaded_at_field: uploaded_at
-      # The car comes home almost daily; a trip of a few days is not an incident.
-      freshness:
-        warn_after: {count: 1, period: day}
-        error_after: {count: 7, period: day}
     tables:
       # The columns tested here are the ones the collection contract declares as
       # mandatory. That contract is also tested against the bucket every day, but

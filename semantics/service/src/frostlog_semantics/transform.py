@@ -1,20 +1,17 @@
-"""Running the dbt project for the dates a chunk touched.
+"""Running the dbt project.
 
-dbt is a command line tool, so it is run as one. The dates to rebuild are handed
-over as the ``target_dates`` variable; the fact models turn them into the static
-partition list of their ``insert_overwrite`` strategy, so a run rewrites exactly
-those JST dates and leaves the rest of the table alone.
+Every table is rebuilt in full, so ``dbt build`` typed by hand does exactly what
+the service does. The caller supplies no dates or row selection: later arrivals
+can change earlier reports as well as add new ones.
 
-Only one run may be in flight at a time: two runs rebuilding the same partition
-would overwrite each other. Nothing here enforces that — the service is deployed
-with concurrency 1 and max-instances 1, which makes Cloud Run the lock.
+Only one run may be in flight at a time: two runs rebuilding the same tables
+could overwrite a newer result with an older one. Nothing here enforces that — the
+service is deployed with concurrency 1 and max-instances 1, which makes Cloud Run
+the lock.
 """
 
-import json
 import logging
-from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 from typing import Protocol
 
@@ -22,7 +19,7 @@ from frostlog_platform import shell
 
 log = logging.getLogger(__name__)
 
-#: A build of a few date partitions takes seconds; anything beyond this is stuck.
+#: The current warehouse builds in minutes; fifteen minutes leaves room for job startup.
 BUILD_TIMEOUT_SECONDS = 900
 
 
@@ -34,7 +31,7 @@ class BuildResult:
 
 
 class Transform(Protocol):
-    def build(self, target_dates: Sequence[date]) -> BuildResult: ...
+    def build(self) -> BuildResult: ...
 
 
 class DbtTransform:
@@ -54,7 +51,7 @@ class DbtTransform:
         self._environment = environment
         self._select = select
 
-    def build(self, target_dates: Sequence[date]) -> BuildResult:
+    def build(self) -> BuildResult:
         command = [
             "dbt",
             "build",
@@ -64,8 +61,13 @@ class DbtTransform:
             str(self._profiles_dir),
             "--target",
             self._target,
-            "--vars",
-            json.dumps({"target_dates": [day.isoformat() for day in target_dates]}),
+            # Unit tests are about the SQL, not about the data, and every one of
+            # them is a query the warehouse charges its ten-mebibyte minimum for.
+            # They belong to the build that changed the SQL: `make ci-warehouse`
+            # runs them on their own, against the CI dataset, before anything is
+            # merged. Running them again every hour in production buys nothing.
+            "--exclude-resource-type",
+            "unit_test",
         ]
         if self._select:
             command += ["--select", self._select]

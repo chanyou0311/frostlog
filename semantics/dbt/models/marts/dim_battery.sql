@@ -8,7 +8,7 @@ with seen as (
     select
         battery_serial_number as serial_number,
         min(updated_at) as first_seen_at
-    from {{ ref('stg_cooler_state_update') }}
+    from {{ ref('stg_collection__cooler_state_update') }}
     where battery_serial_number is not null
     group by battery_serial_number
 

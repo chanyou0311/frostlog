@@ -55,16 +55,10 @@ schema:
       - name: published_at
         logicalType: timestamp
         required: true
-      - name: date_keys
-        logicalType: array
+      - name: rows_arrived
+        logicalType: integer
         required: true
-        description: JST dates (yyyymmdd) whose partitions were rebuilt.
-        items:
-          logicalType: integer
-      - name: raw_uploaded_at_max
-        logicalType: timestamp
-        required: true
-        description: Latest raw chunk upload time processed by this run (watermark).
+        description: How many raw rows this run was given that the previous one was not. Every table is rebuilt in full regardless, so this says how much was new, not what was rebuilt.
       - name: build_passed
         logicalType: boolean
         required: true
@@ -73,15 +67,32 @@ schema:
         logicalType: array
         required: false
         description: >
-          The collector's upload runs this event's chunk reported as finished; empty
-          unless the chunk was an events chunk.
+          The collector's upload runs that reached the warehouse lately: the
+          `upload_done` events in raw whose ingestion-time partition falls in the
+          build's lookback window (a day and an hour — longer than the hourly
+          schedule, so a run that ended between two builds is still reported). Empty
+          when no such event arrived. Nothing ties this to what arrived in the other
+          stream: the row counts decide whether to build and rows_arrived says how
+          much was new, while this says who was uploading.
+
+          The window is on arrival rather than on the event's own `ts`, because a run
+          that ends just after the car comes home is the run whose clock is least to
+          be trusted — the Pi's wall clock is whatever the hardware clock kept while
+          the power was off, until NTP catches up — and it is also the run a consumer
+          most wants announced. A backlog that lands days after it was recorded is
+          therefore announced when it lands, carrying its own (possibly wrong) `ts` in
+          finished_at.
+
+          The window is far longer than the gap between builds, and rounded outwards
+          to the day, so the same run is reported by more than one event; consumers
+          deduplicate on finished_at.
 
           It is the report of a run having ended, and no more than that. It does not
-          say that the run's other chunks are loaded, or transformed, or that the run
-          shipped everything it had: a chunk arrives on its own and may be late or
-          retried, and the collector writes upload_done after the PUTs that succeeded
-          rather than after the ones it owed. So a consumer summarises from the model as
-          it stands when the event arrives, and what it summarised may change later.
+          say that the run's chunks are loaded, or transformed, or that the run
+          shipped everything it had: a transfer picks the bucket up on its own
+          schedule, and the collector writes upload_done after the PUTs that succeeded
+          rather than after the ones it owed. So a consumer summarises from the model
+          as it stands when the event arrives, and what it summarised may change later.
 
           previous_finished_at is the end of the run before this one. What a long gap
           between the two means — a trip, a cooler switched off, a Pi that could not
@@ -149,8 +160,11 @@ slaProperties:
     element: semantic_updated.published_at
     description: Published right after the transform run that rebuilt tables; the notifier receives it within about a minute.
   - property: frequency
-    value: on-arrival
-    description: semantic_updated on every raw chunk that lands; quality_report daily.
+    value: hourly
+    description: >
+      semantic_updated at most once an hour: the transform is scheduled hourly and
+      publishes only when raw holds rows the last build was not given, so a quiet hour
+      produces no event at all. quality_report daily.
 
 support:
   - channel: github
@@ -167,4 +181,4 @@ team:
 customProperties:
   - property: changePolicy
     value: additive-only
-    description: Fields may be added; renaming, removing or re-typing a field bumps the major version and is published as a new event name.
+    description: Fields may be added; renaming, removing or re-typing a field bumps the major version and is published as a new event name. This holds from the moment the contract's status is `active`; while it is a draft the shape is still being settled and may change in ways a consumer could not survive, which is what draft means and why CI checks for breaking changes only once a contract is active.

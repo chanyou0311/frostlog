@@ -2,19 +2,18 @@
 
 The repository keeps one uncompressed day of each stream under
 ``contracts/samples/collection/<stream>/<UTC date>.json``. ``make ci-warehouse`` loads
-them into the CI dataset through the service's own load path — same schema, same
-staging table, same append statement — and then lets dbt and datacontract-cli
-work on the result. Nothing is faked, so what CI proves is what production does.
+them into the CI dataset with the same kind of load job the transfer issues in
+production — same schema, same format, the same ingestion-time partition — and then
+lets dbt and datacontract-cli work on the result.
 
 The tables are dropped and recreated first: CI rebuilds the dataset, it does not
 add to it.
 """
 
 import argparse
-import json
 import logging
 import sys
-from datetime import UTC, date, datetime, time, timedelta
+import tempfile
 from pathlib import Path
 
 from frostlog_platform.project import resolve_project
@@ -37,33 +36,32 @@ def sample_chunks(contracts_dir: Path) -> list[tuple[Path, str]]:
     return found
 
 
-def source_key(path: Path, stream: str) -> str:
-    """The object name this sample would have in the bucket (it is one UTC day)."""
-    return f"v1/{stream}/dt={path.stem}/{0:012d}.jsonl"
+def split(path: Path, workspace: Path) -> list[Path]:
+    """The sample cut in two where the Pi would have cut it.
 
-
-def uploaded_at(path: Path) -> datetime:
-    """When this sample would have been uploaded: just after its UTC day closed.
-
-    Real chunks are uploaded minutes after they are recorded; the contract's
-    currency rule compares uploads with updates, so the samples keep that shape
-    instead of claiming to have been uploaded at test time.
+    The uploader ships whatever has been written since the last chunk, so a record
+    can be the last one in its delivery. Cutting a sample the same way is how CI
+    checks that a chunk boundary does not end a state: the report before the cut has
+    its successor in the second delivery, and held_seconds and the energy derived
+    from it must account for that neighbour across the boundary.
     """
-    day = date.fromisoformat(path.stem)
-    return datetime.combine(day + timedelta(days=1), time(0, 5), tzinfo=UTC)
+    lines = path.read_bytes().splitlines(keepends=True)
+    head, tail = lines[: len(lines) // 2], lines[len(lines) // 2 :]
+    parts = []
+    for index, part in enumerate((head, tail)):
+        cut = workspace / f"{path.stem}.{index}.json"
+        cut.write_bytes(b"".join(part))
+        parts.append(cut)
+    return parts
 
 
-def target_dates(chunks: list[tuple[Path, str]]) -> list[str]:
-    """The JST dates the samples touch, as dbt's ``target_dates`` variable wants them."""
-    days: set[str] = set()
-    for path, _ in chunks:
-        for day in raw_objects.target_dates(datetime.fromisoformat(path.stem).date()):
-            days.add(day.isoformat())
-    return sorted(days)
+def load(settings: Settings, part: int | None = None) -> None:
+    """Rebuild the CI raw tables from the samples.
 
-
-def load(settings: Settings) -> None:
-    """Rebuild the CI raw tables from the samples."""
+    ``part`` loads only the first or only the second half of every sample, as two
+    deliveries rather than one. Part 1 empties the tables first, as a whole load
+    does; part 2 adds to what is there, because that is the situation being tested.
+    """
     from google.cloud import bigquery
 
     from frostlog_semantics.warehouse import BigQueryWarehouse
@@ -76,30 +74,40 @@ def load(settings: Settings) -> None:
         settings.bq_dataset_ci,
         settings.bq_location,
     )
+    # A load job writes to a table, it does not make one, so every run has to say
+    # which tables it expects. Part 2 adds to what part 1 left, so it only ensures.
     for table in sorted({raw_objects.TABLES[stream] for _, stream in chunks}):
+        if part == 2:
+            warehouse.ensure_table(table)
+            continue
         warehouse.reset_table(table)
         log.info("%s.%s: emptied", settings.bq_dataset_ci, table)
-    for path, stream in chunks:
-        result = warehouse.load_file(
-            path, raw_objects.TABLES[stream], source_key(path, stream), uploaded_at(path)
-        )
-        log.info("%s: %d row(s) into %s", path.name, result.rows, result.table)
+    with tempfile.TemporaryDirectory() as workspace:
+        for path, stream in chunks:
+            for cut in _deliveries(path, Path(workspace), part):
+                result = warehouse.load_file(cut, raw_objects.TABLES[stream])
+                log.info("%s: %d row(s) into %s", cut.name, result.rows, result.table)
+
+
+def _deliveries(path: Path, workspace: Path, part: int | None) -> list[Path]:
+    """Which of the sample's halves this load ships."""
+    if part is None:
+        return [path]
+    return [split(path, workspace)[part - 1]]
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--target-dates",
-        action="store_true",
-        help="print the dbt --vars covering the samples instead of loading them",
+        "--part",
+        type=int,
+        choices=(1, 2),
+        help="load only this half of every sample, as one of two deliveries",
     )
     arguments = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(message)s")
     settings = Settings()
-    if arguments.target_dates:
-        print(json.dumps({"target_dates": target_dates(sample_chunks(settings.contracts_dir))}))
-        return 0
-    load(settings)
+    load(settings, arguments.part)
     return 0
 
 

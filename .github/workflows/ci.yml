@@ -48,10 +48,19 @@ jobs:
           for path in contracts/*.odcs.yaml; do
             uvx --python 3.13 --from "$DATACONTRACT_CLI" datacontract lint "$path"
           done
-      - name: datacontract breaking (against main)
+      # A contract promises nothing until it says it is active. While it is a draft
+      # its shape is still being settled and may change in ways a consumer could not
+      # survive -- there is no consumer yet. What `active` turns on is this check,
+      # and with it the additive-only policy the contracts declare.
+      - name: datacontract breaking (active contracts, against main)
         run: |
           git fetch --depth=1 origin main
           for path in contracts/*.odcs.yaml; do
+            status=$(sed -n 's/^status: *//p' "$path" | head -1)
+            if [ "$status" != "active" ]; then
+              echo "$path is $status; a breaking change is allowed until it is active"
+              continue
+            fi
             if git cat-file -e "origin/main:$path" 2>/dev/null; then
               git show "origin/main:$path" > "$RUNNER_TEMP/$(basename "$path")"
               uvx --python 3.13 --from "$DATACONTRACT_CLI" datacontract breaking \

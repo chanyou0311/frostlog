@@ -27,9 +27,9 @@ description:
     Estimates (next-morning level, hours left, next pull-down time) are not stored: they
     are computed by consumers from these actuals.
   limitations: >
-    Every table is rebuilt from raw for the affected dates on each arrival, so rows can
-    change until the raw for that day has fully arrived (late arrival after trips is
-    normal). Timestamps of records made before NTP synchronized are corrected from the
+    Every table is rebuilt in full from raw on each transform run, so later arrivals
+    can change earlier rows (late arrival after trips is normal). Timestamps of
+    records made before NTP synchronized are corrected from the
     same boot's synced records when possible (timestamp_corrected); otherwise they are
     left as recorded. Values are in °C, W, Wh, percent and seconds; the cooler's own
     resolution is 1 °C and 1 W.
@@ -115,11 +115,6 @@ schema:
         physicalType: FLOAT64
         required: true
         description: Seconds since the Pi booted; order and spacing within a boot.
-      - name: source_key
-        logicalType: string
-        physicalType: STRING
-        required: true
-        description: Raw object name the row came from, for tracing back to the collection data product.
       - name: external_input
         logicalType: boolean
         physicalType: BOOL
@@ -257,9 +252,9 @@ schema:
           How long a state is taken to hold: until the next update of the same boot, at
           most the ten minutes after which the cooler repeats itself anyway. Recomputed
           here rather than only bounded, because the number that matters is not "under
-          600" but "the right gap": a run rebuilds the boots its chunk touched, and a row
-          whose neighbour arrived after it was last written would keep a hold that is too
-          long — and every aggregate weights by it.
+          600" but "the right gap": a report's successor can arrive in another chunk,
+          and stopping at that boundary would leave a hold that is too long — and
+          every aggregate weights by it.
         query: >
           SELECT COUNT(*) FROM (
             SELECT
@@ -312,23 +307,43 @@ schema:
           LEFT JOIN {project}.{dataset}.dim_date d ON d.date_key = f.date_key
           WHERE c.cooler_key IS NULL OR b.battery_key IS NULL OR d.date_key IS NULL
         mustBe: 0
-      - name: fresh_within_a_day
+      - name: every_report_is_reflected
         type: sql
-        dimension: timeliness
+        dimension: completeness
         description: >
-          Every state report that arrived more than 24 hours ago is in this table. Counted
-          per report by its natural key (boot_id, uptime_seconds), over the raw rows the
-          transform keeps (the same conditions as the staging model), so a report that
-          reached the bucket twice (a re-cut chunk) is reflected once and counts as
-          reflected, and a chunk of which only some reports were loaded is caught. About
-          arrival and reflection, not about how old the observations are: a trip's data
-          arrives days after it was recorded and passes once loaded. Whether raw arrives at
-          all is the collector's healthcheck (contracts/collection.odcs.yaml, timeliness).
+          Every state report that reached raw more than two hours ago, and that the
+          semantic models keep, is in this table. Counted per report by its natural
+          key (boot_id, uptime_seconds), over the raw rows the transform keeps (the
+          same conditions as the staging model), so a report that reached the bucket
+          twice is reflected once and counts as reflected, and a chunk of which only
+          some reports were loaded is caught.
+
+          The two hours are the wait a row is owed, not a tolerance for loss. A
+          transfer runs every fifteen minutes and a build every hour, so a row that
+          lands a moment after one build waits nearly an hour for the next; two hours
+          clears that with room for the build itself. Without the wait this rule would
+          fail almost every night, because the daily check runs at 03:07 and transfers
+          land between the 03:00 build and it.
+
+          It is measured on `_PARTITIONTIME`, when the row landed, not on `ts`, when
+          the cooler spoke: a trip's backlog is recorded days before it reaches the
+          bucket, and it is owed the same two hours from its arrival, not from its
+          recording. `_PARTITIONTIME` is a pseudo-column of the ingestion-time
+          partitioning, so no load job can name it and none can null it -- which is
+          what happened to the ordinary column this rule used to read.
+
+          CI cannot exercise this rule: everything it loads is minutes old, so the
+          wait excludes all of it. The rule's edges are pinned in DuckDB instead
+          (semantics/service/tests/test_contract_rules.py).
+
+          Whether raw arrives at all is the collector's healthcheck
+          (contracts/collection.odcs.yaml, timeliness).
         query: >
           SELECT COUNT(*) FROM (
             SELECT DISTINCT r.boot_id, r.uptime_seconds
             FROM {project}.{dataset}.raw_cooler r
-            WHERE r.cmd = '4402'
+            WHERE r._PARTITIONTIME < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR)
+              AND r.cmd = '4402'
               AND r.boot_id IS NOT NULL AND r.uptime_seconds IS NOT NULL AND r.ts IS NOT NULL
               AND r.payload.serial_number IS NOT NULL
               AND r.payload.setpoint_celsius IS NOT NULL
@@ -343,7 +358,6 @@ schema:
               AND r.payload.display_unit IS NOT NULL
               AND r.payload.protection_level IS NOT NULL
               AND r.payload.brightness IS NOT NULL
-              AND r.uploaded_at < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
               AND NOT EXISTS (
                 SELECT 1 FROM {project}.{dataset}.{model} f
                 WHERE f.boot_id = r.boot_id AND f.uptime_seconds = r.uptime_seconds
@@ -1000,15 +1014,16 @@ slaProperties:
     value: 24
     unit: h
     element: fact_cooler_state_update.updated_at
-    description: "Tables reflect a raw update within 24 hours of its upload. The transform actually runs every 30 minutes, so the usual wait is that rather than a day."
+    description: "Tables reflect a raw update within 24 hours of its upload. The transform actually runs hourly, so the usual wait is that rather than a day."
   - property: frequency
-    value: every-30-minutes
+    value: hourly
     description: >
-      A chunk is loaded into raw as it lands, which is every five minutes while the
-      cooler is recording; the tables this contract describes are rebuilt from raw
-      every 30 minutes. Loading and transforming are separated because a load job
-      costs nothing to run often and a transform does not. The contract test runs
-      daily.
+      A BigQuery Data Transfer Service config loads whatever is new in the bucket into
+      raw every fifteen minutes, with none of our code in the path; the tables this
+      contract describes are rebuilt from raw hourly, and an hour that brought no row
+      the last build was missing rebuilds nothing. Loading and transforming are
+      separated, and run on schedules of their own, because a load job is not billed
+      and a transform is. The contract test runs daily.
   - property: retention
     value: unlimited
     description: Tables are rebuildable from raw; nothing is deleted.
@@ -1031,10 +1046,10 @@ team:
 customProperties:
   - property: changePolicy
     value: additive-only
-    description: Columns, tables and event fields may be added. Renaming, removing or re-typing a column, or changing its meaning, bumps the major version and is published as a new dbt model version.
+    description: Columns, tables and event fields may be added. Renaming, removing or re-typing a column, or changing its meaning, bumps the major version and is published as a new dbt model version. This holds from the moment the contract's status is `active`; while it is a draft the shape is still being settled and may change in ways a consumer could not survive, which is what draft means and why CI checks for breaking changes only once a contract is active.
   - property: rebuildRule
-    value: by-arrived-boot
-    description: Each arrival rebuilds every row of every boot its chunks touched, and the JST dates those rows fall on now or fell on before their timestamps were corrected; a full rebuild is always possible.
+    value: full-table
+    description: Each transform run replaces every table with its complete result from raw. A corrected timestamp places a row on its new date without leaving its old placement behind, and later arrivals can change earlier rows' held_seconds and dimension keys. No date or boot limits what a build considers.
   - property: rules
     value: "held_seconds cap 600 s; ts correction from the first NTP-synced update of the same boot; pull-down start = interior >= setpoint + 5 C, reached = interior <= setpoint + 1 C, first update after >= 15 min silence counts as start_up; snapshot rows are dense over JST quarter hours; band joins are half-open [lower, upper)"
   - property: estimatesNotStored

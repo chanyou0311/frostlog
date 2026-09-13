@@ -11,9 +11,7 @@ with negotiated as (
         serial,
         address,
         chip,
-        firmware,
-        source_key,
-        uploaded_at
+        firmware
     from {{ source('raw', 'raw_events') }}
     where kind = 'ble_negotiated'
       and boot_id is not null
@@ -26,8 +24,8 @@ with negotiated as (
 deduplicated as (
 
     select *
-    from negotiated
-    {{ frostlog_latest_arrival() }}
+    from negotiated as n
+    {{ frostlog_one_copy('n') }}
 
 )
 
@@ -42,4 +40,4 @@ select
     d.chip,
     d.firmware as firmware_version
 from deduplicated d
-left join {{ ref('stg_clock_reference') }} r using (boot_id)
+left join {{ ref('stg_collection__clock_reference') }} r using (boot_id)

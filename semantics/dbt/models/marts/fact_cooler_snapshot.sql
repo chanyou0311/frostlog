@@ -24,10 +24,9 @@
 -- a property of the table, not of a partition, and a correction that moves a report
 -- to another date moves the hole with it; keeping that true incrementally took three
 -- separate mechanisms — a widened date list, a look at the day before, and a delete
--- of what a rebuild had emptied — each of which had to agree with the other two. The
--- scan is not new work either: the pull-down beside it already reads the whole fact
--- on every run, so this is a second pass over rows already paid for, and the
--- transform runs on a half-hourly schedule rather than on every chunk.
+-- of what a rebuild had emptied — each of which had to agree with the other two.
+-- The transform runs hourly rather than on every chunk, so this work is shared
+-- across the arrivals between runs.
 
 with observed as (
 

@@ -1,12 +1,18 @@
 """The BigQuery schema of the raw tables, derived from contracts/collection.odcs.yaml.
 
-The raw tables are a faithful copy of the JSONL in the bucket plus two columns
-about the chunk it came from (``source_key``, ``uploaded_at``). Everything the
-contract declares is NULLABLE here on purpose: raw keeps whatever arrived, and a
-row that cannot be interpreted is dropped by the semantic models, not by the
-load job. Fields the contract does not declare are dropped on load
-(``ignore_unknown_values``); the bytes stay in the bucket, so a new field is
-picked up by adding it here and reloading.
+The raw tables are a faithful copy of the JSONL in the bucket -- exactly that, with
+no column of ours at all. Everything the contract declares is NULLABLE here on
+purpose: raw keeps whatever arrived, and a row that cannot be interpreted is dropped
+by the semantic models, not by the load. Fields the contract does not declare are
+dropped on load (``ignore_unknown_values``); the bytes stay in the bucket, so a new
+field is picked up by adding it here and reloading.
+
+There is no arrival timestamp on the row, and there was no way to have one. A
+transfer names every column of the destination in its load job, and BigQuery writes
+NULL rather than a default for any column a load job names -- so a
+``DEFAULT CURRENT_TIMESTAMP()`` never fires. What arrived and when is asked of the
+table instead: its last-modified time is metadata, free to read, and enough to say
+whether a build is due (see warehouse.arrivals).
 """
 
 from google.cloud.bigquery import SchemaField
@@ -20,11 +26,6 @@ _STAMP = [
     SchemaField("type", "STRING", description="Stream discriminator."),
 ]
 
-#: Columns this service adds; they are not in the JSONL.
-_CHUNK = [
-    SchemaField("source_key", "STRING", description="Name of the raw object the row came from."),
-    SchemaField("uploaded_at", "TIMESTAMP", description="When the chunk was put in the bucket."),
-]
 
 _PAYLOAD = SchemaField(
     "payload",
@@ -70,7 +71,6 @@ RAW_COOLER = [
     _PAYLOAD,
     _ENVIRONMENT,
     SchemaField("error", "STRING", description="Why the message could not be read."),
-    *_CHUNK,
 ]
 
 RAW_EVENTS = [
@@ -89,15 +89,6 @@ RAW_EVENTS = [
     SchemaField("sensor", "STRING"),
     SchemaField("uploaded_chunk_count", "INT64"),
     SchemaField("uploaded_line_count", "INT64"),
-    *_CHUNK,
 ]
 
 SCHEMAS: dict[str, list[SchemaField]] = {"raw_cooler": RAW_COOLER, "raw_events": RAW_EVENTS}
-
-#: Columns the load job reads from the JSONL, i.e. everything but the chunk columns.
-CHUNK_COLUMNS = [field.name for field in _CHUNK]
-
-
-def loaded_schema(table: str) -> list[SchemaField]:
-    """The schema of the chunk as it lies in the bucket (without the chunk columns)."""
-    return [field for field in SCHEMAS[table] if field.name not in CHUNK_COLUMNS]

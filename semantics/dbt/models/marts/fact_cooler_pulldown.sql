@@ -26,9 +26,9 @@
 -- starts an episode depends on the one before it and where the episode ends may be
 -- on the day after, so the query has to look at everything anyway. Writing only the
 -- dates of the arrived chunk would also leave an episode behind on its old date
--- when a timestamp correction moves its first report to another one (the same
--- reason fact_cooler_state_update merges on its key). The table is small: one row
--- per pull-down.
+-- when a timestamp correction moves its first report to another one. Rebuilding
+-- both this table and fact_cooler_state_update removes those old placements. The
+-- table is small: one row per pull-down.
 
 with updates as (
 
