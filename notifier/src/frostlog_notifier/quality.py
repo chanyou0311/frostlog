@@ -21,4 +21,4 @@ def build(report: QualityReport) -> Notification | None:
             f"実行 ID: {report.run_id}",
         ]
     )
-    return Notification(kind=QUALITY, key=f"{report.contract_id}/{report.run_id}", text=text)
+    return Notification(kind=QUALITY, text=text)

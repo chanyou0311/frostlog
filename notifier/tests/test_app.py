@@ -14,20 +14,26 @@ class StubNotifier:
     def __init__(self, error: Exception | None = None) -> None:
         self.error = error
         self.handled: list[Any] = []
-        self.deadlines = 0
+        self.jobs: list[str] = []
         self.reported: list[tuple[str, BaseException]] = []
 
     def handle(self, event: Any) -> list[Notification]:
         if self.error is not None:
             raise self.error
         self.handled.append(event)
-        return [Notification(kind="homecoming", key="2026-09-11T12:03:00+00:00", text="x")]
+        return [Notification(kind="quality", text="x")]
 
-    def run_weekly_deadline(self) -> list[Notification]:
+    def run_daily(self) -> list[Notification]:
         if self.error is not None:
             raise self.error
-        self.deadlines += 1
-        return [Notification(kind="weekly", key="2026-W37", text="x")]
+        self.jobs.append("daily")
+        return [Notification(kind="daily", text="x")]
+
+    def run_weekly(self) -> list[Notification]:
+        if self.error is not None:
+            raise self.error
+        self.jobs.append("weekly")
+        return [Notification(kind="weekly", text="x")]
 
     def report_failure(self, context: str, error: BaseException) -> None:
         self.reported.append((context, error))
@@ -49,7 +55,7 @@ def client() -> TestClient:
 def test_an_event_is_handled_and_acknowledged(client: TestClient, notifier: StubNotifier) -> None:
     response = client.post("/signals/pubsub", json=envelope(SEMANTIC_UPDATED))
     assert response.status_code == 200
-    assert response.json()["posted"] == ["2026-09-11T12:03:00+00:00"]
+    assert response.json()["posted"] == ["quality"]
     assert len(notifier.handled) == 1
 
 
@@ -91,19 +97,29 @@ def test_a_defect_is_reported_and_acknowledged(client: TestClient) -> None:
         app.dependency_overrides.clear()
 
 
-def test_the_monday_job_runs(client: TestClient, notifier: StubNotifier) -> None:
-    response = client.post("/jobs/weekly-deadline")
+@pytest.mark.parametrize(
+    ("route", "job"),
+    [("/jobs/daily-summary", "daily"), ("/jobs/weekly-summary", "weekly")],
+)
+def test_a_scheduled_summary_runs(
+    client: TestClient, notifier: StubNotifier, route: str, job: str
+) -> None:
+    response = client.post(route)
     assert response.status_code == 200
-    assert response.json()["posted"] == ["2026-W37"]
-    assert notifier.deadlines == 1
+    assert response.json()["posted"] == [job]
+    assert notifier.jobs == [job]
 
 
-def test_the_monday_job_reports_a_failure_and_asks_to_be_run_again(client: TestClient) -> None:
+@pytest.mark.parametrize("route", ["/jobs/daily-summary", "/jobs/weekly-summary"])
+def test_a_scheduled_summary_reports_a_failure_and_asks_to_be_run_again(
+    client: TestClient, route: str
+) -> None:
+    """A retry says the same thing this one would have: the window ends when it runs."""
     stub = StubNotifier(error=ValueError("boom"))
     app.dependency_overrides[get_notifier] = lambda: stub
     try:
-        assert client.post("/jobs/weekly-deadline").status_code == 500
-        assert stub.reported[0][0] == "jobs/weekly-deadline"
+        assert client.post(route).status_code == 500
+        assert stub.reported[0][0] == route.lstrip("/")
     finally:
         app.dependency_overrides.clear()
 

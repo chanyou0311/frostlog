@@ -1,23 +1,29 @@
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from conftest import FakeWarehouse, ambient_band_rows, empty_slot, pulldown_row, quarters
 
-from frostlog_notifier import queries, weekly
-from frostlog_notifier.clock import iso_week_bounds, jst_dates
+from frostlog_notifier import weekly
+from frostlog_notifier.clock import jst_dates, to_jst
 from frostlog_notifier.notification import WEEKLY
 from frostlog_notifier.queries import Band, Pulldown, Snapshot
 
-START, END = iso_week_bounds(2026, 37)
+#: The job fires Saturday 09:00 JST; the window is the seven days behind it.
+NOW = datetime(2026, 9, 19, 0, 0, tzinfo=UTC)  # 09:00 JST, Saturday
+START, END = NOW - weekly.WINDOW, NOW
 BANDS = [Band.model_validate(row) for row in ambient_band_rows()]
 
 
 def week_of_slots() -> list[dict]:
-    """Seven days: unplugged all day, plugged in for an hour each evening, one dead night."""
+    """Seven days: unplugged all day, plugged in for an hour each evening, one dead night.
+
+    The window starts when the job runs (Saturday morning), not at midnight, so
+    ``hour_of_day`` below counts from the window's start rather than from a JST day.
+    """
     rows: list[dict] = []
     charge = 100
     for index in range(24 * 7):
         started = START + timedelta(hours=index)
-        hour_of_day = index % 24  # the week starts at midnight JST
+        hour_of_day = index % 24  # hours since the window opened, not JST hours
         if 3 <= index < 8:  # the first night has no data at all
             rows.extend(empty_slot(started + timedelta(minutes=15 * q)) for q in range(4))
             continue
@@ -118,11 +124,18 @@ def test_gaps_between_the_first_and_the_last_hour_are_counted() -> None:
 
 
 def test_a_day_without_any_data_is_named() -> None:
-    rows = week_of_slots()
-    for index in range(48 * 4, 72 * 4):  # the third UTC day of the week, slot by slot
-        rows[index] = empty_slot(START + timedelta(minutes=15 * index))
+    # Blanked by JST date rather than by slot index: the window starts when the job
+    # runs, not at midnight, so a day of it is not a round number of slots from the
+    # start. A missing day is a JST day, which is what the summary names.
+    target = jst_dates(START, END)[3]
+    rows = [
+        empty_slot(row["slot_started_at"])
+        if to_jst(row["slot_started_at"]).date() == target
+        else row
+        for row in week_of_slots()
+    ]
     summary = summarize(rows)
-    assert date(2026, 9, 9) in summary.missing_days
+    assert target in summary.missing_days
 
 
 def test_pulldowns_are_counted_and_averaged_by_trigger() -> None:
@@ -140,10 +153,6 @@ def test_pulldowns_are_counted_and_averaged_by_trigger() -> None:
     assert triggers["rise"].mean_duration_seconds == 600.0
 
 
-def test_the_week_to_summarise_is_the_one_that_just_ended() -> None:
-    assert weekly.due_week(datetime(2026, 9, 14, 12, tzinfo=UTC)) == (2026, 37)
-
-
 def test_the_summary_is_built_with_its_text_and_chart() -> None:
     warehouse = FakeWarehouse(
         {
@@ -152,12 +161,12 @@ def test_the_summary_is_built_with_its_text_and_chart() -> None:
             "finished_pulldowns_between": [pulldown_row(START + timedelta(hours=1))],
         }
     )
-    bands = queries.ambient_bands(warehouse)
-    notification = weekly.build(warehouse, 2026, 37, bands)
+    notification = weekly.build(warehouse, NOW)
     assert notification.kind == WEEKLY
-    assert notification.key == "2026-W37"
-    assert "週の要約 2026-W37" in notification.text
-    assert "09-07 - 09-13" in notification.text
+    assert "直近 7 日の要約" in notification.text
+    assert (
+        f"{jst_dates(START, END)[0]:%m-%d} - {jst_dates(START, END)[-1]:%m-%d}" in notification.text
+    )
     assert "均衡に必要な走行" in notification.text
     assert "100 % からの持ち時間" in notification.text
     assert "プルダウン 1 件" in notification.text

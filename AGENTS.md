@@ -30,7 +30,9 @@ BigQuery  frostlog.raw_cooler / raw_events   ← バケットの形そのもの�
   │   目印より増えていたときだけ組む。増えていなければ何もしない
   ▼   dbt build 一式 (unit test は除く) → Pub/Sub frostlog-signals
 Cloud Run service  frostlog-notifier  → Slack #fumo
-  ▲ Cloud Scheduler  frostlog-weekly-deadline  月曜 21:03
+  │   signals から作るのは契約テスト失敗の警告だけ。サマリは時刻で起きる
+  ▲ Cloud Scheduler  frostlog-daily-summary   毎晩 20:00
+  ▲ Cloud Scheduler  frostlog-weekly-summary  毎週土曜 09:00
 
 Cloud Scheduler  frostlog-contract-test  毎日 03:07 → Cloud Run job  frostlog-contracts
 ```
@@ -72,6 +74,11 @@ scripts/deploy.sh                                # Pi へ配布 (既定 chanyou@
   `SignatureDoesNotMatch` を返す。資格情報の問題に見えるが違う (LIST と HEAD は同じ鍵で通る)。
   `request_checksum_calculation="when_required"` が要る (`src/frostlog/upload/s3.py`)。
 - **GCP の `display_name` は 100 バイト。** 文字数ではないので日本語だとすぐ超える。
+- **通知は差分ではなく「窓の絵」。** イベント駆動だと同じ事実が何度も届く (producer の
+  upload_runs は 25 時間ぶんを返すので 1 回の帰宅が最大 48 イベントに載る) ので、「もう言ったか」
+  を覚える表が要り、その表の置き場所で本番が 403 で落ちた。定時に「発火時点から遡る窓」を出す
+  形にすると、覚えるものが無くなる — **notifier は BigQuery に一切書かない**。帰宅後に数日ぶんが
+  一気に届いても、その晩の窓に映るだけで「取りこぼし」という状態が存在しない。
 - **Pi は冷蔵庫と一緒に車に載っている。** 外出中は自宅 Wi-Fi から離れるのでアップロードできない。
   下流をいくら速くしても、問 C の答えは**最後の観測からの外挿**にしかならない。観測の古さを
   見せること。

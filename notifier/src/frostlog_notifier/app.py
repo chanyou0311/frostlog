@@ -6,6 +6,7 @@ and 500 only when the failure is transient, so redelivery has a point.
 """
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import Depends, FastAPI, Request, Response
@@ -15,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 from frostlog_notifier import service
 from frostlog_notifier.errors import Transient
 from frostlog_notifier.events import Undecodable, parse
+from frostlog_notifier.notification import Notification
 from frostlog_notifier.service import Notifier
 
 log = logging.getLogger(__name__)
@@ -63,20 +65,37 @@ async def signals_pubsub(request: Request, notifier: Notifier = Depends(get_noti
     except Exception as exc:  # a defect, not a hiccup: reported, then acknowledged
         await run_in_threadpool(notifier.report_failure, "signals/pubsub", exc)
         return _answer(200, {"error": f"{type(exc).__name__}: {exc}"})
-    return _answer(200, {"posted": [notification.key for notification in posted]})
+    return _answer(200, {"posted": [notification.kind for notification in posted]})
 
 
-@app.post("/jobs/weekly-deadline")
-def jobs_weekly_deadline(notifier: Notifier = Depends(get_notifier)) -> Response:
+@app.post("/jobs/daily-summary")
+def jobs_daily_summary(notifier: Notifier = Depends(get_notifier)) -> Response:
+    return _run(notifier, "jobs/daily-summary", notifier.run_daily)
+
+
+@app.post("/jobs/weekly-summary")
+def jobs_weekly_summary(notifier: Notifier = Depends(get_notifier)) -> Response:
+    return _run(notifier, "jobs/weekly-summary", notifier.run_weekly)
+
+
+def _run(notifier: Notifier, context: str, job: Callable[[], list[Notification]]) -> Response:
+    """One scheduled summary, and what the scheduler should make of the outcome.
+
+    A retry is worth asking for either way -- the summary is a picture of a window
+    ending now, so a second attempt says the same thing rather than a second thing.
+    The narrow exception is a failure after Slack accepted the message, which no
+    answer here can undo; the schedules are far enough apart that it is a duplicate
+    and not a loop.
+    """
     try:
-        posted = notifier.run_weekly_deadline()
+        posted = job()
     except Transient as exc:
         log.warning("transient failure; asking Cloud Scheduler to retry: %s", exc)
         return _answer(500, {"error": str(exc)})
     except Exception as exc:  # reported, then answered so the run is not lost silently
-        notifier.report_failure("jobs/weekly-deadline", exc)
+        notifier.report_failure(context, exc)
         return _answer(500, {"error": f"{type(exc).__name__}: {exc}"})
-    return _answer(200, {"posted": [notification.key for notification in posted]})
+    return _answer(200, {"posted": [notification.kind for notification in posted]})
 
 
 def _answer(status: int, body: dict[str, Any]) -> Response:

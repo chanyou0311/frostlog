@@ -45,8 +45,10 @@ class SemanticUpdated(BaseModel):
     event: Literal["semantic_updated"] = "semantic_updated"
     run_id: str
     published_at: datetime
-    #: How many rows reached raw since the build before this one. Not read here:
-    #: what changed is read from the warehouse, which this event only announces.
+    #: How many rows reached raw since the build before this one. Nothing reads it:
+    #: the summaries are scheduled and go to the warehouse themselves. It is parsed
+    #: because the contract says the event carries it, and a consumer that cannot
+    #: read the contract's own shape would not notice when the shape changed.
     rows_arrived: int
     build_passed: bool
     #: The collector's upload runs that reached the warehouse inside the build's
