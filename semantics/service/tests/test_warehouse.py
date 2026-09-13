@@ -15,8 +15,12 @@ from frostlog_semantics.warehouse import Arrivals, BigQueryWarehouse, upload_run
 def test_the_upload_run_query_reads_a_window_and_the_whole_stream() -> None:
     sql = upload_runs_sql("p.d.raw_events")
 
-    # The runs themselves are the window's; what came before one is not.
-    assert "ts >= @since" in sql
+    # The runs themselves are the window's; what came before one is not. The window
+    # is on arrival, because a homecoming run's own clock is the one least to be
+    # trusted, and it is the run most worth announcing.
+    assert "_PARTITIONDATE >= DATE(@since)" in sql
+    assert "ts >= @since" not in sql
+    assert "ts IS NOT NULL" in sql
     assert sql.count("kind = 'upload_started'") == 1
     assert sql.count("kind = 'upload_done'") == 2
 

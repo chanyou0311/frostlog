@@ -162,18 +162,32 @@ class BigQueryWarehouse:
 
 
 def upload_runs_sql(events_table: str) -> str:
-    """The upload runs the chunks loaded since a moment reported, and what preceded each.
+    """The upload runs that arrived since a moment, and what preceded each.
+
+    The window is on arrival, and arrival is ``_PARTITIONDATE``: the Pi's own clock
+    is whatever the hardware clock kept while the power was off, until NTP catches
+    up, and the run that ends just after the car comes home is exactly the run whose
+    clock is least trustworthy. Reading the window on ``ts`` would drop it -- the
+    homecoming would be announced by nothing -- and that run is the one a consumer
+    most wants. Ingestion time cannot be off, because nothing but the load writes it.
+
+    It is a date and not a timestamp, so the window is rounded outwards to the day.
+    A run reported twice is the consumer's to settle (it deduplicates on
+    ``finished_at``), and a run never reported is not.
 
     ``started_at`` is the run's own start (same boot); ``previous_finished_at`` is
     the end of the run before it, whichever boot that was — the gap between the two
     is how long the collector was away from the home network. Both look across the
     whole table, because what came before a run is not restricted to this window.
+
+    ``ts IS NOT NULL`` is not defensive: ``finished_at`` is required downstream, and
+    a row without one would fail validation on every retry until it left the window.
     """
     return f"""
 WITH finished AS (
   SELECT boot_id, ts, uploaded_chunk_count, uploaded_line_count
   FROM `{events_table}`
-  WHERE kind = 'upload_done' AND ts >= @since
+  WHERE kind = 'upload_done' AND ts IS NOT NULL AND _PARTITIONDATE >= DATE(@since)
 )
 SELECT
   d.ts AS finished_at,

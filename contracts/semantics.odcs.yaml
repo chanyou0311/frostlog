@@ -1018,11 +1018,12 @@ slaProperties:
   - property: frequency
     value: hourly
     description: >
-      A chunk is loaded into raw as it lands, which is every five minutes while the
-      cooler is recording; the tables this contract describes are rebuilt from raw
-      hourly. Loading and transforming are separated because a load job
-      costs nothing to run often and a transform does not. The contract test runs
-      daily.
+      A BigQuery Data Transfer Service config loads whatever is new in the bucket into
+      raw every fifteen minutes, with none of our code in the path; the tables this
+      contract describes are rebuilt from raw hourly, and an hour that brought no row
+      the last build was missing rebuilds nothing. Loading and transforming are
+      separated, and run on schedules of their own, because a load job is not billed
+      and a transform is. The contract test runs daily.
   - property: retention
     value: unlimited
     description: Tables are rebuildable from raw; nothing is deleted.

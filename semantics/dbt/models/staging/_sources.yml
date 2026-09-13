@@ -4,8 +4,9 @@ sources:
   - name: raw
     description: >
       The collection data product (contracts/collection.odcs.yaml) as loaded into BigQuery,
-      one table per stream. Rows are immutable; a chunk that arrives late simply adds
-      rows to an old day.
+      one table per stream. Rows are only ever appended: a chunk that waited for the car to
+      come home lands now, carrying the timestamps of the days it was recorded on, and never
+      rewrites a row already here.
     # The raw tables live beside the models unless FROSTLOG_BQ_RAW_DATASET says
     # otherwise, so the CI target finds the CI dataset without another variable.
     database: "{{ target.project }}"
