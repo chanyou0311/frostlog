@@ -18,16 +18,16 @@ def test_a_chunk_is_loaded_and_nothing_more(fakes: Fakes, finalized: dict) -> No
     assert result["status"] == "loaded"
     assert result["table"] == "raw_cooler"
     assert fakes.warehouse.loaded[0][0] == finalized["name"]
-    assert fakes.transform.builds == []
+    assert fakes.transform.builds == 0
     assert fakes.publisher.published == []
 
 
-def test_the_transform_rebuilds_the_dates_whose_chunks_arrived(fakes: Fakes) -> None:
+def test_a_build_runs_and_announces_the_dates_whose_chunks_arrived(fakes: Fakes) -> None:
     result = transform_due(fakes.services)
 
     assert result["status"] == "built"
     assert result["date_keys"] == [20260906, 20260907]
-    assert fakes.transform.builds == [["2026-09-06", "2026-09-07"]]
+    assert fakes.transform.builds == 1
 
 
 def test_the_update_is_announced_with_what_it_rebuilt(fakes: Fakes) -> None:
@@ -55,7 +55,7 @@ def test_nothing_arrived_means_nothing_is_built_or_announced(fakes: Fakes) -> No
     result = transform_due(fakes.services)
 
     assert result["status"] == "idle"
-    assert fakes.transform.builds == []
+    assert fakes.transform.builds == 0
     assert fakes.publisher.published == []
 
 
@@ -88,7 +88,7 @@ def test_an_object_that_is_not_a_chunk_is_left_alone(fakes: Fakes) -> None:
 
     assert result["status"] == "ignored"
     assert fakes.warehouse.loaded == []
-    assert fakes.transform.builds == []
+    assert fakes.transform.builds == 0
     assert fakes.publisher.published == []
 
 
@@ -99,7 +99,7 @@ def test_an_event_about_another_bucket_is_ignored(fakes: Fakes, finalized: dict)
 
     assert result["status"] == "ignored"
     assert fakes.warehouse.loaded == []
-    assert fakes.transform.builds == []
+    assert fakes.transform.builds == 0
 
 
 def test_an_event_without_an_object_is_a_bad_request(fakes: Fakes) -> None:

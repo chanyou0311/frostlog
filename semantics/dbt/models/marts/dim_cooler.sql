@@ -145,20 +145,16 @@ ordered as (
 select
     -- The first handshake we received is not necessarily the first one that
     -- happened. An earlier handshake with the same version, or a corrected clock,
-    -- can move the opening time without replacing the firmware. Facts are rebuilt
-    -- a batch of boots at a time; hashing that time would strand the keys held by
-    -- the boots left alone. Count only episodes of this particular version, so
-    -- inserting another firmware does not renumber it, while returning to an old
-    -- firmware still gets a distinct key.
+    -- can move the opening time without replacing the firmware. Hashing that time
+    -- would change the identity of the same firmware episode. Count only episodes
+    -- of this particular version, so inserting another firmware does not renumber
+    -- it, while returning to an old firmware still gets a distinct key.
     --
     -- A repeated version can still lose its later key if a clock correction merges
     -- its two visits: A -> B -> A becomes A -> A -> B. For firmware on this consumer
-    -- cooler that takes a downgrade as well as the clock correction, whereas the
-    -- failures above need only the ordinary arrival of chunks out of order. The
-    -- daily frostlog-contracts job checks every fact's dimension keys and catches
-    -- that remaining case. Retaining vanished episodes would change how this
-    -- dimension is materialized; that decision is still open together with the
-    -- snapshot's incremental materialization and how often dbt runs.
+    -- cooler that takes a downgrade as well as the clock correction. The facts are
+    -- rebuilt from the same history on every run, so they resolve the resulting
+    -- episodes without needing to retain vanished ones.
     {{ frostlog_integer_key("concat(o.serial_number, '|', o.version, '|', cast(o.version_episode as string))") }}
         as cooler_key,
     o.serial_number,

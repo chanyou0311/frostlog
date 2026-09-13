@@ -127,11 +127,12 @@ class BigQueryWarehouse:
         self._ensure_table(table, raw_schema.SCHEMAS[table])
 
     def arrived_dates(self, since: datetime) -> list[date]:
-        """The JST dates the chunks that arrived since ``since`` ask to be rebuilt for.
+        """The JST dates covered by chunk names that arrived since ``since``.
 
         A chunk's own day is in its name, and what is in it can fall on that JST date
-        or the next one, so both are asked for. Reading the name rather than the rows
-        keeps this to the two columns the question needs.
+        or the next one, so both travel on the event. They decide whether a build is
+        due but do not limit its scope. Reading the name rather than the rows keeps
+        this to the two columns the question needs.
         """
         config = bigquery.QueryJobConfig(
             query_parameters=[bigquery.ScalarQueryParameter("since", "TIMESTAMP", since)]

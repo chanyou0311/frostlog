@@ -5,11 +5,11 @@ bucket, and all it does is put the chunk into its BigQuery raw table. That happe
 every five minutes while the cooler records, which a load job is happy to do —
 BigQuery does not charge for one.
 
-``POST /jobs/transform`` is what Cloud Scheduler calls every 30 minutes: dbt
-rebuilds the JST dates whose chunks have arrived lately and a ``semantic_updated``
+``POST /jobs/transform`` is what Cloud Scheduler calls every hour: when chunks
+have arrived lately, dbt rebuilds every table and a ``semantic_updated``
 event says what changed. Running it on every chunk instead would cost 288 builds a
 day, which leaves both BigQuery's and Cloud Run's free tiers inside a couple of
-months; the contract's promise is a day, so half-hourly is not a loss.
+months; the contract's promise is a day, so an hour is not a loss.
 
 Failing with 500 is how either endpoint asks its caller to deliver again, and a
 transform that fails publishes nothing — consumers hear about a build only once it
@@ -140,23 +140,23 @@ def chunk_arrived(
 
 
 def transform_due(services: Services) -> dict[str, Any]:
-    """Rebuild for the chunks that have arrived lately, and say so if any did.
+    """Rebuild the warehouse when chunks have arrived lately, and say so if any did.
 
     The window is on arrival, not on the dates in the data: a trip's records are days
-    old when they land, and asking for "the last week of readings" would rebuild a
-    week of partitions every half hour, which is the cost this schedule exists to
-    avoid. It reaches back further than the schedule steps so that a run the
-    scheduler missed is made good by the next one rather than leaving a hole.
+    old when they land, but still need a build. The window decides whether to run,
+    while the build reads all the raw history. It reaches back further than the
+    schedule steps so that a run the scheduler missed is made good by the next one.
     """
     since = datetime.now(UTC) - timedelta(hours=services.settings.transform_lookback_hours)
     dates = services.warehouse.arrived_dates(since)
     if not dates:
-        # Nothing came in. Building anyway would rebuild whatever the empty date list
-        # falls back to, and publishing would announce a change that did not happen.
+        # Nothing came in. Replacing every table would repeat work with no new input,
+        # and publishing would announce a change that did not happen. The dates
+        # themselves only travel on the event; they do not limit the build.
         log.info("no chunk arrived since %s; nothing to rebuild", since)
         return {"status": "idle", "since": since.isoformat()}
 
-    build = services.transform.build(dates)
+    build = services.transform.build()
     if not build.passed:
         # Scheduler retries; the build is idempotent and the window still holds.
         raise HTTPException(status_code=500, detail="dbt build failed")

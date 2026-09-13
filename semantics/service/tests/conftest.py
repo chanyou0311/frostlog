@@ -1,6 +1,5 @@
 """Fakes for everything the two components talk to, so each can be run whole."""
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -56,10 +55,10 @@ class FakeMetadata:
 class FakeTransform:
     def __init__(self) -> None:
         self.passed = True
-        self.builds: list[list[str]] = []
+        self.builds = 0
 
-    def build(self, target_dates: Sequence[date]) -> BuildResult:
-        self.builds.append([day.isoformat() for day in target_dates])
+    def build(self) -> BuildResult:
+        self.builds += 1
         return BuildResult(passed=self.passed, command=["dbt", "build"], output="")
 
 

@@ -26,7 +26,7 @@ class UploadRun(BaseModel):
 
 
 class SemanticUpdated(BaseModel):
-    """Published after a transform run that rebuilt date partitions.
+    """Published after a transform run that rebuilt the warehouse tables.
 
     The consumer keeps its own copy of these models (notifier/src/frostlog_notifier/
     events.py): the two services deploy separately, and the contract in
