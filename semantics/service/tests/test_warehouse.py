@@ -109,8 +109,12 @@ def test_no_mark_at_all_means_everything_is_new() -> None:
     assert arrivals.rows == 105
 
 
-def test_a_table_that_shrank_is_not_counted_backwards() -> None:
-    """Raw is append-only; a smaller count means it was rebuilt, not that rows left."""
+def test_a_table_that_shrank_was_rebuilt_and_all_of_it_is_new() -> None:
+    """Raw is append-only; a smaller count means it was rebuilt, not that rows left.
+
+    Clamping at zero here would strand the mark above the count and leave the
+    transform idle until the table grew past its old size -- after a rebuild, never.
+    """
     arrivals = _counts({"raw_cooler": 10, "raw_events": 5}, {"raw_cooler": 100, "raw_events": 5})
 
-    assert arrivals.rows == 0
+    assert arrivals.rows == 10

@@ -61,6 +61,13 @@ class DbtTransform:
             str(self._profiles_dir),
             "--target",
             self._target,
+            # Unit tests are about the SQL, not about the data, and every one of
+            # them is a query the warehouse charges its ten-mebibyte minimum for.
+            # They belong to the build that changed the SQL: `make ci-warehouse`
+            # runs them on their own, against the CI dataset, before anything is
+            # merged. Running them again every hour in production buys nothing.
+            "--exclude-resource-type",
+            "unit_test",
         ]
         if self._select:
             command += ["--select", self._select]

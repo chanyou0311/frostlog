@@ -118,9 +118,18 @@ class BigQueryWarehouse:
         ``built_through`` is the count each raw table stood at when the last build
         ran. Anything above it arrived since. Reading a table's metadata is free, so
         this is asked every time the scheduler calls without costing a query.
+
+        A table holding fewer rows than the mark was rebuilt under us -- raw only
+        ever grows otherwise. Then the mark says nothing about what is in the table
+        now, so every row in it counts as unbuilt. Clamping the difference at zero
+        instead would leave the mark stranded above the count and the transform idle
+        until the table grew past its old size, which after a rebuild is never.
         """
         counts = {table: self._rows(table) for table in raw_schema.SCHEMAS}
-        fresh = sum(max(0, counts[t] - built_through.get(t, 0)) for t in counts)
+        fresh = sum(
+            rows if rows < built_through.get(table, 0) else rows - built_through.get(table, 0)
+            for table, rows in counts.items()
+        )
         return Arrivals(rows=fresh, counts=counts)
 
     def _rows(self, table: str) -> int:

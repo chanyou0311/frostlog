@@ -106,3 +106,30 @@ def test_the_routes_are_wired(fakes: Fakes) -> None:
     assert client.get("/healthz").json() == {"status": "ok"}
     assert client.post("/jobs/transform").json()["status"] == "built"
     assert client.post("/events/gcs", json={}).status_code == 404
+
+
+def test_a_failed_build_leaves_the_mark_where_it_was(fakes: Fakes) -> None:
+    """The mark is a promise that a build was given those rows. A failure made none."""
+    fakes.transform.passed = False
+
+    with pytest.raises(HTTPException):
+        transform_due(fakes.services)
+
+    assert fakes.built_through.written == []
+
+
+def test_an_unannounced_build_leaves_the_mark_where_it_was(fakes: Fakes) -> None:
+    """A build nobody was told about must be redone; moving the mark would hide it."""
+    fakes.publisher.fails = True
+
+    with pytest.raises(RuntimeError):
+        transform_due(fakes.services)
+
+    assert fakes.built_through.written == []
+
+
+def test_the_mark_records_what_the_build_was_given(fakes: Fakes) -> None:
+    """Not the rows that arrived -- the counts the tables stood at when it ran."""
+    transform_due(fakes.services)
+
+    assert fakes.built_through.written == [fakes.warehouse.arrived.counts]
