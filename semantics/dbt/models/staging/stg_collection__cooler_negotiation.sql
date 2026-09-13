@@ -11,7 +11,7 @@ with negotiated as (
         serial,
         address,
         chip,
-        firmware,
+        firmware
     from {{ source('raw', 'raw_events') }}
     where kind = 'ble_negotiated'
       and boot_id is not null
@@ -25,7 +25,7 @@ deduplicated as (
 
     select *
     from negotiated as n
-    {{ frostlog_latest_arrival('n') }}
+    {{ frostlog_one_copy('n') }}
 
 )
 

@@ -2,9 +2,9 @@
 
 The repository keeps one uncompressed day of each stream under
 ``contracts/samples/collection/<stream>/<UTC date>.json``. ``make ci-warehouse`` loads
-them into the CI dataset through the service's own load path — same schema, same
-staging table, same append statement — and then lets dbt and datacontract-cli
-work on the result. Nothing is faked, so what CI proves is what production does.
+them into the CI dataset with the same kind of load job the transfer issues in
+production — same schema, same format, the same default evaluated for
+``_loaded_at`` — and then lets dbt and datacontract-cli work on the result.
 
 The tables are dropped and recreated first: CI rebuilds the dataset, it does not
 add to it.
@@ -74,10 +74,14 @@ def load(settings: Settings, part: int | None = None) -> None:
         settings.bq_dataset_ci,
         settings.bq_location,
     )
-    if part != 2:
-        for table in sorted({raw_objects.TABLES[stream] for _, stream in chunks}):
-            warehouse.reset_table(table)
-            log.info("%s.%s: emptied", settings.bq_dataset_ci, table)
+    # A load job writes to a table, it does not make one, so every run has to say
+    # which tables it expects. Part 2 adds to what part 1 left, so it only ensures.
+    for table in sorted({raw_objects.TABLES[stream] for _, stream in chunks}):
+        if part == 2:
+            warehouse.ensure_table(table)
+            continue
+        warehouse.reset_table(table)
+        log.info("%s.%s: emptied", settings.bq_dataset_ci, table)
     with tempfile.TemporaryDirectory() as workspace:
         for path, stream in chunks:
             for cut in _deliveries(path, Path(workspace), part):

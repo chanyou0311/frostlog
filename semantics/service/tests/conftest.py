@@ -1,7 +1,7 @@
 """Fakes for everything the two components talk to, so each can be run whole."""
 
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -14,8 +14,9 @@ from frostlog_semantics.app import Services
 from frostlog_semantics.events import UploadRun
 from frostlog_semantics.settings import Settings
 from frostlog_semantics.transform import BuildResult
+from frostlog_semantics.warehouse import Arrivals
 
-#: The bucket the deployment watches; anything else is somebody else's event.
+#: The collection product's bucket, as the settings carry it.
 COLLECTION_BUCKET = "chanyou-frostlog-collection"
 #: The HMAC secret the contract test reads before it can look in that bucket.
 HMAC_SECRET = "frostlog-collection-hmac"
@@ -24,10 +25,10 @@ HMAC_SECRET = "frostlog-collection-hmac"
 class FakeWarehouse:
     def __init__(self) -> None:
         self.runs: list[UploadRun] = []
-        self.arrived: list[date] = [date(2026, 9, 6), date(2026, 9, 7)]
+        self.arrived = Arrivals(rows=3, days=[date(2026, 9, 6), date(2026, 9, 7)])
         self.asked_since: list[datetime] = []
 
-    def arrived_dates(self, since: datetime) -> list[date]:
+    def arrivals(self, since: datetime) -> Arrivals:
         self.asked_since.append(since)
         return self.arrived
 
@@ -142,13 +143,3 @@ def job() -> ContractFakes:
         ping=pinged.append,
     )
     return ContractFakes(services, tester, publisher, secrets, pinged)
-
-
-@pytest.fixture
-def finalized() -> dict:
-    """The body Eventarc sends for a finalized object."""
-    return {
-        "bucket": COLLECTION_BUCKET,
-        "name": "v1/cooler/dt=2026-09-06/000000122880.jsonl.gz",
-        "timeCreated": datetime(2026, 9, 6, 12, tzinfo=UTC).isoformat(),
-    }

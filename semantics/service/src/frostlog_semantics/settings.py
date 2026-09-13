@@ -11,8 +11,8 @@ from frostlog_platform.settings import ROOT, PlatformSettings
 
 
 class Settings(PlatformSettings):
-    #: The collection product's bucket, which Eventarc watches. An event about any
-    #: other bucket is not ours.
+    #: The collection product's bucket. Nothing here reads it since a transfer took
+    #: over the loading; it stays so that the environment Terraform sets still parses.
     collection_bucket: str | None = None
 
     #: Dataset the CI warehouse check builds into.

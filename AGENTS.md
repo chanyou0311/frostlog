@@ -22,11 +22,9 @@ Pi (frostlog-cooler.service : BLE を常時受信、周辺温湿度も同時に�
   │ frostlog-upload.timer  5 分ごと、前回の続きからバイト単位で差分を送出
   ▼
 GCS  v1/{stream}/dt=YYYY-MM-DD/{offset:012d}.jsonl.gz   ← オブジェクト名は「ローカルファイルの何バイト目から」
-  │ Eventarc (object.finalized、オブジェクト 1 個につき 1 イベント)
+  │ BigQuery Data Transfer Service (バケットを自前のスケジュールで読む。リポジトリにコードは無い)
   ▼
-Cloud Run service  frostlog-semantics  POST /events/gcs   ← 取り込みのみ
-  ▼
-BigQuery  frostlog.raw_cooler / raw_events
+BigQuery  frostlog.raw_cooler / raw_events   ← 取り込みは _loaded_at の既定値だけがロードで入る
   │ Cloud Scheduler  frostlog-transform  1 時間ごと → POST /jobs/transform
   ▼   dbt build 一式 → Pub/Sub frostlog-signals
 Cloud Run service  frostlog-notifier  → Slack #fumo

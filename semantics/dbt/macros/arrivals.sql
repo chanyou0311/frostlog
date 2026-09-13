@@ -18,17 +18,17 @@
   model is built, or a rebuild would churn rows that did not change.
 
   Ordering by the row's own JSON is what makes it repeatable without asking where
-  the row came from; the caller names the relation so the whole row can be read. It used to order by the object name and its upload time, back
-  when a query added those to every row; nothing writes them now, because writing
-  them cost more than the load did. `_loaded_at` cannot take their place: two copies
-  can land in the same transfer.
+  the row came from; the caller names the relation so the whole row can be read. It
+  used to order by the object name and its upload time, back when a query added those
+  to every row; nothing writes them now, because writing them cost more than the load
+  did. `_loaded_at` cannot take their place: two copies can land in the same transfer.
 
   uptime_seconds is a FLOAT64, and BigQuery refuses to partition by one -- equality
   between floats is not a question it will answer for you. Its text is: the same
   stored value always prints the same way, so the spelling is stable, and it is the
   spelling the contract's own uniqueness rule already uses for this natural key.
 -#}
-{% macro frostlog_latest_arrival(relation) %}
+{% macro frostlog_one_copy(relation) %}
     qualify row_number() over (
         partition by boot_id, cast(uptime_seconds as string)
         order by to_json_string({{ relation }})

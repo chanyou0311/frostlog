@@ -32,8 +32,16 @@ class LoadResult:
     rows: int
 
 
+@dataclass(frozen=True)
+class Arrivals:
+    """What a window of loading brought in."""
+
+    rows: int
+    days: list[date]
+
+
 class Warehouse(Protocol):
-    def arrived_dates(self, since: datetime) -> list[date]: ...
+    def arrivals(self, since: datetime) -> Arrivals: ...
 
     def upload_runs(self, since: datetime) -> list[UploadRun]: ...
 
@@ -81,8 +89,9 @@ class BigQueryWarehouse:
     def ensure_table(self, table: str) -> str:
         """The raw table, created from the contract's schema if it is not there yet.
 
-        Production tables are made once and then only written by the transfer, so
-        this runs at deploy rather than per chunk; CI calls it on every rebuild.
+        A load job writes to a table but does not make one. In production the tables
+        are made once, outside this repository, and then only written by the
+        transfer; here it is the sample loader that calls it, on every rebuild.
         """
         name = self._table(table)
         wanted = bigquery.Table(name, schema=raw_schema.SCHEMAS[table])
@@ -91,11 +100,11 @@ class BigQueryWarehouse:
         self._client.create_table(wanted, exists_ok=True)
         return name
 
-    def arrived_dates(self, since: datetime) -> list[date]:
-        """The JST dates of the rows the warehouse loaded since ``since``.
+    def arrivals(self, since: datetime) -> Arrivals:
+        """What the warehouse loaded since ``since``: how much, and on which days.
 
-        They decide whether a build is due and travel on the event that announces
-        it; they do not limit what a build rebuilds, which is everything. The
+        The count decides whether a build is due; the days travel on the event that
+        announces it. Neither limits what a build rebuilds, which is everything. The
         question is asked of ``_loaded_at`` rather than of the object names, because
         after the move to a transfer there is no object name on the row to ask.
         """
@@ -107,7 +116,8 @@ class BigQueryWarehouse:
             job_config=config,
             location=self._location,
         )
-        return [row["dt"] for row in job.result()]
+        row = next(iter(job.result()))
+        return Arrivals(rows=row["rows_loaded"], days=list(row["days"]))
 
     def upload_runs(self, since: datetime) -> list[UploadRun]:
         """The collector's upload runs reported finished by chunks that arrived since."""
@@ -135,20 +145,28 @@ class BigQueryWarehouse:
 
 
 def arrived_dates_sql(cooler_table: str, events_table: str) -> str:
-    """The JST days of the rows loaded since a moment, from both streams.
+    """How many rows were loaded since a moment, and which JST days they fall on.
 
-    Both, because a build is due when anything arrived, and the events stream can
-    be what arrived. The date is of the record's own timestamp, not of the load:
-    what a consumer is told is which days now hold something new.
+    Two questions in one answer, because they are two questions. Whether a build is
+    due is about rows arriving at all; which days to announce is about what those
+    rows say. A row the collector could not stamp has no day but is still an arrival,
+    and a run that took it for nothing would leave the build undone until something
+    stampable happened to turn up.
+
+    Both streams, because either can be what arrived.
     """
     return f"""
-SELECT DISTINCT DATE(ts, 'Asia/Tokyo') AS dt FROM (
+WITH arrived AS (
   SELECT ts FROM `{cooler_table}` WHERE _loaded_at >= @since
   UNION ALL
   SELECT ts FROM `{events_table}` WHERE _loaded_at >= @since
 )
-WHERE ts IS NOT NULL
-ORDER BY dt
+SELECT
+  (SELECT COUNT(*) FROM arrived) AS rows_loaded,
+  ARRAY(
+    SELECT DISTINCT DATE(ts, 'Asia/Tokyo')
+    FROM arrived WHERE ts IS NOT NULL ORDER BY 1
+  ) AS days
 """
 
 

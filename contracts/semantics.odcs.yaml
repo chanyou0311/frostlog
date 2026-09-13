@@ -1028,7 +1028,7 @@ team:
 customProperties:
   - property: changePolicy
     value: additive-only
-    description: Columns, tables and event fields may be added. Renaming, removing or re-typing a column, or changing its meaning, bumps the major version and is published as a new dbt model version.
+    description: Columns, tables and event fields may be added. Renaming, removing or re-typing a column, or changing its meaning, bumps the major version and is published as a new dbt model version. This holds from the moment the contract's status is `active`; while it is a draft the shape is still being settled and may change in ways a consumer could not survive, which is what draft means and why CI checks for breaking changes only once a contract is active.
   - property: rebuildRule
     value: full-table
     description: Each transform run replaces every table with its complete result from raw. A corrected timestamp places a row on its new date without leaving its old placement behind, and later arrivals can change earlier rows' held_seconds and dimension keys. No date or boot limits what a build considers.

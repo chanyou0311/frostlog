@@ -1,4 +1,4 @@
-"""The endpoints, end to end against the fakes: loading, and transforming."""
+"""The endpoints, end to end against the fakes."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from frostlog_semantics.app import create_app, transform_due
 from frostlog_semantics.events import SemanticUpdated, UploadRun
+from frostlog_semantics.warehouse import Arrivals
 from tests.conftest import Fakes
 
 
@@ -38,14 +39,28 @@ def test_the_window_reaches_back_further_than_the_schedule_steps(fakes: Fakes) -
 
 
 def test_nothing_arrived_means_nothing_is_built_or_announced(fakes: Fakes) -> None:
-    """An empty date list would otherwise fall back to the macro's no-op date."""
-    fakes.warehouse.arrived = []
+    fakes.warehouse.arrived = Arrivals(rows=0, days=[])
 
     result = transform_due(fakes.services)
 
     assert result["status"] == "idle"
     assert fakes.transform.builds == 0
     assert fakes.publisher.published == []
+
+
+def test_rows_without_a_day_are_still_a_reason_to_build(fakes: Fakes) -> None:
+    """A record the collector could not stamp has no JST day and is still an arrival.
+
+    Deciding on the days instead of the rows would leave the build undone until
+    something stampable happened to turn up.
+    """
+    fakes.warehouse.arrived = Arrivals(rows=2, days=[])
+
+    result = transform_due(fakes.services)
+
+    assert result["status"] == "built"
+    assert fakes.transform.builds == 1
+    assert result["date_keys"] == []
 
 
 def test_a_failed_build_asks_for_another_run_and_announces_nothing(fakes: Fakes) -> None:

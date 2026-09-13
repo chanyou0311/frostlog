@@ -58,7 +58,7 @@ schema:
       - name: date_keys
         logicalType: array
         required: true
-        description: JST dates (yyyymmdd) covered by the UTC chunk dates that arrived within the transform's lookback window. These dates describe the arrivals that triggered the run; every table is rebuilt in full.
+        description: JST dates (yyyymmdd) of the records the warehouse loaded within the transform's lookback window, read from each record's own timestamp. These dates describe the arrivals that triggered the run; every table is rebuilt in full.
         items:
           logicalType: integer
       - name: raw_loaded_since
@@ -167,4 +167,4 @@ team:
 customProperties:
   - property: changePolicy
     value: additive-only
-    description: Fields may be added; renaming, removing or re-typing a field bumps the major version and is published as a new event name.
+    description: Fields may be added; renaming, removing or re-typing a field bumps the major version and is published as a new event name. This holds from the moment the contract's status is `active`; while it is a draft the shape is still being settled and may change in ways a consumer could not survive, which is what draft means and why CI checks for breaking changes only once a contract is active.

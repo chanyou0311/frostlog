@@ -44,7 +44,7 @@ deduplicated as (
 
     select *
     from decoded as d
-    {{ frostlog_latest_arrival('d') }}
+    {{ frostlog_one_copy('d') }}
 
 ),
 
@@ -91,7 +91,6 @@ select
     uptime_seconds,
     updated_at,
     updated_at_raw,
-    -- The UTC day of the chunk this row was shipped in; what an arrival is batched by.
     updated_at != updated_at_raw as timestamp_corrected,
     model,
     address,

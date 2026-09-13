@@ -107,12 +107,13 @@ def transform_due(services: Services) -> dict[str, Any]:
     schedule steps so that a run the scheduler missed is made good by the next one.
     """
     since = datetime.now(UTC) - timedelta(hours=services.settings.transform_lookback_hours)
-    dates = services.warehouse.arrived_dates(since)
-    if not dates:
+    arrivals = services.warehouse.arrivals(since)
+    if not arrivals.rows:
         # Nothing came in. Replacing every table would repeat work with no new input,
-        # and publishing would announce a change that did not happen. The dates
-        # themselves only travel on the event; they do not limit the build.
-        log.info("no chunk arrived since %s; nothing to rebuild", since)
+        # and publishing would announce a change that did not happen. Whether to run
+        # is decided by rows arriving, not by the days they fall on: a row the
+        # collector could not stamp has no day and is still a reason to build.
+        log.info("nothing arrived since %s; nothing to rebuild", since)
         return {"status": "idle", "since": since.isoformat()}
 
     build = services.transform.build()
@@ -130,7 +131,7 @@ def transform_due(services: Services) -> dict[str, Any]:
         SemanticUpdated(
             run_id=uuid4().hex,
             published_at=datetime.now(UTC),
-            date_keys=[raw_objects.date_key(day) for day in dates],
+            date_keys=[raw_objects.date_key(day) for day in arrivals.days],
             raw_loaded_since=since,
             build_passed=True,
             upload_runs=upload_runs,
@@ -139,6 +140,11 @@ def transform_due(services: Services) -> dict[str, Any]:
     return {
         "status": "built",
         "since": since.isoformat(),
-        "date_keys": [raw_objects.date_key(day) for day in dates],
+        "date_keys": [raw_objects.date_key(day) for day in arrivals.days],
         "upload_runs": len(upload_runs),
     }
+
+
+#: What ``uvicorn frostlog_semantics.app:app`` imports (see semantics/Dockerfile).
+#: Building the services is deferred to the first request, so importing is cheap.
+app = create_app()
