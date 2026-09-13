@@ -22,11 +22,13 @@ Pi (frostlog-cooler.service : BLE を常時受信、周辺温湿度も同時に�
   │ frostlog-upload.timer  5 分ごと、前回の続きからバイト単位で差分を送出
   ▼
 GCS  v1/{stream}/dt=YYYY-MM-DD/{offset:012d}.jsonl.gz   ← オブジェクト名は「ローカルファイルの何バイト目から」
-  │ BigQuery Data Transfer Service (バケットを自前のスケジュールで読む。リポジトリにコードは無い)
+  │ BigQuery Data Transfer Service  15 分ごと (バケットを自前で読む。リポジトリにコードは無い)
   ▼
-BigQuery  frostlog.raw_cooler / raw_events   ← 取り込みは _loaded_at の既定値だけがロードで入る
+BigQuery  frostlog.raw_cooler / raw_events   ← バケットの形そのもの。列を足さない
   │ Cloud Scheduler  frostlog-transform  1 時間ごと → POST /jobs/transform
-  ▼   dbt build 一式 → Pub/Sub frostlog-signals
+  │   積まれた行数 (tables.get の num_rows) が gs://…/_control/built_through.json の
+  │   目印より増えていたときだけ組む。増えていなければ何もしない
+  ▼   dbt build 一式 (unit test は除く) → Pub/Sub frostlog-signals
 Cloud Run service  frostlog-notifier  → Slack #fumo
   ▲ Cloud Scheduler  frostlog-weekly-deadline  月曜 21:03
 
@@ -54,10 +56,18 @@ scripts/deploy.sh                                # Pi へ配布 (既定 chanyou@
 - **dbt の `config()` はパース時に解決される。** `execute` が False のその時点で、`run_query`
   の結果は空。`incremental_predicates` にコンパイル中のクエリ結果を入れると `in (null)` が
   焼き付き、MERGE が何にも一致せず**毎回全行が INSERT される**。本番で 55,762 行 / 実体
-  23,861 キーまで膨らんだ。実行依存の値を parse 解決される config に入れてはいけない。
-- **CI が `--full-refresh` だけだと incremental の不具合を踏めない。** 上の重複は 2 回目以降の
-  実行でしか出ないので、CI はサンプルを 2 回に分けて配信し、**2 周目が既存行を書き換える**
-  ようにしてある (`semantics/Makefile` の `ci-warehouse`)。
+  23,861 キーまで膨らんだ。実行依存の値を parse 解決される config に入れてはいけない。いまは
+  全テーブルを毎回作り直す (`+materialized: table`) ので MERGE 自体が無い。
+- **ロードジョブは、自分のスキーマが名前を挙げた列に DEFAULT を入れない。** NULL を入れる。
+  Data Transfer Service は常に宛先の全列を名前で挙げるので、`DEFAULT CURRENT_TIMESTAMP()` は
+  **DTS 経由では絶対に発火しない**。`load_table_from_uri` で手元から試すと動くので気づけない
+  (本番 31,966 行が全て NULL になった)。取り込み時刻が要るなら、列ではなく**テーブルの
+  メタデータに訊く** — `tables.get` は無料で、`num_rows` は行が実際に積まれたときだけ動く
+  (`modified` は 0 行のロードでも動いてしまうので使えない)。
+- **CI がサンプルを一括で配信すると、実運用のチャンク境界を踏めない。** チャンクは 5 分ごとに
+  切れるので、境界の直前の報告は**その続きを別のチャンクから受け取る**。`ci-warehouse` は
+  サンプルを 2 つに割って配信し、両方が届いてから 1 回だけ組んで `held_seconds` を契約に
+  当てる (`semantics/Makefile`)。配信の途中で組んでも、全テーブルを作り直す以上は何も増えない。
 - **botocore 1.36 以降は PUT に CRC32 を付ける。** GCS の S3 互換 API はこれを受け付けず
   `SignatureDoesNotMatch` を返す。資格情報の問題に見えるが違う (LIST と HEAD は同じ鍵で通る)。
   `request_checksum_calculation="when_required"` が要る (`src/frostlog/upload/s3.py`)。
@@ -90,6 +100,9 @@ scripts/deploy.sh                                # Pi へ配布 (既定 chanyou@
 
 - **収集は at-least-once、意味づけは exactly-once。** 重複排除は読み手 (semantics の staging) の
   仕事であって、収集側は同じものを二度送ってよい。
+- **本番の dbt build は unit test を回さない** (`--exclude-resource-type unit_test`)。unit test は
+  データではなく SQL の検査なので、SQL を変えた CI (`make -C semantics ci-warehouse`) が回す。
+  毎時回しても守るものは無く、1 本 10 MiB の課金だけが増える。
 - raw は届いたものをそのまま保つ。解釈できない行を落とすのは semantic モデルの側。
 - `contracts/` が真実。dbt モデルも service もそこから導く (生成はしない)。
 - ADR や設計ドキュメントはリポジトリに置かない。合意はセッションか GitHub の Issue/PR に残す。

@@ -11,18 +11,18 @@ from frostlog_platform.settings import ROOT, PlatformSettings
 
 
 class Settings(PlatformSettings):
-    #: The collection product's bucket. Nothing here reads it since a transfer took
-    #: over the loading; it stays so that the environment Terraform sets still parses.
-    collection_bucket: str | None = None
+    #: The collection product's bucket. Nothing here loads from it any more -- a
+    #: transfer does that -- but the mark saying how far the transform has built lives
+    #: in it, because a bucket object is free to read and a warehouse row is not.
+    collection_bucket: str = "chanyou-frostlog-collection"
 
     #: Dataset the CI warehouse check builds into.
     bq_dataset_ci: str = "frostlog_ci"
 
-    #: How far back the transform looks for chunks that have arrived. Longer than the
-    #: hour between runs on purpose: a run the scheduler missed, or one that failed
-    #: every retry, is made good by the next one. The window only decides whether a
-    #: build is due; each build reads all history, so a longer outage can be repaired
-    #: by a plain dbt build or by the next arrival that triggers one.
+    #: How far back a build looks for the collector's upload runs to announce. It no
+    #: longer decides whether to build -- the row counts do that -- so it only has to
+    #: be long enough that a run finishing between two builds is still reported. A day
+    #: and an hour covers an outage of any length worth reporting this way.
     transform_lookback_hours: float = 25.0
 
     dbt_project_dir: Path = ROOT / "semantics" / "dbt"

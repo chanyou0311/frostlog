@@ -50,6 +50,14 @@ servers:
       offset of the Pi's local day file they start at; user metadata carries `start`,
       `end` (byte offsets) and `uploaded-at` (RFC 3339). Layout:
       v1/{stream}/dt=YYYY-MM-DD/{offset:012d}.jsonl.gz, dt = UTC date of `ts`.
+      Of that metadata only `end` is ever read back, and only by the collector itself:
+      it is where the next run resumes from, and how a refused PUT is recognised as its
+      own resend. `uploaded-at` is written for whoever opens the bucket by hand and has
+      no reader — downstream is a BigQuery transfer, which loads the lines and not the
+      metadata, and the arrival time the semantics product works from is the row's
+      ingestion-time partition, not this.
+      Collection data is everything under `v1/` and only that; see the controlPrefix
+      property for what else lives in the bucket.
     endpointUrl: https://storage.googleapis.com
     location: s3://chanyou-frostlog-collection/v1/{model}/dt=*/*.jsonl.gz
     format: json
@@ -455,6 +463,15 @@ customProperties:
   - property: chunkSemantics
     value: immutable-offset-chunks
     description: Each object holds whole lines of one local day file starting at the byte offset in its name; the same offset always means the same lines, so re-uploads overwrite identical bytes. Upload state is derived from the bucket (LIST + metadata `end`), never kept on the Pi.
+  - property: controlPrefix
+    value: _control/
+    description: >
+      The bucket also lends `_control/` to the semantics data product as its own
+      workspace: `_control/built_through.json` is the row count each raw table stood at
+      when its last build ran, kept here because reading a bucket object is free and
+      reading a warehouse row is not. Objects under that prefix are not collected data
+      and this contract says nothing about their shape — the collector neither writes
+      nor reads them, and the transfer that loads this bucket matches `v1/` only.
   - property: lateArrival
     value: unbounded
     description: Records for a past day may arrive days later (after a trip). Consumers must expect new chunks in old dt= partitions.
