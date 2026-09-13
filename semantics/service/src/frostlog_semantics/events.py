@@ -40,7 +40,9 @@ class SemanticUpdated(BaseModel):
     rows_arrived: int
     #: Always true: a run whose build failed publishes nothing (reserved field).
     build_passed: bool
-    #: Filled when the run was triggered by an events chunk; empty otherwise.
+    #: The upload runs that reached the warehouse inside the build's lookback
+    #: window -- not the runs this build was caused by; nothing causes a build but
+    #: rows arriving. Empty when none arrived in the window.
     upload_runs: list[UploadRun] = Field(default_factory=list)
 
     @property
