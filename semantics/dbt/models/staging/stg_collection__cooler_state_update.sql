@@ -12,8 +12,6 @@ with decoded as (
         uptime_seconds,
         ts,
         ts_synced,
-        source_key,
-        uploaded_at,
         model,
         address,
         payload,
@@ -40,12 +38,13 @@ with decoded as (
 ),
 
 -- A message is identified by (boot_id, uptime_seconds). The same message reaches
--- BigQuery twice if a chunk was re-cut; the copy from the newest chunk wins.
+-- BigQuery twice if a chunk was re-cut; the copies are equals, so one is chosen
+-- the same way every build.
 deduplicated as (
 
     select *
-    from decoded
-    {{ frostlog_latest_arrival() }}
+    from decoded as d
+    {{ frostlog_one_copy('d') }}
 
 ),
 
@@ -58,13 +57,12 @@ corrected as (
         {{ frostlog_corrected_at(
             "d.ts", "d.uptime_seconds", "d.ts_synced",
             "r.reference_ts", "r.reference_uptime_seconds") }} as updated_at,
-        d.source_key,
         d.model,
         d.address,
         d.payload,
         d.environment
     from deduplicated d
-    left join {{ ref('stg_clock_reference') }} r using (boot_id)
+    left join {{ ref('stg_collection__clock_reference') }} r using (boot_id)
 
 ),
 
@@ -93,10 +91,7 @@ select
     uptime_seconds,
     updated_at,
     updated_at_raw,
-    -- The UTC day of the chunk this row was shipped in; what an arrival is batched by.
-    date(regexp_extract(source_key, r'dt=(\d{4}-\d{2}-\d{2})')) as chunk_date,
     updated_at != updated_at_raw as timestamp_corrected,
-    source_key,
     model,
     address,
     held_seconds,

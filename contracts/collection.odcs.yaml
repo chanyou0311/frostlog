@@ -451,7 +451,7 @@ team:
 customProperties:
   - property: changePolicy
     value: additive-only
-    description: Fields and event kinds may be added. Removing or re-typing a field, or changing a meaning, bumps the major version and moves the data to a new path prefix (v2/).
+    description: Fields and event kinds may be added. Removing or re-typing a field, or changing a meaning, bumps the major version and moves the data to a new path prefix (v2/). This holds from the moment the contract's status is `active`; while it is a draft the shape is still being settled and may change in ways a consumer could not survive, which is what draft means and why CI checks for breaking changes only once a contract is active.
   - property: chunkSemantics
     value: immutable-offset-chunks
     description: Each object holds whole lines of one local day file starting at the byte offset in its name; the same offset always means the same lines, so re-uploads overwrite identical bytes. Upload state is derived from the bucket (LIST + metadata `end`), never kept on the Pi.

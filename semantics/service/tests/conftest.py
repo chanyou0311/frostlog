@@ -1,7 +1,7 @@
 """Fakes for everything the two components talk to, so each can be run whole."""
 
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -12,12 +12,11 @@ from frostlog_contracts.tester import ContractTestResult
 from frostlog_platform.events import Event
 from frostlog_semantics.app import Services
 from frostlog_semantics.events import UploadRun
-from frostlog_semantics.raw_objects import RawObject
 from frostlog_semantics.settings import Settings
 from frostlog_semantics.transform import BuildResult
-from frostlog_semantics.warehouse import LoadResult
+from frostlog_semantics.warehouse import Arrivals
 
-#: The bucket the deployment watches; anything else is somebody else's event.
+#: The collection product's bucket, as the settings carry it.
 COLLECTION_BUCKET = "chanyou-frostlog-collection"
 #: The HMAC secret the contract test reads before it can look in that bucket.
 HMAC_SECRET = "frostlog-collection-hmac"
@@ -25,31 +24,17 @@ HMAC_SECRET = "frostlog-collection-hmac"
 
 class FakeWarehouse:
     def __init__(self) -> None:
-        self.loaded: list[tuple[str, datetime]] = []
-        self.already_loaded = False
         self.runs: list[UploadRun] = []
-        self.arrived: list[date] = [date(2026, 9, 6), date(2026, 9, 7)]
+        self.arrived = Arrivals(rows=3, days=[date(2026, 9, 6), date(2026, 9, 7)])
         self.asked_since: list[datetime] = []
 
-    def load(self, chunk: RawObject, uploaded_at: datetime) -> LoadResult:
-        self.loaded.append((chunk.name, uploaded_at))
-        return LoadResult(table=chunk.table, rows=3, already_loaded=self.already_loaded)
-
-    def arrived_dates(self, since: datetime) -> list[date]:
+    def arrivals(self, since: datetime) -> Arrivals:
         self.asked_since.append(since)
         return self.arrived
 
     def upload_runs(self, since: datetime) -> list[UploadRun]:
         self.asked_since.append(since)
         return self.runs
-
-
-class FakeMetadata:
-    def __init__(self) -> None:
-        self.uploaded: datetime | None = None
-
-    def uploaded_at(self, chunk: RawObject) -> datetime | None:
-        return self.uploaded
 
 
 class FakeTransform:
@@ -113,23 +98,21 @@ class Fakes:
 
     services: Services
     warehouse: FakeWarehouse
-    metadata: FakeMetadata
     transform: FakeTransform
     publisher: FakePublisher
 
 
 @pytest.fixture
 def fakes() -> Fakes:
-    warehouse, metadata = FakeWarehouse(), FakeMetadata()
+    warehouse = FakeWarehouse()
     transform, publisher = FakeTransform(), FakePublisher()
     services = Services(
         settings=Settings(collection_bucket=COLLECTION_BUCKET, signals_topic="frostlog-signals"),
         warehouse=warehouse,
-        metadata=metadata,
         transform=transform,
         publisher=publisher,
     )
-    return Fakes(services, warehouse, metadata, transform, publisher)
+    return Fakes(services, warehouse, transform, publisher)
 
 
 @dataclass
@@ -160,13 +143,3 @@ def job() -> ContractFakes:
         ping=pinged.append,
     )
     return ContractFakes(services, tester, publisher, secrets, pinged)
-
-
-@pytest.fixture
-def finalized() -> dict:
-    """The body Eventarc sends for a finalized object."""
-    return {
-        "bucket": COLLECTION_BUCKET,
-        "name": "v1/cooler/dt=2026-09-06/000000122880.jsonl.gz",
-        "timeCreated": datetime(2026, 9, 6, 12, tzinfo=UTC).isoformat(),
-    }
