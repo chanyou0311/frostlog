@@ -1,8 +1,8 @@
 """Posting to Slack, or to the log when there is no token.
 
 The bot token arrives after the first deployment, so the service must be useful
-without it: a dry run logs the message it would have sent and is recorded as
-posted all the same, which keeps the idempotency rules exercised.
+without it: a dry run logs the message it would have sent and is not recorded, so
+the same notification is posted for real once a token is there.
 """
 
 import functools
@@ -67,8 +67,15 @@ class Slack:
     def client(self) -> Any:
         if self._client is None:
             from slack_sdk import WebClient
+            from slack_sdk.http_retry.builtin_handlers import RateLimitErrorRetryHandler
 
             self._client = WebClient(token=self.token)
+            # The SDK ships only a connection-error handler by default. A run can
+            # send seven messages in a row (a homecoming, five pull-downs and a
+            # weekly) and Slack allows about one a second per channel, so the
+            # second of them can come back 429. Without this the whole request
+            # fails and Pub/Sub redelivers it, which repeats every query behind it.
+            self._client.retry_handlers.append(RateLimitErrorRetryHandler(max_retry_count=2))
         return self._client
 
     def post(self, text: str, blocks: list[dict[str, Any]] | None = None) -> Posted:

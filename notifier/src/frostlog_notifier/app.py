@@ -19,6 +19,14 @@ from frostlog_notifier.service import Notifier
 
 log = logging.getLogger(__name__)
 
+# Uvicorn configures its own loggers and leaves the root at WARNING with no handler,
+# so without this every log.info in this service goes nowhere -- including the dry
+# run's rendered blocks, which are the only way to see a notification before it is
+# posted. Cloud Run reads the container's stderr, so a plain stream handler is all
+# it takes; the level names go in because a run's failures are read together with
+# its progress.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+
 app = FastAPI(title="frostlog-notifier")
 
 _notifier: Notifier | None = None

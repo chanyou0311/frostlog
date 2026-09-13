@@ -151,6 +151,11 @@ def transform_due(services: Services) -> dict[str, Any]:
     }
 
 
+# Uvicorn configures its own loggers and leaves the root at WARNING with no handler,
+# so without this every log.info here goes nowhere -- "raw holds nothing a build has
+# not been given" included, which is the line that says why an hour built nothing.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+
 #: What ``uvicorn frostlog_semantics.app:app`` imports (see semantics/Dockerfile).
 #: Building the services is deferred to the first request, so importing is cheap.
 app = create_app()

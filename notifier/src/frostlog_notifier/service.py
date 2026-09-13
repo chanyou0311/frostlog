@@ -60,6 +60,7 @@ class Notifier:
             self._warehouse,
             event.upload_runs,
             self._posted.latest_coverage_end(HOMECOMING),
+            self._posted.posted_keys,
         )
         candidates.extend(
             pulldowns.build_all(self._warehouse, self._posted.posted_keys, self._now())
@@ -87,27 +88,39 @@ class Notifier:
         of the last WEEKLY_BACKLOG_WEEKS closed weeks that has data and no summary
         yet gets its own message.
         """
-        pending: list[Notification] = []
-        bands = queries.ambient_bands(self._warehouse)
+        weeks = []
         year, week = iso_year, iso_week
         for _ in range(WEEKLY_BACKLOG_WEEKS):
-            pending.extend(self._weekly(year, week, bands))
+            weeks.append((year, week))
             year, week = clock.previous_iso_week(clock.iso_week_bounds(year, week)[0])
-        pending.reverse()
-        return pending
+        weeks.reverse()
 
-    def _weekly(
-        self, iso_year: int, iso_week: int, bands: list[queries.Band]
-    ) -> list[Notification]:
-        key = clock.iso_week_key(iso_year, iso_week)
-        if self._posted.is_posted(WEEKLY, key):
+        # One query for the whole backlog rather than one per week. In the 167 hours
+        # of a week when nothing is due, this is the only weekly query that runs.
+        already = self._posted.posted_keys(
+            WEEKLY, [clock.iso_week_key(year, week) for year, week in weeks]
+        )
+        unposted = [
+            (year, week) for year, week in weeks if clock.iso_week_key(year, week) not in already
+        ]
+        if not unposted:
             return []
-        start, end = clock.iso_week_bounds(iso_year, iso_week)
-        if queries.state_update_count_between(self._warehouse, start, end) == 0:
-            # A week the cooler recorded nothing in has nothing to say, not zeros to report.
-            log.info("no state update in %s; no weekly summary", key)
+
+        # A week the cooler recorded nothing in has nothing to say, not zeros to
+        # report. Asked once for the whole backlog rather than once per week.
+        span_start = clock.iso_week_bounds(*unposted[0])[0]
+        span_end = clock.iso_week_bounds(*unposted[-1])[1]
+        recorded = queries.weeks_with_state_updates(self._warehouse, span_start, span_end)
+        due = [
+            (year, week) for year, week in unposted if clock.iso_week_key(year, week) in recorded
+        ]
+        if not due:
+            log.info("no state update in any of %s; no weekly summary", len(unposted))
+            # The bands are a query of their own, and a week with nothing to say
+            # does not need them.
             return []
-        return [weekly.build(self._warehouse, iso_year, iso_week, bands)]
+        bands = queries.ambient_bands(self._warehouse)
+        return [weekly.build(self._warehouse, year, week, bands) for year, week in due]
 
     def _post_all(self, notifications: list[Notification]) -> list[Notification]:
         return [
@@ -126,6 +139,13 @@ class Notifier:
             log.info("%s/%s already posted", notification.kind, notification.key)
             return None
         result = self._slack.post(notification.text, notification.blocks)
+        if result.dry_run:
+            # Nothing reached the channel, so nothing has been said yet. Recording it
+            # would spend the key: the notification would be skipped forever once a
+            # token arrived, and for a homecoming the coverage would move past a
+            # summary nobody ever read.
+            log.info("%s/%s was a dry run; not recorded", notification.kind, notification.key)
+            return result
         self._posted.record(
             notification.kind,
             notification.key,

@@ -14,6 +14,7 @@ covers everything since the previous summary's coverage end.
 """
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from itertools import groupby
 
@@ -121,21 +122,43 @@ def build_all(
     warehouse: Warehouse,
     runs: list[UploadRun],
     previous_coverage_end: datetime | None,
+    posted_keys: Callable[[str, list[str]], set[str]],
 ) -> list[Notification]:
-    """One summary for each return the event carries, oldest first.
+    """One summary for each return the event carries that has not been posted, oldest first.
 
     Several returns in one event are chained: each starts where the one before
     it ended, which is also what the state table remembers between events.
+
+    The already-posted ones are dropped before anything is built. A build costs
+    four queries, and the producer's window on upload runs is two days wide, so
+    the same return rides on dozens of events; without this, each of those events
+    would assemble a summary in full and then throw it away at the door.
     """
+    returns = sorted((run for run in runs if is_return(run)), key=key_of)
+    already = posted_keys(HOMECOMING, [key_of(run) for run in returns])
     summaries: list[Notification] = []
     start = previous_coverage_end
-    for run in sorted((run for run in runs if is_return(run)), key=lambda run: run.began_at):
+    for run in returns:
+        if key_of(run) in already:
+            continue
         summary = _build(warehouse, run, start)
         if summary is None:
             continue
         summaries.append(summary)
         start = summary.coverage_end
     return summaries
+
+
+def key_of(run: UploadRun) -> str:
+    """What makes two summaries the same return.
+
+    ``finished_at`` and not ``began_at``: the run's end is the ``ts`` of the
+    ``upload_done`` row itself, while its start is a correlated MAX over the whole
+    events table for the newest ``upload_started`` before it. An ``upload_started``
+    that arrives in a later chunk moves that MAX, and the key with it -- the same
+    return would then be posted a second time under a different name.
+    """
+    return run.finished_at.isoformat()
 
 
 def _build(
@@ -165,10 +188,13 @@ def _build(
     away = run.began_at - run.previous_finished_at if run.previous_finished_at else None
     return Notification(
         kind=HOMECOMING,
-        # The run, not the data: the key must not move when a later chunk of the same return lands.
-        key=run.began_at.isoformat(),
+        # The run, not the data: the key must not move when a later chunk of the
+        # same return lands (see key_of).
+        key=key_of(run),
         text=_text(latest, start, end, energy, pulldowns, morning, projected, refused, away),
-        blocks=_blocks(latest, energy, pulldowns, morning, projected, refused, away, recorded),
+        blocks=_blocks(
+            latest, energy, pulldowns, morning, projected, refused, away, recorded, start, end
+        ),
         coverage_end=end,
     )
 
@@ -237,6 +263,8 @@ def _blocks(
     refused: str | None,
     away: timedelta | None,
     recorded: list[Snapshot],
+    start: datetime,
+    end: datetime,
 ) -> list[dict]:
     """The message as Block Kit: what it means, then what it looked like."""
     blocks: list[dict] = [
@@ -296,7 +324,7 @@ def _blocks(
     blocks.append(
         {
             "type": "section",
-            "text": {"type": "mrkdwn", "text": _period(energy, pulldowns, recorded)},
+            "text": {"type": "mrkdwn", "text": _period(energy, pulldowns, recorded, start, end)},
         }
     )
     blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": _footnote(away)}]})
@@ -340,8 +368,18 @@ def _period(
     energy: queries.Energy,
     pulldowns: list[queries.Pulldown],
     recorded: list[Snapshot],
+    start: datetime,
+    end: datetime,
 ) -> str:
-    """The stretch the chart covers, and the two things it cannot draw."""
+    """The stretch the chart covers, and the two things it cannot draw.
+
+    Two periods meet here and they are not the same one. The recorded stretch is
+    what the chart draws -- the last run of slots that hold data, which after a
+    silence can be a few hours. The energy is counted from where the previous
+    summary stopped, which after a trip is days. Each line says which one it is,
+    because "記録があったのは 20:00 から 23:00 まで / 消費 1,200 Wh" reads as three
+    hours of it.
+    """
     if not recorded:
         return "この期間に記録はありませんでした。"
     covered = sum(slot.covered_seconds for slot in recorded)
@@ -349,11 +387,12 @@ def _period(
     ended = to_jst(recorded[-1].slot_started_at) + timedelta(seconds=SLOT_SECONDS)
     lines = [
         f"*記録があったのは {formatting.stamp(recorded[0].slot_started_at)}"
-        f" から {ended:%H:%M} まで*",
-        f"消費 {formatting.watt_hours(energy.discharged_watt_hours)}"
-        f" ・ 充電 {formatting.watt_hours(energy.charged_watt_hours)}"
-        f" ・ このうち {formatting.percent(100 * plugged / covered if covered else None)}"
+        f" から {ended:%H:%M} まで*"
+        f" ・ うち {formatting.percent(100 * plugged / covered if covered else None)}"
         " の時間は外部電源につないでいました。",
+        f"*{formatting.stamp(start)} から {formatting.stamp(end)} まで*の"
+        f" 消費 {formatting.watt_hours(energy.discharged_watt_hours)}"
+        f" ・ 充電 {formatting.watt_hours(energy.charged_watt_hours)}。",
     ]
     reached = [episode for episode in pulldowns if episode.duration_seconds is not None]
     if reached:

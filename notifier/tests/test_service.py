@@ -27,12 +27,23 @@ from frostlog_notifier.state import PostedNotifications
 
 
 def updates_in(*weeks: tuple[int, int], count: int = 604):
-    """Answers state_update_count_between: ``count`` inside the given ISO weeks, 0 elsewhere."""
+    """Answers weeks_with_state_updates: the given ISO weeks, when the span covers them.
+
+    The real query groups the whole backlog in one pass and returns only the weeks
+    that hold a row, so ``count`` no longer changes the answer -- a week either
+    appears or it does not. It stays in the signature because the callers read as
+    "this many updates in that week".
+    """
+    del count
+    keys = [f"{year}-W{week:02d}" for year, week in weeks]
     bounds = [iso_week_bounds(*week) for week in weeks]
 
     def answer(given: dict) -> list[dict]:
-        inside = any(given["start"] >= start and given["end"] <= end for start, end in bounds)
-        return [{"update_count": count if inside else 0}]
+        return [
+            {"week_key": key}
+            for key, (start, end) in zip(keys, bounds, strict=True)
+            if given["start"] <= start and given["end"] >= end
+        ]
 
     return answer
 
@@ -79,7 +90,7 @@ def arrived() -> FakeWarehouse:
         {
             "latest_state_update": [state_update(RETURN)],
             "latest_state_update_at": [state_update(RETURN)],
-            "state_update_count_between": updates_in((2026, 36), (2026, 37)),
+            "weeks_with_state_updates": updates_in((2026, 36), (2026, 37)),
             "energy_between": [{"discharged_watt_hours": 128.4, "charged_watt_hours": 40.2}],
             "finished_pulldowns_between": [pulldown_row(at("2026-09-11", 8, 12))],
             "state_updates_between": [state_update(at("2026-09-11", 8, 12))],
@@ -136,7 +147,8 @@ def test_one_return_is_summarised_once_however_many_chunks_it_took(
         assert [n.kind for n in notifier.handle(updated())] != [HOMECOMING]
     # Then the events chunk, which reports the run that shipped them all.
     [summary] = [n for n in notifier.handle(ARRIVED) if n.kind == HOMECOMING]
-    assert summary.key == RETURN.isoformat()
+    # The key is the run's end: its start is a MAX the producer recomputes and can move.
+    assert summary.key == (RETURN + timedelta(minutes=2)).isoformat()
 
     # A run five minutes later is the Pi still uploading at home, not another return.
     quiet = updated(
@@ -209,7 +221,7 @@ def test_the_weekly_summary_follows_the_first_data_of_the_new_week(
     warehouse = FakeWarehouse(
         {
             "latest_state_update": [state_update(monday)],
-            "state_update_count_between": updates_in((2026, 37)),
+            "weeks_with_state_updates": updates_in((2026, 37)),
             "finished_pulldowns_between": [],
             "snapshots": week_of_slots(),
             "ambient_bands": ambient_band_rows(),
@@ -229,7 +241,7 @@ def test_the_weekly_summary_covers_the_week_that_ended_not_the_running_one(
     warehouse = FakeWarehouse(
         {
             "latest_state_update": [state_update(midweek)],
-            "state_update_count_between": updates_in((2026, 36), (2026, 37), count=100),
+            "weeks_with_state_updates": updates_in((2026, 36), (2026, 37), count=100),
             "finished_pulldowns_between": [],
             "snapshots": quarters(midweek, 80),
             "ambient_bands": ambient_band_rows(),
@@ -250,7 +262,7 @@ def test_weeks_that_come_home_together_are_each_summarised_oldest_first(
         {
             "latest_state_update": [state_update(midweek)],
             # Three weeks away: 35 and 36 are closed and unposted, 34 has nothing.
-            "state_update_count_between": updates_in((2026, 35), (2026, 36), (2026, 37)),
+            "weeks_with_state_updates": updates_in((2026, 35), (2026, 36), (2026, 37)),
             "finished_pulldowns_between": [],
             "snapshots": quarters(midweek, 80),
             "ambient_bands": ambient_band_rows(),
@@ -270,7 +282,7 @@ def test_a_week_without_any_data_is_passed_over_in_silence(
     warehouse = FakeWarehouse(
         {
             "latest_state_update": [state_update(monday)],
-            "state_update_count_between": [{"update_count": 0}],
+            "weeks_with_state_updates": [],
             "finished_pulldowns_between": [],
             "snapshots": [],
             "ambient_bands": ambient_band_rows(),
@@ -287,7 +299,7 @@ def test_the_monday_job_posts_last_week(slack: FakeSlack, settings: Settings) ->
     warehouse = FakeWarehouse(
         {
             "snapshots": week_of_slots(),
-            "state_update_count_between": updates_in((2026, 37)),
+            "weeks_with_state_updates": updates_in((2026, 37)),
             "ambient_bands": ambient_band_rows(),
             "finished_pulldowns_between": [],
         }
@@ -306,7 +318,7 @@ def test_the_monday_job_says_nothing_about_a_week_without_data(
     warehouse = FakeWarehouse(
         {
             "snapshots": [],
-            "state_update_count_between": [{"update_count": 0}],
+            "weeks_with_state_updates": [],
             "ambient_bands": ambient_band_rows(),
             "finished_pulldowns_between": [],
         }
@@ -357,15 +369,36 @@ def test_a_failure_without_a_token_is_only_logged(
     assert "notifier failed" in caplog.text
 
 
-def test_without_a_token_everything_is_recorded_as_a_dry_run(
+def test_without_a_token_everything_is_a_dry_run_and_nothing_is_spent(
     arrived: FakeWarehouse, settings: Settings
 ) -> None:
-    slack = Slack(token=None, channel="#fumo")
+    """A dry run says nothing in the channel, so it must not spend the key.
+
+    This is the first deploy's shape: the service answers Pub/Sub before a token
+    is in Secret Manager. Recording those runs would skip every one of them
+    forever once the token arrived.
+    """
+    slack = FakeSlack(enabled=False)
     posted = build_notifier(arrived, slack, settings).handle(ARRIVED)
-    rows = {row["kind"]: row for name, row in arrived.executed if name == "record_posted"}
-    assert set(rows) == {"homecoming", "pulldown", "weekly"}
-    assert all(row["dry_run"] is True for row in rows.values())
-    assert all("slack_ts" not in row for row in rows.values())
+
+    assert {n.kind for n in posted} == {"homecoming", "pulldown", "weekly"}
+    assert len(slack.dry_runs) == 3
+    assert [row for name, row in arrived.executed if name == "record_posted"] == []
     # Each of them carries its charts even when there is nowhere to send them.
     for notification in posted:
         assert any(block["type"] == "data_visualization" for block in notification.blocks)
+
+
+def test_a_token_arriving_after_a_dry_run_still_posts(
+    arrived: FakeWarehouse, settings: Settings
+) -> None:
+    build_notifier(arrived, FakeSlack(enabled=False), settings).handle(ARRIVED)
+    arrived.executed.clear()
+
+    slack = FakeSlack(enabled=True)
+    posted = build_notifier(arrived, slack, settings).handle(ARRIVED)
+
+    assert {n.kind for n in posted} == {"homecoming", "pulldown", "weekly"}
+    assert len(slack.messages) == 3
+    rows = {row["kind"] for name, row in arrived.executed if name == "record_posted"}
+    assert rows == {"homecoming", "pulldown", "weekly"}

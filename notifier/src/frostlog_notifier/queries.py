@@ -118,16 +118,27 @@ def latest_state_update_at(warehouse: Warehouse, moment: datetime) -> StateUpdat
     return StateUpdate.model_validate(rows[0]) if rows else None
 
 
-def state_update_count_between(warehouse: Warehouse, start: datetime, end: datetime) -> int:
-    """How many state updates fall in [start, end); zero means the cooler said nothing."""
+def weeks_with_state_updates(warehouse: Warehouse, start: datetime, end: datetime) -> set[str]:
+    """Which JST ISO weeks in [start, end) the cooler said anything in, as `YYYY-Www`.
+
+    One query for the whole backlog: asking week by week costs the ten-mebibyte
+    minimum eight times over, and the answer is the same grouping BigQuery would
+    do anyway. The week is taken in JST because that is the week the summary is
+    about, and DATE_TRUNC on an ISOWEEK starts it on the Monday.
+    """
     sql = f"""
-      -- name: state_update_count_between
-      SELECT COUNT(*) AS update_count
+      -- name: weeks_with_state_updates
+      SELECT
+        FORMAT(
+          '%d-W%02d',
+          EXTRACT(ISOYEAR FROM DATETIME(updated_at, 'Asia/Tokyo')),
+          EXTRACT(ISOWEEK FROM DATETIME(updated_at, 'Asia/Tokyo'))
+        ) AS week_key
       FROM {warehouse.table("fact_cooler_state_update")}
       WHERE updated_at >= @start AND updated_at < @end
+      GROUP BY week_key
     """
-    rows = warehouse.rows(sql, {"start": start, "end": end})
-    return int(rows[0]["update_count"]) if rows else 0
+    return {str(row["week_key"]) for row in warehouse.rows(sql, {"start": start, "end": end})}
 
 
 def energy_between(warehouse: Warehouse, start: datetime, end: datetime) -> Energy:

@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from conftest import FakeWarehouse, at, pulldown_row, quarters, slot, state_update, upload_run
 
-from frostlog_notifier import charts, homecoming
+from frostlog_notifier import charts, formatting, homecoming
 from frostlog_notifier.events import UploadRun
 from frostlog_notifier.notification import HOMECOMING
 from frostlog_notifier.queries import Snapshot, StateUpdate
@@ -53,8 +53,13 @@ def warehouse_with(**overrides) -> FakeWarehouse:
     return FakeWarehouse(answers | overrides)
 
 
+def _nothing_posted(kind: str, keys: list[str]) -> set[str]:
+    """The state table with no row for any of these returns."""
+    return set()
+
+
 def test_an_event_without_upload_runs_summarises_nothing() -> None:
-    assert homecoming.build_all(warehouse_with(), [], None) == []
+    assert homecoming.build_all(warehouse_with(), [], None, _nothing_posted) == []
 
 
 def test_a_run_that_follows_the_previous_one_closely_is_not_a_return() -> None:
@@ -66,7 +71,7 @@ def test_a_run_that_follows_the_previous_one_closely_is_not_a_return() -> None:
         )
     )
     assert homecoming.is_return(run) is False
-    assert homecoming.build_all(warehouse_with(), [run], None) == []
+    assert homecoming.build_all(warehouse_with(), [run], None, _nothing_posted) == []
 
 
 def test_the_first_run_of_all_is_a_return() -> None:
@@ -79,14 +84,14 @@ def test_a_run_without_a_start_falls_back_to_when_it_finished() -> None:
         upload_run(finished_at=RETURN, previous_finished_at=RETURN - timedelta(hours=3))
     )
     assert homecoming.is_return(run) is True
-    [notification] = homecoming.build_all(warehouse_with(), [run], None)
+    [notification] = homecoming.build_all(warehouse_with(), [run], None, _nothing_posted)
     assert notification.key == RETURN.isoformat()
 
 
 def test_a_gap_of_two_hours_makes_one_summary() -> None:
-    [notification] = homecoming.build_all(warehouse_with(), [ARRIVAL], None)
+    [notification] = homecoming.build_all(warehouse_with(), [ARRIVAL], None, _nothing_posted)
     assert notification.kind == HOMECOMING
-    assert notification.key == RETURN.isoformat()
+    assert notification.key == ARRIVAL.finished_at.isoformat()
     assert notification.coverage_end == RETURN
     assert "ポータブル冷蔵庫のバッテリー" in notification.text
     assert "前回のアップロードから 9.0 h" in notification.text
@@ -103,14 +108,14 @@ def test_a_gap_of_two_hours_makes_one_summary() -> None:
 
 def test_the_period_ends_at_the_last_update_the_run_carried() -> None:
     warehouse = warehouse_with()
-    homecoming.build_all(warehouse, [ARRIVAL], None)
+    homecoming.build_all(warehouse, [ARRIVAL], None, _nothing_posted)
     assert dict(warehouse.queried)["latest_state_update_at"] == {"moment": ARRIVAL.finished_at}
 
 
 def test_the_period_starts_where_the_previous_summary_ended() -> None:
     previous = at("2026-09-11", 0, 0)
     warehouse = warehouse_with()
-    homecoming.build_all(warehouse, [ARRIVAL], previous)
+    homecoming.build_all(warehouse, [ARRIVAL], previous, _nothing_posted)
     energy = dict(warehouse.queried)["energy_between"]
     assert energy["start"] == previous
     assert energy["end"] == RETURN
@@ -118,7 +123,7 @@ def test_the_period_starts_where_the_previous_summary_ended() -> None:
 
 def test_the_first_summary_of_all_reaches_back_a_day() -> None:
     warehouse = warehouse_with()
-    homecoming.build_all(warehouse, [ARRIVAL], None)
+    homecoming.build_all(warehouse, [ARRIVAL], None, _nothing_posted)
     energy = dict(warehouse.queried)["energy_between"]
     assert energy["end"] - energy["start"] == timedelta(hours=24)
 
@@ -136,15 +141,20 @@ def test_two_returns_in_one_event_are_chained() -> None:
     second = UploadRun.model_validate(
         upload_run(finished_at=later, started_at=later, previous_finished_at=ARRIVAL.finished_at)
     )
-    first, latest = homecoming.build_all(warehouse, [second, ARRIVAL], None)
-    assert [first.key, latest.key] == [RETURN.isoformat(), later.isoformat()]
+    first, latest = homecoming.build_all(warehouse, [second, ARRIVAL], None, _nothing_posted)
+    assert [first.key, latest.key] == [ARRIVAL.finished_at.isoformat(), later.isoformat()]
     # The second summary begins where the first one stopped, not a day back.
     starts = [given["start"] for name, given in warehouse.queried if name == "energy_between"]
     assert starts[1] == first.coverage_end
 
 
 def test_nothing_is_summarised_before_any_state_update() -> None:
-    assert homecoming.build_all(warehouse_with(latest_state_update_at=[]), [ARRIVAL], None) == []
+    assert (
+        homecoming.build_all(
+            warehouse_with(latest_state_update_at=[]), [ARRIVAL], None, _nothing_posted
+        )
+        == []
+    )
 
 
 def test_the_outlook_follows_the_slope_of_the_last_unplugged_hours() -> None:
@@ -216,7 +226,10 @@ def test_there_is_no_outlook_while_charging() -> None:
     )
 
     [notification] = homecoming.build_all(
-        warehouse_with(latest_state_update_at=[dict(charging.model_dump())]), [ARRIVAL], None
+        warehouse_with(latest_state_update_at=[dict(charging.model_dump())]),
+        [ARRIVAL],
+        None,
+        _nothing_posted,
     )
     assert "外部電源につながっているので翌朝の見込みはなし" in notification.text
 
@@ -287,3 +300,80 @@ def test_a_group_starts_on_the_clock_not_where_the_recording_did() -> None:
     assert labels[:3] == ["13時", "14時", "15時"]
     # The first point is that single quarter hour; the ones after it are whole hours.
     assert [point.covered_seconds for point in points[:3]] == [900.0, 3600.0, 3600.0]
+
+
+def test_the_key_does_not_move_when_a_late_chunk_changes_the_start() -> None:
+    """The producer recomputes started_at as a MAX over the whole events table.
+
+    An upload_started that arrives in a later chunk moves that MAX, so a key built
+    on it would name the same return twice. finished_at is the upload_done row's own
+    ts and cannot move.
+    """
+    warehouse = FakeWarehouse(
+        {
+            "latest_state_update_at": lambda given: [state_update(given["moment"])],
+            "energy_between": [{"discharged_watt_hours": 10.0, "charged_watt_hours": 0.0}],
+            "finished_pulldowns_between": [],
+            "snapshots": day_of_slots(RETURN),
+        }
+    )
+    late_start = UploadRun.model_validate(
+        upload_run(
+            finished_at=ARRIVAL.finished_at,
+            started_at=RETURN + timedelta(minutes=1),  # a nearer upload_started turned up
+            previous_finished_at=ARRIVAL.previous_finished_at,
+        )
+    )
+
+    [before] = homecoming.build_all(warehouse, [ARRIVAL], None, _nothing_posted)
+    [after] = homecoming.build_all(warehouse, [late_start], None, _nothing_posted)
+
+    assert before.key == after.key
+
+
+def test_a_return_already_posted_is_not_built_again() -> None:
+    """Four queries per summary, and a return rides two days of events."""
+    warehouse = FakeWarehouse(
+        {
+            "latest_state_update_at": lambda given: [state_update(given["moment"])],
+            "energy_between": [{"discharged_watt_hours": 10.0, "charged_watt_hours": 0.0}],
+            "finished_pulldowns_between": [],
+            "snapshots": day_of_slots(RETURN),
+        }
+    )
+
+    assert homecoming.build_all(warehouse, [ARRIVAL], None, lambda kind, keys: set(keys)) == []
+    assert warehouse.queried == []
+
+
+def test_the_block_says_which_period_each_number_is_for() -> None:
+    """The recorded stretch and the energy period are different spans.
+
+    After a silence the chart covers a few hours while the energy is counted from
+    where the last summary stopped, which can be days. A heading naming only the
+    first would make the second read as three hours of consumption.
+    """
+    warehouse = FakeWarehouse(
+        {
+            "latest_state_update_at": lambda given: [state_update(given["moment"])],
+            "energy_between": [{"discharged_watt_hours": 1200.0, "charged_watt_hours": 0.0}],
+            "finished_pulldowns_between": [],
+            "snapshots": day_of_slots(RETURN),
+        }
+    )
+    previous = RETURN - timedelta(days=3)
+
+    [notification] = homecoming.build_all(warehouse, [ARRIVAL], previous, _nothing_posted)
+
+    period = next(
+        block["text"]["text"]
+        for block in notification.blocks
+        if block.get("text", {}).get("text", "").startswith("*記録があったのは")
+    )
+    recorded_line, energy_line = period.splitlines()[:2]
+    assert "外部電源" in recorded_line  # the ratio belongs to the stretch it is measured over
+    assert "消費" in energy_line and "充電" in energy_line
+    # The energy line carries its own start, which is the previous summary's end --
+    # three days before the stretch the line above it names.
+    assert formatting.stamp(previous) in energy_line
+    assert formatting.stamp(previous) not in recorded_line
