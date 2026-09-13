@@ -1,219 +1,85 @@
-"""How a chunk gets into BigQuery, and what happens when it arrives twice."""
+"""The questions the transform asks the warehouse, and how CI puts samples in it.
 
-from datetime import UTC, datetime
-from typing import Any, cast
+Loading the bucket is not tested here because this repository no longer does it: a
+BigQuery Data Transfer Service config reads the chunks straight into raw. What is
+left to get wrong is the SQL, so that is what these read.
+"""
 
-import pytest
-from google.api_core.exceptions import BadRequest, Conflict
-from google.cloud import bigquery
+from pathlib import Path
+from typing import Any
 
-from frostlog_semantics import raw_objects, raw_schema, warehouse
-
-UPLOADED_AT = datetime(2026, 9, 6, 12, tzinfo=UTC)
-
-
-def _chunk(name: str = "v1/cooler/dt=2026-09-06/000000122880.jsonl.gz") -> raw_objects.RawObject:
-    chunk = raw_objects.parse("chanyou-frostlog-collection", name)
-    assert chunk is not None
-    return chunk
+from frostlog_semantics import raw_schema
+from frostlog_semantics.warehouse import (
+    BigQueryWarehouse,
+    arrived_dates_sql,
+    upload_runs_sql,
+)
 
 
-def test_the_same_object_always_gets_the_same_job_id() -> None:
-    # This is what makes a redelivery a no-op: BigQuery refuses the second job.
-    first = warehouse.append_job_id(_chunk().name)
-    assert first == warehouse.append_job_id(_chunk().name)
-    assert first.startswith("load-")
+def test_the_arrived_dates_query_asks_both_streams_what_landed_lately() -> None:
+    sql = arrived_dates_sql("p.d.raw_cooler", "p.d.raw_events")
 
-
-def test_a_different_object_gets_a_different_job_id() -> None:
-    other = "v1/cooler/dt=2026-09-06/000000245760.jsonl.gz"
-    assert warehouse.append_job_id(_chunk().name) != warehouse.append_job_id(other)
-
-
-def test_a_later_attempt_gets_its_own_job_id() -> None:
-    name = _chunk().name
-    assert warehouse.append_job_id(name, 2) == f"{warehouse.append_job_id(name)}-2"
-
-
-def test_a_job_id_is_within_the_length_bigquery_allows() -> None:
-    assert len(warehouse.append_job_id(_chunk().name)) <= 1024
-
-
-def test_the_staging_table_is_named_after_the_object_and_its_stream() -> None:
-    chunk = _chunk()
-    name = warehouse.stage_table_name(chunk.table, chunk.name)
-    assert name.startswith("stage_raw_cooler_")
-    assert name == warehouse.stage_table_name(chunk.table, chunk.name)
-    assert name.replace("_", "").isalnum()
-
-
-def test_the_append_copies_every_column_and_adds_the_two_of_the_chunk() -> None:
-    sql = warehouse.append_sql("p.d.raw_cooler", "p.d.stage", raw_schema.RAW_COOLER)
-    for field in raw_schema.RAW_COOLER:
-        assert f"`{field.name}`" in sql
-    assert "@source_key AS `source_key`" in sql
-    assert "@uploaded_at AS `uploaded_at`" in sql
-    # The chunk columns are parameters, never read from the staged rows.
-    assert "`source_key` FROM" not in sql
-
-
-def test_the_staged_schema_leaves_out_what_the_chunk_does_not_carry() -> None:
-    staged = [field.name for field in raw_schema.loaded_schema("raw_cooler")]
-    assert "source_key" not in staged
-    assert "uploaded_at" not in staged
-    assert "payload" in staged
+    assert sql.count("_loaded_at >= @since") == 2
+    assert "`p.d.raw_cooler`" in sql and "`p.d.raw_events`" in sql
+    # The days reported are the days of the records, not of the load.
+    assert "DATE(ts, 'Asia/Tokyo')" in sql
 
 
 def test_the_upload_run_query_reads_a_window_and_the_whole_stream() -> None:
-    sql = warehouse.upload_runs_sql("p.d.raw_events")
-    # The runs reported by everything loaded since the window opened...
-    assert "kind = 'upload_done' AND uploaded_at >= @since" in sql
-    # ...each with its own start and with the end of whatever ran before it, which is
-    # not restricted to the window: what preceded a run may have arrived long ago.
-    assert "s.kind = 'upload_started' AND s.boot_id = d.boot_id AND s.ts < d.ts" in sql
-    assert "f.kind = 'upload_done' AND f.ts < d.ts" in sql
+    sql = upload_runs_sql("p.d.raw_events")
+
+    # The runs themselves are the window's; what came before one is not.
+    assert "_loaded_at >= @since" in sql
+    assert sql.count("kind = 'upload_started'") == 1
+    assert sql.count("kind = 'upload_done'") == 2
 
 
-def test_the_arrived_dates_query_reads_both_streams_by_arrival() -> None:
-    """The day is read from the object's name, and both streams answer.
+def test_the_raw_schema_carries_the_column_only_bigquery_fills_in() -> None:
+    for table in ("raw_cooler", "raw_events"):
+        loaded = {field.name: field for field in raw_schema.SCHEMAS[table]}
 
-    The chunk that anchors a boot's clock is often an event, while the reports it
-    moves are cooler rows shipped under the date the wrong clock said.
-    """
-    sql = warehouse.arrived_dates_sql("p.d.raw_cooler", "p.d.raw_events")
-    assert sql.count("uploaded_at >= @since") == 2
-    assert "`p.d.raw_cooler`" in sql and "`p.d.raw_events`" in sql
-    assert r"dt=(\d{4}-\d{2}-\d{2})" in sql
+        assert loaded["_loaded_at"].default_value_expression == "CURRENT_TIMESTAMP()"
+        # A chunk in the bucket has every other column and not this one.
+        assert "_loaded_at" not in {f.name for f in raw_schema.chunk_schema(table)}
 
 
-class FakeJob:
-    """A BigQuery job as the warehouse looks at it: a state, an error, a result."""
+class _Client:
+    """Enough of a BigQuery client to see what a sample load is asked to do."""
 
-    def __init__(self, rows: int = 0, error: dict[str, str] | None = None, state: str = "DONE"):
-        self.output_rows = rows
-        self.error_result = error
-        self.state = state
-        self.awaited = 0
+    def __init__(self) -> None:
+        self.jobs: list[dict[str, Any]] = []
 
-    def result(self) -> list[Any]:
-        self.awaited += 1
-        if self.error_result is not None:
-            raise BadRequest(self.error_result.get("message", "job failed"))
-        return []
+    def load_table_from_file(self, _file: Any, table: str, **kwargs: Any) -> Any:
+        self.jobs.append({"table": table, "config": kwargs["job_config"]})
+        return _Job()
 
 
-class FakeBigQuery:
-    """Enough of google-cloud-bigquery to run a load and see what it did."""
+class _Job:
+    output_rows = 3
 
-    def __init__(self, rows: int = 3) -> None:
-        self.rows = rows
-        self.created: list[str] = []
-        self.deleted: list[str] = []
-        self.jobs: dict[str, FakeJob] = {}
-        self.appends: list[str] = []
-        #: Job ids whose query fails when this client runs it.
-        self.failing: set[str] = set()
-
-    def create_table(self, table: Any, exists_ok: bool = False) -> Any:
-        self.created.append(f"{table.project}.{table.dataset_id}.{table.table_id}")
-        return table
-
-    def delete_table(self, table: str, not_found_ok: bool = False) -> None:
-        self.deleted.append(table)
-
-    def load_table_from_uri(self, uri: str, table: str, **kwargs: Any) -> FakeJob:
-        return FakeJob(rows=self.rows)
-
-    def load_table_from_file(self, lines: Any, table: str, **kwargs: Any) -> FakeJob:
-        return FakeJob(rows=self.rows)
-
-    def query(self, sql: str, job_id: str | None = None, **kwargs: Any) -> FakeJob:
-        if job_id is not None and job_id in self.jobs:
-            raise Conflict(f"Already Exists: Job {job_id}")
-        job = FakeJob(error={"reason": "invalid"} if job_id in self.failing else None)
-        if job_id is not None:
-            self.jobs[job_id] = job
-        self.appends.append(job_id or "anonymous")
-        return job
-
-    def get_job(self, job_id: str, location: str | None = None) -> FakeJob:
-        return self.jobs[job_id]
+    def result(self) -> None:
+        return None
 
 
-def _warehouse(client: FakeBigQuery) -> warehouse.BigQueryWarehouse:
-    return warehouse.BigQueryWarehouse(
-        cast(bigquery.Client, client), "chanyou-frostlog", "frostlog", "us-central1"
-    )
+def test_a_sample_is_loaded_the_way_the_transfer_loads_a_chunk(tmp_path: Path) -> None:
+    """CI has no transfer, so it issues the same kind of job itself."""
+    sample = tmp_path / "day.json"
+    sample.write_bytes(b'{"boot_id": "b"}\n')
+    client = _Client()
+    warehouse = BigQueryWarehouse(client, "p", "d", "us-central1")  # ty: ignore
 
+    result = warehouse.load_file(sample, "raw_events")
 
-def test_a_fresh_chunk_is_staged_appended_and_the_stage_dropped() -> None:
-    client = FakeBigQuery()
-    chunk = _chunk()
-
-    result = _warehouse(client).load(chunk, UPLOADED_AT)
-
-    assert result == warehouse.LoadResult("raw_cooler", 3, already_loaded=False)
-    assert client.appends == [warehouse.append_job_id(chunk.name)]
-    assert client.deleted == [
-        f"chanyou-frostlog.frostlog.{warehouse.stage_table_name('raw_cooler', chunk.name)}"
-    ]
-
-
-def test_a_redelivery_after_a_successful_append_does_nothing_twice() -> None:
-    client = FakeBigQuery()
-    chunk = _chunk()
-    client.jobs[warehouse.append_job_id(chunk.name)] = FakeJob()
-
-    result = _warehouse(client).load(chunk, UPLOADED_AT)
-
-    assert result.already_loaded is True
-    assert client.appends == []
-
-
-def test_an_append_that_failed_is_retried_under_a_new_id() -> None:
-    # The old behaviour re-raised the failed job's error on every redelivery, so
-    # the chunk could never be loaded again.
-    client = FakeBigQuery()
-    chunk = _chunk()
-    client.jobs[warehouse.append_job_id(chunk.name)] = FakeJob(error={"reason": "invalid"})
-
-    result = _warehouse(client).load(chunk, UPLOADED_AT)
-
-    assert result.already_loaded is False
-    assert client.appends == [warehouse.append_job_id(chunk.name, 2)]
-
-
-def test_an_append_still_running_is_waited_for() -> None:
-    client = FakeBigQuery()
-    chunk = _chunk()
-    running = FakeJob(state="RUNNING")
-    client.jobs[warehouse.append_job_id(chunk.name)] = running
-
-    result = _warehouse(client).load(chunk, UPLOADED_AT)
-
-    assert result.already_loaded is True
-    assert running.awaited == 1
-    assert client.appends == []
-
-
-def test_the_stage_survives_a_failed_append_so_the_retry_can_use_it() -> None:
-    client = FakeBigQuery()
-    chunk = _chunk()
-    client.failing.add(warehouse.append_job_id(chunk.name))
-
-    with pytest.raises(BadRequest):
-        _warehouse(client).load(chunk, UPLOADED_AT)
-
-    assert client.deleted == []
-
-
-def test_a_local_sample_file_takes_the_same_path(tmp_path: Any) -> None:
-    client = FakeBigQuery()
-    path = tmp_path / "2026-09-06.json"
-    path.write_text('{"ts": "2026-09-06T00:00:00Z"}\n')
-
-    result = _warehouse(client).load_file(path, "raw_events", "samples/events", UPLOADED_AT)
-
-    assert result.table == "raw_events"
-    # No job id: nothing redelivers a local file, and CI reloads the samples often.
-    assert client.appends == ["anonymous"]
+    assert result == type(result)(table="raw_events", rows=3)
+    (job,) = client.jobs
+    assert job["table"] == "p.d.raw_events"
+    # Appending, tolerating fields the contract does not declare, and leaving
+    # _loaded_at to the default the schema carries.
+    assert job["config"].write_disposition == "WRITE_APPEND"
+    assert job["config"].ignore_unknown_values is True
+    # The schema names the file's fields only. Naming _loaded_at would make BigQuery
+    # look for it in the data and write NULL instead of evaluating its default.
+    assert {f.name for f in job["config"].schema} == {
+        f.name for f in raw_schema.chunk_schema("raw_events")
+    }
+    assert "_loaded_at" not in {f.name for f in job["config"].schema}

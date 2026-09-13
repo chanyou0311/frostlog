@@ -40,7 +40,6 @@ select
     u.timestamp_corrected,
     u.boot_id,
     u.uptime_seconds,
-    u.source_key,
     u.external_input,
     u.battery_state,
     u.display_unit,
@@ -61,7 +60,7 @@ select
     u.discharge_watts * u.held_seconds / 3600 as discharged_watt_hours,
     u.charge_watts * u.held_seconds / 3600 as charged_watt_hours,
     u.input_watts * u.held_seconds / 3600 as input_watt_hours
-from {{ ref('stg_cooler_state_update') }} u
+from {{ ref('stg_collection__cooler_state_update') }} u
 left join {{ ref('dim_cooler') }} c
     on c.serial_number = u.serial_number
    and u.updated_at >= c.valid_from

@@ -12,7 +12,7 @@
 with updates as (
 
     select serial_number, address as bluetooth_address, model, updated_at
-    from {{ ref('stg_cooler_state_update') }}
+    from {{ ref('stg_collection__cooler_state_update') }}
 
 ),
 
@@ -35,7 +35,7 @@ negotiated as (
         n.chip,
         n.firmware_version,
         n.negotiated_at as observed_at
-    from {{ ref('stg_cooler_negotiation') }} n
+    from {{ ref('stg_collection__cooler_negotiation') }} n
     left join addresses a using (serial_number)
 
 ),

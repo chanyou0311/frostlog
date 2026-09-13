@@ -12,10 +12,8 @@ from frostlog_contracts.tester import ContractTestResult
 from frostlog_platform.events import Event
 from frostlog_semantics.app import Services
 from frostlog_semantics.events import UploadRun
-from frostlog_semantics.raw_objects import RawObject
 from frostlog_semantics.settings import Settings
 from frostlog_semantics.transform import BuildResult
-from frostlog_semantics.warehouse import LoadResult
 
 #: The bucket the deployment watches; anything else is somebody else's event.
 COLLECTION_BUCKET = "chanyou-frostlog-collection"
@@ -25,15 +23,9 @@ HMAC_SECRET = "frostlog-collection-hmac"
 
 class FakeWarehouse:
     def __init__(self) -> None:
-        self.loaded: list[tuple[str, datetime]] = []
-        self.already_loaded = False
         self.runs: list[UploadRun] = []
         self.arrived: list[date] = [date(2026, 9, 6), date(2026, 9, 7)]
         self.asked_since: list[datetime] = []
-
-    def load(self, chunk: RawObject, uploaded_at: datetime) -> LoadResult:
-        self.loaded.append((chunk.name, uploaded_at))
-        return LoadResult(table=chunk.table, rows=3, already_loaded=self.already_loaded)
 
     def arrived_dates(self, since: datetime) -> list[date]:
         self.asked_since.append(since)
@@ -42,14 +34,6 @@ class FakeWarehouse:
     def upload_runs(self, since: datetime) -> list[UploadRun]:
         self.asked_since.append(since)
         return self.runs
-
-
-class FakeMetadata:
-    def __init__(self) -> None:
-        self.uploaded: datetime | None = None
-
-    def uploaded_at(self, chunk: RawObject) -> datetime | None:
-        return self.uploaded
 
 
 class FakeTransform:
@@ -113,23 +97,21 @@ class Fakes:
 
     services: Services
     warehouse: FakeWarehouse
-    metadata: FakeMetadata
     transform: FakeTransform
     publisher: FakePublisher
 
 
 @pytest.fixture
 def fakes() -> Fakes:
-    warehouse, metadata = FakeWarehouse(), FakeMetadata()
+    warehouse = FakeWarehouse()
     transform, publisher = FakeTransform(), FakePublisher()
     services = Services(
         settings=Settings(collection_bucket=COLLECTION_BUCKET, signals_topic="frostlog-signals"),
         warehouse=warehouse,
-        metadata=metadata,
         transform=transform,
         publisher=publisher,
     )
-    return Fakes(services, warehouse, metadata, transform, publisher)
+    return Fakes(services, warehouse, transform, publisher)
 
 
 @dataclass

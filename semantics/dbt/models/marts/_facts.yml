@@ -59,10 +59,6 @@ models:
       - name: uptime_seconds
         data_type: float64
         constraints: [{type: not_null}]
-      - name: source_key
-        data_type: string
-        description: Raw object the row came from.
-        constraints: [{type: not_null}]
       - name: external_input
         data_type: bool
         description: True when power was drawn from the external DC input.

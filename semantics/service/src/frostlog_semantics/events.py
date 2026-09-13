@@ -38,7 +38,7 @@ class SemanticUpdated(BaseModel):
     run_id: str
     published_at: datetime
     date_keys: list[int]
-    raw_uploaded_at_max: datetime
+    raw_loaded_since: datetime
     #: Always true: a run whose build failed publishes nothing (reserved field).
     build_passed: bool
     #: Filled when the run was triggered by an events chunk; empty otherwise.

@@ -61,10 +61,10 @@ schema:
         description: JST dates (yyyymmdd) covered by the UTC chunk dates that arrived within the transform's lookback window. These dates describe the arrivals that triggered the run; every table is rebuilt in full.
         items:
           logicalType: integer
-      - name: raw_uploaded_at_max
+      - name: raw_loaded_since
         logicalType: timestamp
         required: true
-        description: Latest raw chunk upload time processed by this run (watermark).
+        description: The start of the window this run asked about; rows the warehouse loaded after it are what made a build due.
       - name: build_passed
         logicalType: boolean
         required: true
