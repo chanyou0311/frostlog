@@ -14,9 +14,3 @@ def test_a_sample_is_given_the_object_name_its_day_would_have_in_the_bucket() ->
     (path, stream) = samples.sample_chunks(Settings().contracts_dir)[0]
 
     assert samples.source_key(path, stream) == f"v1/{stream}/dt={path.stem}/000000000000.jsonl"
-
-
-def test_the_target_dates_cover_both_jst_days_of_every_sample() -> None:
-    chunks = samples.sample_chunks(Settings().contracts_dir)
-
-    assert samples.target_dates(chunks) == ["2026-09-06", "2026-09-07"]

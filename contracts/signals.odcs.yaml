@@ -58,7 +58,7 @@ schema:
       - name: date_keys
         logicalType: array
         required: true
-        description: JST dates (yyyymmdd) whose partitions were rebuilt.
+        description: JST dates (yyyymmdd) covered by the UTC chunk dates that arrived within the transform's lookback window. These dates describe the arrivals that triggered the run; every table is rebuilt in full.
         items:
           logicalType: integer
       - name: raw_uploaded_at_max

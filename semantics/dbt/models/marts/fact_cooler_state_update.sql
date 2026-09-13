@@ -1,13 +1,6 @@
-{% set batch_boots = frostlog_batch_boot_ids() %}
-
 {{
     config(
-        materialized='incremental',
-        incremental_strategy='merge',
-        unique_key='state_update_key',
-        incremental_predicates=[
-            'DBT_INTERNAL_DEST.boot_id in ' ~ frostlog_id_list(batch_boots)
-        ],
+        materialized='table',
         partition_by={'field': 'partition_date', 'data_type': 'date'},
         cluster_by=['boot_id'],
         tags=['partitioned'],
@@ -20,27 +13,21 @@
 -- that moment and the seconds the state is taken to hold. Everything else in the
 -- model is an aggregate of this table.
 --
--- The grain of a run is a boot, not a date, and the rows are merged on their key
--- rather than written over a date partition. The Pi's clock is wrong until NTP
--- catches up after a reboot, so the reports of a boot first land on whatever JST
--- date their recorded timestamp says; when a synced report of the same boot arrives
--- later, every earlier report of that boot is placed again and can end up on
--- another date. Overwriting date partitions would leave the copies on the old date
--- behind — two rows with the same state_update_key, a failing uniqueness test and
--- no build after that. A merge on the key moves the row instead.
+-- Every run rebuilds the whole table. The Pi's clock is wrong until NTP catches up
+-- after a reboot, so a synced report arriving later can move earlier reports of the
+-- same boot to another date. Placing every row afresh removes its old placement too,
+-- and accounts for a new neighbour changing its held_seconds or a late handshake
+-- changing which cooler version applies.
+--
+-- On production-sized data a full build billed only 6% more than an incremental
+-- one. BigQuery's minimum charge per query and referenced table leaves little to
+-- save at this size, while the incremental machinery already caused a production
+-- bug that inserted the same rows on every run. Replacing the table removes that
+-- failure mode along with the machinery that made it possible.
 --
 -- `partition_date` is the JST date of `updated_at` as a DATE. It carries no meaning
 -- beyond `date_key` and exists because BigQuery partitions on a column, not on an
 -- expression.
-
-with updates as (
-
-    select * from {{ ref('stg_cooler_state_update') }}
-    {% if is_incremental() %}
-    where boot_id in {{ frostlog_id_list(batch_boots) }}
-    {% endif %}
-
-)
 
 select
     u.state_update_key,
@@ -74,7 +61,7 @@ select
     u.discharge_watts * u.held_seconds / 3600 as discharged_watt_hours,
     u.charge_watts * u.held_seconds / 3600 as charged_watt_hours,
     u.input_watts * u.held_seconds / 3600 as input_watt_hours
-from updates u
+from {{ ref('stg_cooler_state_update') }} u
 left join {{ ref('dim_cooler') }} c
     on c.serial_number = u.serial_number
    and u.updated_at >= c.valid_from

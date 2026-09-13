@@ -11,9 +11,9 @@ add to it.
 """
 
 import argparse
-import json
 import logging
 import sys
+import tempfile
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
@@ -37,9 +37,28 @@ def sample_chunks(contracts_dir: Path) -> list[tuple[Path, str]]:
     return found
 
 
-def source_key(path: Path, stream: str) -> str:
+def source_key(path: Path, stream: str, offset: int = 0) -> str:
     """The object name this sample would have in the bucket (it is one UTC day)."""
-    return f"v1/{stream}/dt={path.stem}/{0:012d}.jsonl"
+    return f"v1/{stream}/dt={path.stem}/{offset:012d}.jsonl"
+
+
+def split(path: Path, workspace: Path) -> list[tuple[Path, int]]:
+    """The sample cut in two where the Pi would have cut it, with each part's offset.
+
+    A chunk is named after the byte offset it starts at, and the uploader ships
+    whatever has been written since the last one. Cutting a sample the same way is
+    how CI checks that a chunk boundary does not end a state: the report before the
+    cut has its successor in the second delivery, and held_seconds and the energy
+    derived from it must account for that neighbour across the boundary.
+    """
+    lines = path.read_bytes().splitlines(keepends=True)
+    head, tail = lines[: len(lines) // 2], lines[len(lines) // 2 :]
+    parts = []
+    for index, (part, offset) in enumerate(((head, 0), (tail, sum(map(len, head))))):
+        cut = workspace / f"{path.stem}.{index}.json"
+        cut.write_bytes(b"".join(part))
+        parts.append((cut, offset))
+    return parts
 
 
 def uploaded_at(path: Path) -> datetime:
@@ -53,17 +72,13 @@ def uploaded_at(path: Path) -> datetime:
     return datetime.combine(day + timedelta(days=1), time(0, 5), tzinfo=UTC)
 
 
-def target_dates(chunks: list[tuple[Path, str]]) -> list[str]:
-    """The JST dates the samples touch, as dbt's ``target_dates`` variable wants them."""
-    days: set[str] = set()
-    for path, _ in chunks:
-        for day in raw_objects.target_dates(datetime.fromisoformat(path.stem).date()):
-            days.add(day.isoformat())
-    return sorted(days)
+def load(settings: Settings, part: int | None = None) -> None:
+    """Rebuild the CI raw tables from the samples.
 
-
-def load(settings: Settings) -> None:
-    """Rebuild the CI raw tables from the samples."""
+    ``part`` loads only the first or only the second half of every sample, as two
+    deliveries rather than one. Part 1 empties the tables first, as a whole load
+    does; part 2 adds to what is there, because that is the situation being tested.
+    """
     from google.cloud import bigquery
 
     from frostlog_semantics.warehouse import BigQueryWarehouse
@@ -76,30 +91,41 @@ def load(settings: Settings) -> None:
         settings.bq_dataset_ci,
         settings.bq_location,
     )
-    for table in sorted({raw_objects.TABLES[stream] for _, stream in chunks}):
-        warehouse.reset_table(table)
-        log.info("%s.%s: emptied", settings.bq_dataset_ci, table)
-    for path, stream in chunks:
-        result = warehouse.load_file(
-            path, raw_objects.TABLES[stream], source_key(path, stream), uploaded_at(path)
-        )
-        log.info("%s: %d row(s) into %s", path.name, result.rows, result.table)
+    if part != 2:
+        for table in sorted({raw_objects.TABLES[stream] for _, stream in chunks}):
+            warehouse.reset_table(table)
+            log.info("%s.%s: emptied", settings.bq_dataset_ci, table)
+    with tempfile.TemporaryDirectory() as workspace:
+        for path, stream in chunks:
+            for cut, offset in _deliveries(path, Path(workspace), part):
+                result = warehouse.load_file(
+                    cut,
+                    raw_objects.TABLES[stream],
+                    source_key(path, stream, offset),
+                    uploaded_at(path),
+                )
+                log.info("%s: %d row(s) into %s", cut.name, result.rows, result.table)
+
+
+def _deliveries(path: Path, workspace: Path, part: int | None) -> list[tuple[Path, int]]:
+    """Which of the sample's halves this load ships, as (file, offset)."""
+    if part is None:
+        return [(path, 0)]
+    return [split(path, workspace)[part - 1]]
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--target-dates",
-        action="store_true",
-        help="print the dbt --vars covering the samples instead of loading them",
+        "--part",
+        type=int,
+        choices=(1, 2),
+        help="load only this half of every sample, as one of two deliveries",
     )
     arguments = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(message)s")
     settings = Settings()
-    if arguments.target_dates:
-        print(json.dumps({"target_dates": target_dates(sample_chunks(settings.contracts_dir))}))
-        return 0
-    load(settings)
+    load(settings, arguments.part)
     return 0
 
 

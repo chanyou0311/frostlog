@@ -35,9 +35,10 @@ test:
 parse:
 	$(DBT) parse $(DIRS)
 
-# A full rebuild; on arrival the service passes the dates instead.
+# Every table is rebuilt on each run, so the service and this target use the same
+# plain `dbt build`; no refresh flag or date variables are needed.
 build:
-	$(DBT) build $(DIRS) --target $(TARGET) --full-refresh
+	$(DBT) build $(DIRS) --target $(TARGET)
 
 # The dbt unit tests. They run their fixtures as queries, so they need BigQuery.
 unit-test:
@@ -59,10 +60,15 @@ contract-test:
 # the model is built from that, its unit tests run, and the result is held against
 # the contract. Any step that fails stops the target. Needs Application Default
 # Credentials and FROSTLOG_BQ_DATASET_CI.
+#
+# Two deliveries keep the real chunk boundary: the report before the cut gets its
+# successor from another chunk, and the contract checks the resulting held_seconds.
+# Build once after both arrive, because a full rebuild uses no previous fact state;
+# building between deliveries would add no coverage of that boundary.
 ci-warehouse:
-	$(UV) python -m frostlog_semantics.samples
-	$(DBT) build $(DIRS) --target ci --full-refresh \
-		--vars "$$($(UV) python -m frostlog_semantics.samples --target-dates)"
+	$(UV) python -m frostlog_semantics.samples --part 1
+	$(UV) python -m frostlog_semantics.samples --part 2
+	$(DBT) build $(DIRS) --target ci
 	$(DBT) test $(DIRS) --target ci --select test_type:unit
 	$(UV) datacontract test $(CONTRACTS)/semantics.odcs.yaml --server ci
 

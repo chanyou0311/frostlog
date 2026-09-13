@@ -27,9 +27,9 @@ description:
     Estimates (next-morning level, hours left, next pull-down time) are not stored: they
     are computed by consumers from these actuals.
   limitations: >
-    Every table is rebuilt from raw for the affected dates on each arrival, so rows can
-    change until the raw for that day has fully arrived (late arrival after trips is
-    normal). Timestamps of records made before NTP synchronized are corrected from the
+    Every table is rebuilt in full from raw on each transform run, so later arrivals
+    can change earlier rows (late arrival after trips is normal). Timestamps of
+    records made before NTP synchronized are corrected from the
     same boot's synced records when possible (timestamp_corrected); otherwise they are
     left as recorded. Values are in °C, W, Wh, percent and seconds; the cooler's own
     resolution is 1 °C and 1 W.
@@ -257,9 +257,9 @@ schema:
           How long a state is taken to hold: until the next update of the same boot, at
           most the ten minutes after which the cooler repeats itself anyway. Recomputed
           here rather than only bounded, because the number that matters is not "under
-          600" but "the right gap": a run rebuilds the boots its chunk touched, and a row
-          whose neighbour arrived after it was last written would keep a hold that is too
-          long — and every aggregate weights by it.
+          600" but "the right gap": a report's successor can arrive in another chunk,
+          and stopping at that boundary would leave a hold that is too long — and
+          every aggregate weights by it.
         query: >
           SELECT COUNT(*) FROM (
             SELECT
@@ -1000,13 +1000,13 @@ slaProperties:
     value: 24
     unit: h
     element: fact_cooler_state_update.updated_at
-    description: "Tables reflect a raw update within 24 hours of its upload. The transform actually runs every 30 minutes, so the usual wait is that rather than a day."
+    description: "Tables reflect a raw update within 24 hours of its upload. The transform actually runs hourly, so the usual wait is that rather than a day."
   - property: frequency
-    value: every-30-minutes
+    value: hourly
     description: >
       A chunk is loaded into raw as it lands, which is every five minutes while the
       cooler is recording; the tables this contract describes are rebuilt from raw
-      every 30 minutes. Loading and transforming are separated because a load job
+      hourly. Loading and transforming are separated because a load job
       costs nothing to run often and a transform does not. The contract test runs
       daily.
   - property: retention
@@ -1033,8 +1033,8 @@ customProperties:
     value: additive-only
     description: Columns, tables and event fields may be added. Renaming, removing or re-typing a column, or changing its meaning, bumps the major version and is published as a new dbt model version.
   - property: rebuildRule
-    value: by-arrived-boot
-    description: Each arrival rebuilds every row of every boot its chunks touched, and the JST dates those rows fall on now or fell on before their timestamps were corrected; a full rebuild is always possible.
+    value: full-table
+    description: Each transform run replaces every table with its complete result from raw. A corrected timestamp places a row on its new date without leaving its old placement behind, and later arrivals can change earlier rows' held_seconds and dimension keys. No date or boot limits what a build considers.
   - property: rules
     value: "held_seconds cap 600 s; ts correction from the first NTP-synced update of the same boot; pull-down start = interior >= setpoint + 5 C, reached = interior <= setpoint + 1 C, first update after >= 15 min silence counts as start_up; snapshot rows are dense over JST quarter hours; band joins are half-open [lower, upper)"
   - property: estimatesNotStored
