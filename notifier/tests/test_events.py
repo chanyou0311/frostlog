@@ -11,8 +11,7 @@ SEMANTIC_UPDATED = {
     "event": "semantic_updated",
     "run_id": "2026-09-11T12:03:00Z/17",
     "published_at": "2026-09-11T12:03:07Z",
-    "date_keys": [20260910, 20260911],
-    "raw_uploaded_at_max": "2026-09-11T12:02:55Z",
+    "rows_arrived": 412,
     "build_passed": True,
 }
 
@@ -22,7 +21,7 @@ QUALITY_REPORT = {
     "published_at": "2026-09-11T21:00:41Z",
     "contract_id": "frostlog-semantics",
     "passed": False,
-    "failed_checks": ["hours_are_dense", "fresh_within_a_day"],
+    "failed_checks": ["hours_are_dense", "every_report_is_reflected"],
 }
 
 
@@ -37,11 +36,11 @@ def envelope(payload: dict[str, Any]) -> dict[str, Any]:
 def test_a_semantic_updated_event_is_read() -> None:
     event = parse(envelope(SEMANTIC_UPDATED))
     assert isinstance(event, SemanticUpdated)
-    assert event.date_keys == [20260910, 20260911]
+    assert event.rows_arrived == 412
     assert event.build_passed is True
 
 
-def test_the_upload_runs_of_an_events_chunk_are_read() -> None:
+def test_the_upload_runs_that_arrived_are_read() -> None:
     event = parse(
         envelope(
             SEMANTIC_UPDATED
@@ -81,7 +80,7 @@ def test_an_upload_run_without_a_start_falls_back_to_its_end() -> None:
 def test_a_quality_report_is_told_apart_by_its_event_field() -> None:
     event = parse(envelope(QUALITY_REPORT))
     assert isinstance(event, QualityReport)
-    assert event.failed_checks == ["hours_are_dense", "fresh_within_a_day"]
+    assert event.failed_checks == ["hours_are_dense", "every_report_is_reflected"]
 
 
 def test_unknown_fields_are_ignored() -> None:

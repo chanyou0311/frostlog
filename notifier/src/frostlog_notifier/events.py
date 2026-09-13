@@ -45,10 +45,13 @@ class SemanticUpdated(BaseModel):
     event: Literal["semantic_updated"] = "semantic_updated"
     run_id: str
     published_at: datetime
-    date_keys: list[int]
-    raw_uploaded_at_max: datetime
+    #: How many rows reached raw since the build before this one. Not read here:
+    #: what changed is read from the warehouse, which this event only announces.
+    rows_arrived: int
     build_passed: bool
-    #: Present when this run loaded an `events` chunk; empty otherwise.
+    #: The collector's upload runs that reached the warehouse inside the build's
+    #: lookback window, so the same run arrives on more than one event;
+    #: homecoming settles that on finished_at.
     upload_runs: list[UploadRun] = Field(default_factory=list)
 
 

@@ -51,8 +51,7 @@ def updated(**overrides) -> SemanticUpdated:
     event = {
         "run_id": "run-17",
         "published_at": RETURN,
-        "date_keys": [20260911],
-        "raw_uploaded_at_max": RETURN,
+        "rows_arrived": 412,
         "build_passed": True,
         "upload_runs": [],
     }
