@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     gcp_project: str | None = None
     #: Dataset holding the tables of the semantic data contract.
     bigquery_dataset: str = Field(default="frostlog", validation_alias="FROSTLOG_BQ_DATASET")
+    #: Where this application keeps what it has already said. Its own dataset, not the
+    #: data product's: the product's tables are rebuilt from raw and promise a shape to
+    #: everyone, while this one is mutable and private to the notifier. Keeping them
+    #: apart is what lets the runtime hold the product read-only.
+    state_dataset: str = Field(
+        default="frostlog_notifier", validation_alias="FROSTLOG_BQ_STATE_DATASET"
+    )
 
     #: The token itself; for local runs, where there is no Secret Manager.
     slack_bot_token: str | None = None
