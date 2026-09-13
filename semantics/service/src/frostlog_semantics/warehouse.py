@@ -5,15 +5,21 @@ that, every fifteen minutes, with no code of ours in the path: the chunks are
 newline-delimited JSON whose fields are the table's, so a load job needs nothing
 added to them, and a load job is not billed.
 
-That leaves no arrival timestamp on the row -- a transfer names every column of the
-destination in its load job, and BigQuery writes NULL rather than a default for any
-column a load job names. So whether a build is due is asked of the tables rather
+That leaves no arrival timestamp of our own on the row -- a transfer names every
+column of the destination in its load job, and BigQuery writes NULL rather than a
+default for any column a load job names. So whether a build is due is asked of the tables rather
 than of the rows, by counting them. `tables.get` is metadata: an API call, not a
 query, so it costs nothing at all.
 
 It is the row count and not the last-modified time, because a transfer that finds
 nothing still touches the table and moves that timestamp; raw is append-only, so a
 count that has not changed means nothing arrived.
+
+The arrival time itself is not gone, only moved out of reach of a load job: the raw
+tables partition on ingestion time, so ``_PARTITIONTIME`` says when a row landed. It
+is a pseudo-column, which is exactly why it survives -- a load job cannot name it,
+so it cannot null it. The contract reads it to give a row that has arrived time to
+be built before calling it missing.
 """
 
 import logging
@@ -92,10 +98,16 @@ class BigQueryWarehouse:
         A load job writes to a table but does not make one. In production the tables
         are made once, outside this repository, and then only written by the
         transfer; here it is the sample loader that calls it, on every rebuild.
+
+        The partitioning is on ingestion time rather than on ``ts``. Neither costs
+        less at this size, but only ingestion time answers "when did this land", and
+        it answers it as ``_PARTITIONTIME`` -- a pseudo-column, which no load job can
+        name and therefore none can null. ``ts`` is when the cooler spoke, which for
+        a trip's backlog is days before the row reached the bucket.
         """
         name = self._table(table)
         wanted = bigquery.Table(name, schema=raw_schema.SCHEMAS[table])
-        wanted.time_partitioning = bigquery.TimePartitioning(field="ts")
+        wanted.time_partitioning = bigquery.TimePartitioning()
         wanted.clustering_fields = ["boot_id"]
         self._client.create_table(wanted, exists_ok=True)
         return name

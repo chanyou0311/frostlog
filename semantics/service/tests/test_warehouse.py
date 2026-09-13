@@ -63,8 +63,7 @@ def test_a_sample_is_loaded_the_way_the_transfer_loads_a_chunk(tmp_path: Path) -
     assert result == type(result)(table="raw_events", rows=3)
     (job,) = client.jobs
     assert job["table"] == "p.d.raw_events"
-    # Appending, tolerating fields the contract does not declare, and leaving
-    # _loaded_at to the default the schema carries.
+    # Appending, and tolerating fields the contract does not declare.
     assert job["config"].write_disposition == "WRITE_APPEND"
     assert job["config"].ignore_unknown_values is True
     assert {f.name for f in job["config"].schema} == {

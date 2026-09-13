@@ -3,8 +3,8 @@
 The repository keeps one uncompressed day of each stream under
 ``contracts/samples/collection/<stream>/<UTC date>.json``. ``make ci-warehouse`` loads
 them into the CI dataset with the same kind of load job the transfer issues in
-production — same schema, same format, the same default evaluated for
-``_loaded_at`` — and then lets dbt and datacontract-cli work on the result.
+production — same schema, same format, the same ingestion-time partition — and then
+lets dbt and datacontract-cli work on the result.
 
 The tables are dropped and recreated first: CI rebuilds the dataset, it does not
 add to it.

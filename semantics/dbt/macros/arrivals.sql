@@ -21,7 +21,8 @@
   the row came from; the caller names the relation so the whole row can be read. It
   used to order by the object name and its upload time, back when a query added those
   to every row; nothing writes them now, because writing them cost more than the load
-  did. `_loaded_at` cannot take their place: two copies can land in the same transfer.
+  did. `_PARTITIONTIME` cannot take their place either: two copies of a report can
+  land in the same transfer, and then share it.
 
   uptime_seconds is a FLOAT64, and BigQuery refuses to partition by one -- equality
   between floats is not a question it will answer for you. Its text is: the same
