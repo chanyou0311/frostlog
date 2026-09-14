@@ -137,16 +137,17 @@ class Link:
         self._session, self._state = session, state
         last_seen = last_message = clock.uptime()
         for frame in state.handshake.start():
-            await session.write(frame)
+            await self._write(session, frame)
         while not stop.is_set() and not session.disconnected.is_set():
             self._expire_command()
             if state.state_wanted(clock.uptime()):
                 await self._ask_state(session, state)
-            data = await session.next_notification(timeout=1.0)
-            if data is not None:
+            received = await session.next_notification(timeout=1.0)
+            if received is not None:
+                data, at = received
                 last_seen = last_message = clock.uptime()
                 async with self._lock:
-                    await self._handle(data, session, state)
+                    await self._handle(data, at, session, state)
                 continue
             if clock.uptime() - last_message >= self._silence_timeout:
                 self._emit("ble_silent", address=session.address)
@@ -162,7 +163,7 @@ class Link:
                 break  # disconnect; the next connection starts the negotiation afresh
             self._emit("ble_handshake_retry", variant=state.handshake.variant)
             for frame in state.handshake.start():
-                await session.write(frame)
+                await self._write(session, frame)
             last_seen = clock.uptime()
         for key, notifications in state.reassembler.pending().items():
             self._message(
@@ -173,11 +174,18 @@ class Link:
                 error="incomplete",
             )
 
-    async def _handle(self, data: bytes, session: ble.Session, state: "_SessionState") -> None:
+    async def _write(self, session: ble.Session, frame: bytes) -> None:
+        """One frame to the cooler, within a bound: a write that hangs is a link that is
+        gone, and the loop that waits for it would neither read nor reconnect."""
+        await asyncio.wait_for(session.write(frame), self._command_timeout)
+
+    async def _handle(
+        self, data: bytes, at: dict[str, Any], session: ble.Session, state: "_SessionState"
+    ) -> None:
         try:
             frame = parse_frame(data)
         except ProtocolError as exc:
-            self._message(session.address, [data.hex()], error=str(exc))
+            self._message(session.address, [data.hex()], at=at, error=str(exc))
             return
         notifications = [data]
         if state.reassembler.is_fragment(frame, len(data), state.handshake.mtu):
@@ -185,7 +193,11 @@ class Link:
                 joined = state.reassembler.add(frame, data)
             except FragmentError as exc:
                 self._message(
-                    session.address, _hex(exc.notifications), **_header(frame), error=str(exc)
+                    session.address,
+                    _hex(exc.notifications),
+                    at=at,
+                    **_header(frame),
+                    error=str(exc),
                 )
                 return
             if joined is None:
@@ -199,7 +211,7 @@ class Link:
             info["plain"] = plain.hex()
             if frame.cmd.hex() in STATE_COMMANDS:
                 decoded = info["payload"] = decode_state_or_none(plain)
-        self._message(session.address, _hex(notifications), **info)
+        self._message(session.address, _hex(notifications), at=at, **info)
         if decoded is not None:
             state.latest = decoded
         self._follow_command(frame.cmd.hex(), decoded)
@@ -215,7 +227,7 @@ class Link:
             self._emit("ble_handshake_failed", cmd=frame.cmd.hex(), error=str(exc))
             return
         for reply in replies:
-            await session.write(reply)
+            await self._write(session, reply)
         if not state.handshake.done or was_done:
             return
         device = state.handshake.device
@@ -233,7 +245,7 @@ class Link:
         """Ask for a state report; the answer comes as 4840."""
         assert state.handshake.cipher is not None
         state.state_asked_at = clock.uptime()
-        await session.write(commands.state_request(state.handshake.cipher, int(time.time())))
+        await self._write(session, commands.state_request(state.handshake.cipher, int(time.time())))
 
     # --- commands ---------------------------------------------------------------
 
@@ -247,14 +259,23 @@ class Link:
             try:
                 command, session, cipher, unit = self._accept(request)
                 frame = command.frame(cipher, unit, int(time.time()))
-                # A write that hangs is a link that is gone, whatever bleak thinks; the
-                # client is answered within the same bound it can expect for the outcome.
-                await asyncio.wait_for(session.write(frame), self._command_timeout)
+                await self._write(session, frame)
             except commands.Rejected as exc:
                 self._emit("command_rejected", command_id=command_id, error=exc.reason)
                 return {"command_id": command_id, "status": "rejected", "error": exc.reason}
-            except (ble.BleakError, OSError, TimeoutError) as exc:
-                # The link was there when it was checked and is not there now.
+            except TimeoutError:  # before OSError, which it is a kind of
+                # Whether the frame went is unknown, and unknown is not "no": a client
+                # that took this for a refusal would write the value again, over what
+                # the cooler may have taken -- or over what a hand set since. So the
+                # request is taken, its outcome is unconfirmed, and the link that hangs
+                # on a write is given up as dropped.
+                log.warning("the command's write did not complete; dropping the link")
+                self._emit("command_unconfirmed", command_id=command_id, error="the write hung")
+                session.disconnected.set()
+                return {"command_id": command_id, "status": "accepted"}
+            except (ble.BleakError, OSError) as exc:
+                # The link was there when it was checked and is not there now; the
+                # frame did not go, and the client may ask again.
                 log.warning("the command could not be written: %s", exc)
                 self._emit("command_rejected", command_id=command_id, error="not_connected")
                 return {"command_id": command_id, "status": "rejected", "error": "not_connected"}
@@ -323,12 +344,14 @@ class Link:
 
     # --- events -----------------------------------------------------------------
 
-    def _emit(self, kind: str, **fields: Any) -> None:
+    def _emit(self, kind: str, at: dict[str, Any] | None = None, **fields: Any) -> None:
         connection = self._connections if self._session is not None else 0
-        self._stream.emit(kind, connection=connection, **fields)
+        self._stream.emit(kind, connection=connection, at=at, **fields)
 
-    def _message(self, address: str, frames: list[str], **fields: Any) -> None:
-        self._emit("message", model=MODEL, address=address, frames=frames, **fields)
+    def _message(
+        self, address: str, frames: list[str], at: dict[str, Any] | None = None, **fields: Any
+    ) -> None:
+        self._emit("message", at=at, model=MODEL, address=address, frames=frames, **fields)
 
 
 def _named(value: Any) -> bool:
@@ -336,7 +359,7 @@ def _named(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
-def _asked(request: Any) -> dict[str, str]:
+def _asked(request: Any) -> dict[str, Any]:
     """What the client asked for, as the ``command_requested`` event repeats it.
 
     Whatever was asked is repeated, including a request that is about to be refused:

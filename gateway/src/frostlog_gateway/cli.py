@@ -34,8 +34,6 @@ def main(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    # Behave like other UNIX filters when the reader goes away (e.g. `| head`).
-    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
 
 def fail(message: str) -> typer.Exit:
@@ -113,6 +111,10 @@ def decode() -> None:
     """
     from frostlog_gateway.decoder import EverfrostDecoder
 
+    # Behave like other UNIX filters when the reader goes away (e.g. `| head`). Only
+    # here: the resident gateway writes to sockets whose readers come and go, and
+    # must outlive every one of them.
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
     decoder = EverfrostDecoder()
     for line in sys.stdin:
         line = line.strip()

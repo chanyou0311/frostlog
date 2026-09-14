@@ -14,6 +14,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 _BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
 # systemd-timesyncd creates this file once the clock has been set from NTP.
@@ -23,6 +24,16 @@ _BOOTTIME = getattr(time, "CLOCK_BOOTTIME", time.CLOCK_MONOTONIC)
 
 def now() -> datetime:
     return datetime.now(UTC)
+
+
+def stamp() -> dict[str, Any]:
+    """When something happened, as the Pi can tell it: the fields every event carries."""
+    return {
+        "ts": now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        "uptime_seconds": uptime(),
+        "boot_id": boot_id(),
+        "ts_synced": synced(),
+    }
 
 
 def uptime() -> float:

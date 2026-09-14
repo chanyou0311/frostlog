@@ -26,16 +26,6 @@ log = logging.getLogger(__name__)
 QUEUE_LIMIT = 1000
 
 
-def stamp() -> dict[str, Any]:
-    """When an event happened, as the Pi can tell it (see :mod:`frostlog_gateway.clock`)."""
-    return {
-        "ts": clock.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-        "uptime_seconds": clock.uptime(),
-        "boot_id": clock.boot_id(),
-        "ts_synced": clock.synced(),
-    }
-
-
 class Subscriber:
     """One reader's queue. Full means the oldest goes, not that the gateway waits."""
 
@@ -94,13 +84,20 @@ class EventStream:
         self._seq = 0
         self._subscribers: set[Subscriber] = set()
 
-    def emit(self, kind: str, connection: int = 0, **fields: Any) -> dict[str, Any]:
-        """Stamp one event and broadcast it. Fields that are ``None`` are left out."""
+    def emit(
+        self, kind: str, connection: int = 0, at: dict[str, Any] | None = None, **fields: Any
+    ) -> dict[str, Any]:
+        """Number one event and broadcast it. Fields that are ``None`` are left out.
+
+        ``at`` is the stamp of the moment the event happened, when that was earlier
+        than now: a notification is stamped as it comes off the radio, before it waits
+        its turn to be read.
+        """
         self._seq += 1
         event = {
             "seq": self._seq,
             "connection": connection,
-            **stamp(),
+            **(at or clock.stamp()),
             "kind": kind,
             **{key: value for key, value in fields.items() if value is not None},
         }

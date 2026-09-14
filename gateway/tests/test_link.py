@@ -10,7 +10,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from frostlog_gateway import ble, link
+from frostlog_gateway import ble, clock, link
 from frostlog_gateway.handshake import SOLIX_PRIVATE_KEY, SolixHandshake
 from frostlog_gateway.protocol import (
     DEFAULT_MTU,
@@ -55,14 +55,14 @@ class FakeSession:
     async def write(self, data: bytes) -> None:
         self.written.append(data)
 
-    async def next_notification(self, timeout: float) -> bytes | None:
+    async def next_notification(self, timeout: float) -> tuple[bytes, dict[str, Any]] | None:
         while self.script:
             entry = self.script.popleft()
             if entry is None:
                 self.clock.now += timeout
                 return None
             if isinstance(entry, bytes):
-                return entry
+                return entry, {**clock.stamp(), "uptime_seconds": self.clock.now}
             await entry()
         self.disconnected.set()
         return None
@@ -103,8 +103,10 @@ class Recording(EventStream):
         super().__init__()
         self.events: list[dict[str, Any]] = []
 
-    def emit(self, kind: str, connection: int = 0, **fields: Any) -> dict[str, Any]:
-        event = super().emit(kind, connection, **fields)
+    def emit(
+        self, kind: str, connection: int = 0, at: dict[str, Any] | None = None, **fields: Any
+    ) -> dict[str, Any]:
+        event = super().emit(kind, connection, at, **fields)
         self.events.append(event)
         return event
 
@@ -525,3 +527,68 @@ def test_a_command_during_the_handshake_is_refused(monkeypatch: pytest.MonkeyPat
     harness = Harness(monkeypatch)
     harness.run([harness.ask(setting="setpoint_celsius", value=4, source="t", reason="r")])
     assert harness.outcome[0]["error"] == "negotiating"
+
+
+def test_a_message_is_stamped_when_the_radio_heard_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The stamp comes off the notification, not off the clock at the moment the
+    # message is read: what it waited for in between is not when the cooler spoke.
+    cooler = Cooler()
+    harness = Harness(monkeypatch, negotiation_timeout=1e9)
+    harness.negotiated(monkeypatch, cooler)
+
+    class LateReader(FakeSession):
+        async def next_notification(self, timeout: float) -> tuple[bytes, dict[str, Any]] | None:
+            received = await super().next_notification(timeout)
+            self.clock.now += 9.0  # the reader's turn comes nine seconds later
+            return received
+
+    harness.clock.now = 500.0
+    session = LateReader(harness.clock, [cooler.state()])
+    asyncio.run(harness.link._run_session(cast(ble.Session, session), asyncio.Event()))
+    assert harness.of("message")[0]["uptime_seconds"] == 500.0
+
+
+def test_a_write_that_hangs_is_unconfirmed_and_drops_the_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Whether the frame went is unknown; a refusal would have the client write again.
+    cooler = Cooler()
+    harness = Harness(monkeypatch, negotiation_timeout=1e9, command_timeout=0.01)
+    harness.negotiated(monkeypatch, cooler)
+
+    class HangingSession(FakeSession):
+        async def write(self, data: bytes) -> None:
+            if parse_frame(data).cmd.hex() == "4080":
+                await asyncio.sleep(1.0)
+            await super().write(data)
+
+    session = HangingSession(
+        harness.clock,
+        [
+            cooler.state(),
+            harness.ask(setting="setpoint_celsius", value=4, source="test", reason="warmer"),
+            cooler.state(setpoint_celsius=4),
+        ],
+    )
+    asyncio.run(harness.link._run_session(cast(ble.Session, session), asyncio.Event()))
+    assert harness.outcome[0]["status"] == "accepted"
+    assert harness.kinds("command") == ["command_requested", "command_unconfirmed"]
+    assert session.disconnected.is_set()
+
+
+def test_a_hung_state_request_ends_the_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The loop that waited on it would neither read nor reconnect; a bounded write
+    # turns the hang into the ordinary end of a session.
+    cooler = Cooler()
+    harness = Harness(monkeypatch, negotiation_timeout=1e9, command_timeout=0.01)
+    harness.negotiated(monkeypatch, cooler)
+
+    class HangingSession(FakeSession):
+        async def write(self, data: bytes) -> None:
+            if parse_frame(data).cmd.hex() == "4040":
+                await asyncio.sleep(1.0)
+            await super().write(data)
+
+    session = HangingSession(harness.clock, [None, None])
+    with pytest.raises(TimeoutError):
+        asyncio.run(harness.link._run_session(cast(ble.Session, session), asyncio.Event()))
