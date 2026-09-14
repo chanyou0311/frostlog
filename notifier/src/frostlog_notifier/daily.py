@@ -1,57 +1,40 @@
-"""帰宅の要約: what the cooler did while it was out, and how the night looks.
+"""毎晩の要約: 残量と、その先の見通し。
 
-Coming home is recognised in the data rather than in a clock: chunks only reach
-the bucket from the home Wi-Fi, so an upload run that begins two hours or more
-after the previous one finished is a return. That reading is this module's, not
-the contract's — a long gap between runs is equally a cooler switched off or a Pi
-that could not reach the bucket.
+A picture of the last two days, not a diff against the last one. A diff has to
+remember where it stopped; a picture of a window fixed to `now` does not, which is
+why nothing here is written down anywhere. Data that reached the warehouse late --
+a trip's backlog, uploaded when the car came home -- is simply in the window the
+night it lands.
 
-What arrives with a return is not guaranteed to be all of it: chunks are
-processed independently and a failed one comes back later, so a summary says what
-the model held when it was written. It is written once per return and not
-revisited, which means a chunk that lands afterwards is missed by it. The summary
-covers everything since the previous summary's coverage end.
+Two days rather than one because yesterday is what today is compared against.
 """
 
 import logging
-from collections.abc import Callable
 from datetime import datetime, timedelta
 from itertools import groupby
 
 from frostlog_notifier import charts, folding, formatting, queries
 from frostlog_notifier.clock import next_morning, to_jst
-from frostlog_notifier.events import UploadRun
 from frostlog_notifier.folding import SLOT_SECONDS
-from frostlog_notifier.notification import HOMECOMING, Notification
+from frostlog_notifier.notification import DAILY, Notification
 from frostlog_notifier.queries import Snapshot, StateUpdate
 from frostlog_notifier.warehouse import Warehouse
 
 log = logging.getLogger(__name__)
 
-#: A pause between upload runs at least this long means the car was away.
-ARRIVAL_GAP = timedelta(hours=2)
-#: How far back the summary reaches when nothing has been summarised yet.
-DEFAULT_PERIOD = timedelta(hours=24)
+#: The window: today, and yesterday to compare it with.
+WINDOW = timedelta(days=2)
+#: The day whose energy the summary reports, and whose pull-downs it lists.
+TODAY = timedelta(days=1)
 #: Hours the outlook's slope is taken from.
 SLOPE_HOURS = 3
 #: Slots behind the slope the outlook is read from: the last three hours of them.
 SLOPE_SLOTS = SLOPE_HOURS * 3600 // SLOT_SECONDS
-#: How far back the chart may reach for a stretch that was recorded. A trip records the
-#: whole time it is away and sends it all on the way home, so the stretch can be days;
-#: past a week it is no longer this homecoming.
-CHART_DAYS = 7
 #: Slots to a point, coarsest last. Each leaves a label a reader can place — a quarter
 #: hour, a half, an hour, two, three, four, six, twelve, a day. The last one is what
 #: makes the choice total: a day to a point puts CHART_DAYS days inside MAX_POINTS
 #: however the boundaries fall, so there is no length this table does not cover.
 FOLD_FACTORS = (1, 2, 4, 8, 12, 16, 24, 48, 96)
-
-
-def is_return(run: UploadRun) -> bool:
-    """True when this upload run is the car coming back rather than another run at home."""
-    if run.previous_finished_at is None:
-        return True
-    return run.began_at - run.previous_finished_at >= ARRIVAL_GAP
 
 
 def _on_battery(slot: Snapshot) -> bool:
@@ -118,84 +101,51 @@ def projected_state_of_charge(
     return min(100.0, max(0.0, latest.state_of_charge_percent + slope * span)), None
 
 
-def build_all(
-    warehouse: Warehouse,
-    runs: list[UploadRun],
-    previous_coverage_end: datetime | None,
-    posted_keys: Callable[[str, list[str]], set[str]],
-) -> list[Notification]:
-    """One summary for each return the event carries that has not been posted, oldest first.
+def hours_remaining(latest: StateUpdate, slots: list[Snapshot]) -> float | None:
+    """Hours until the battery is empty at the recent slope, or None if it is not.
 
-    Several returns in one event are chained: each starts where the one before
-    it ended, which is also what the state table remembers between events.
-
-    The already-posted ones are dropped before anything is built. A build costs
-    four queries, and the producer's window on upload runs is two days wide, so
-    the same return rides on dozens of events; without this, each of those events
-    would assemble a summary in full and then throw it away at the door.
+    The same slope the outlook uses, solved for zero instead of for a moment. It is
+    refused for the same two reasons: on external power there is nothing to run down,
+    and without a stretch of unplugged running there is no rate to run it down at. A
+    slope that is flat or rising also answers None -- "forever" is not an hour count.
     """
-    returns = sorted((run for run in runs if is_return(run)), key=key_of)
-    already = posted_keys(HOMECOMING, [key_of(run) for run in returns])
-    summaries: list[Notification] = []
-    start = previous_coverage_end
-    for run in returns:
-        if key_of(run) in already:
-            continue
-        summary = _build(warehouse, run, start)
-        if summary is None:
-            continue
-        summaries.append(summary)
-        start = summary.coverage_end
-    return summaries
+    if latest.battery_state == "charging" or latest.external_input:
+        return None
+    slope = slope_percent_per_hour(slots)
+    if slope is None or slope >= 0:
+        return None
+    return latest.state_of_charge_percent / -slope
 
 
-def key_of(run: UploadRun) -> str:
-    """What makes two summaries the same return.
+def build(warehouse: Warehouse, now: datetime) -> Notification | None:
+    """Tonight's summary, or nothing when the cooler has never been heard from.
 
-    ``finished_at`` and not ``began_at``: the run's end is the ``ts`` of the
-    ``upload_done`` row itself, while its start is a correlated MAX over the whole
-    events table for the newest ``upload_started`` before it. An ``upload_started``
-    that arrives in a later chunk moves that MAX, and the key with it -- the same
-    return would then be posted a second time under a different name.
+    Everything is read from the window ending at ``now``; nothing is read from what
+    was said before. Five queries, once a day.
     """
-    return run.finished_at.isoformat()
-
-
-def _build(
-    warehouse: Warehouse, run: UploadRun, previous_coverage_end: datetime | None
-) -> Notification | None:
-    latest = queries.latest_state_update_at(warehouse, run.finished_at)
+    latest = queries.latest_state_update(warehouse)
     if latest is None:
-        log.info("no state update up to %s; nothing to summarise", run.finished_at)
+        log.info("no state update at all; nothing to summarise")
         return None
 
-    end = latest.updated_at
-    start = previous_coverage_end if previous_coverage_end is not None else end - DEFAULT_PERIOD
-    # The cooler may have said nothing since the previous summary; then the period is empty.
-    start = min(start, end)
-    energy = queries.energy_between(warehouse, start, end)
-    pulldowns = queries.finished_pulldowns_between(warehouse, start, end)
-    slots = queries.snapshots(
-        warehouse, end - timedelta(days=CHART_DAYS), end + timedelta(seconds=SLOT_SECONDS)
-    )
+    start, midnight = now - WINDOW, now - TODAY
+    slots = queries.snapshots(warehouse, start, now)
     recorded = _latest_stretch(slots)
+    today = queries.energy_between(warehouse, midnight, now)
+    yesterday = queries.energy_between(warehouse, start, midnight)
+    pulldowns = queries.finished_pulldowns_between(warehouse, midnight, now)
 
-    morning = next_morning(end)
-    projected, refused = projected_state_of_charge(latest, recorded, morning)
-    # The gap between upload runs, which is how the return was recognised — not a gap
-    # in the recording. The cooler goes on recording the whole time it is away; what
-    # stops is the sending. The stretch that was recorded says where the holes are.
-    away = run.began_at - run.previous_finished_at if run.previous_finished_at else None
+    morning = next_morning(now)
+    projected, refused = projected_state_of_charge(latest, slots, morning)
+    remaining = hours_remaining(latest, slots)
     return Notification(
-        kind=HOMECOMING,
-        # The run, not the data: the key must not move when a later chunk of the
-        # same return lands (see key_of).
-        key=key_of(run),
-        text=_text(latest, start, end, energy, pulldowns, morning, projected, refused, away),
-        blocks=_blocks(
-            latest, energy, pulldowns, morning, projected, refused, away, recorded, start, end
+        kind=DAILY,
+        text=_text(
+            latest, now, today, yesterday, pulldowns, morning, projected, refused, remaining
         ),
-        coverage_end=end,
+        blocks=_blocks(
+            latest, today, yesterday, pulldowns, morning, projected, refused, remaining, recorded
+        ),
     )
 
 
@@ -256,15 +206,14 @@ def _label(moment: datetime, factor: int, dated: bool) -> str:
 
 def _blocks(
     latest: StateUpdate,
-    energy: queries.Energy,
+    today: queries.Energy,
+    yesterday: queries.Energy,
     pulldowns: list[queries.Pulldown],
     morning: datetime,
     projected: float | None,
     refused: str | None,
-    away: timedelta | None,
+    remaining: float | None,
     recorded: list[Snapshot],
-    start: datetime,
-    end: datetime,
 ) -> list[dict]:
     """The message as Block Kit: what it means, then what it looked like."""
     blocks: list[dict] = [
@@ -272,13 +221,16 @@ def _blocks(
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": "🧊 ポータブル冷蔵庫のバッテリー",
+                "text": "🧊 今日のポータブル冷蔵庫",
                 "emoji": True,
             },
         },
         {
             "type": "section",
-            "text": {"type": "mrkdwn", "text": _lead(latest, morning, projected, refused)},
+            "text": {
+                "type": "mrkdwn",
+                "text": _lead(latest, morning, projected, refused, remaining),
+            },
         },
         {
             "type": "section",
@@ -324,10 +276,10 @@ def _blocks(
     blocks.append(
         {
             "type": "section",
-            "text": {"type": "mrkdwn", "text": _period(energy, pulldowns, recorded, start, end)},
+            "text": {"type": "mrkdwn", "text": _period(today, yesterday, pulldowns, recorded)},
         }
     )
-    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": _footnote(away)}]})
+    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": _footnote()}]})
     return blocks
 
 
@@ -342,85 +294,103 @@ def _power(latest: StateUpdate) -> str:
 
 
 def _lead(
-    latest: StateUpdate, morning: datetime, projected: float | None, refused: str | None
+    latest: StateUpdate,
+    morning: datetime,
+    projected: float | None,
+    refused: str | None,
+    remaining: float | None,
 ) -> str:
-    """What the reader came for, in the first two lines.
+    """What the reader came for, in the first lines.
 
-    The reading is dated. It is the last one that arrived, which after a trip is
-    usually a moment ago and after a silence may be hours old, and a number stated
-    without its time would be read as now.
+    The reading is dated. It is the last one that arrived, which after a quiet day
+    may be hours old, and a number stated without its time would be read as now.
     """
-    now = (
+    lines = [
         f"*残量 {formatting.percent(latest.state_of_charge_percent)}"
         f" ({formatting.stamp(latest.updated_at)} 時点)*"
-    )
+    ]
     if projected is not None:
-        return (
-            f"{now}\nこのまま充電しなければ、翌朝 {to_jst(morning):%-H:%M} には"
+        lines.append(
+            f"このまま充電しなければ、翌朝 {to_jst(morning):%-H:%M} には"
             f" {formatting.percent(projected)} の見込みです。"
         )
-    if refused == PLUGGED_IN:
-        return f"{now}\nいま外部電源につながっているので、翌朝の見込みは出していません。"
-    return f"{now}\n電源につないでいない時間の記録が足りないので、翌朝の見込みは出していません。"
+    elif refused == PLUGGED_IN:
+        lines.append("いま外部電源につながっているので、翌朝の見込みは出していません。")
+    else:
+        lines.append("電源につないでいない時間の記録が足りないので、翌朝の見込みは出していません。")
+    if remaining is not None:
+        lines.append(f"このペースなら、空になるまで約 {formatting.hours(remaining)}。")
+    return "\n".join(lines)
 
 
 def _period(
-    energy: queries.Energy,
+    today: queries.Energy,
+    yesterday: queries.Energy,
     pulldowns: list[queries.Pulldown],
     recorded: list[Snapshot],
-    start: datetime,
-    end: datetime,
 ) -> str:
-    """The stretch the chart covers, and the two things it cannot draw.
-
-    Two periods meet here and they are not the same one. The recorded stretch is
-    what the chart draws -- the last run of slots that hold data, which after a
-    silence can be a few hours. The energy is counted from where the previous
-    summary stopped, which after a trip is days. Each line says which one it is,
-    because "記録があったのは 20:00 から 23:00 まで / 消費 1,200 Wh" reads as three
-    hours of it.
-    """
-    if not recorded:
-        return "この期間に記録はありませんでした。"
-    covered = sum(slot.covered_seconds for slot in recorded)
-    plugged = sum(slot.covered_seconds * (slot.external_input_ratio or 0.0) for slot in recorded)
-    ended = to_jst(recorded[-1].slot_started_at) + timedelta(seconds=SLOT_SECONDS)
+    """The day's energy against the one before it, and the two things the chart cannot draw."""
     lines = [
-        f"*記録があったのは {formatting.stamp(recorded[0].slot_started_at)}"
-        f" から {ended:%H:%M} まで*"
-        f" ・ うち {formatting.percent(100 * plugged / covered if covered else None)}"
-        " の時間は外部電源につないでいました。",
-        f"*{formatting.stamp(start)} から {formatting.stamp(end)} まで*の"
-        f" 消費 {formatting.watt_hours(energy.discharged_watt_hours)}"
-        f" ・ 充電 {formatting.watt_hours(energy.charged_watt_hours)}。",
+        f"*今日* 消費 {formatting.watt_hours(today.discharged_watt_hours)}"
+        f" ・ 充電 {formatting.watt_hours(today.charged_watt_hours)}"
+        f" ({_against_yesterday(today, yesterday)})"
     ]
+    if recorded:
+        covered = sum(slot.covered_seconds for slot in recorded)
+        plugged = sum(
+            slot.covered_seconds * (slot.external_input_ratio or 0.0) for slot in recorded
+        )
+        ended = to_jst(recorded[-1].slot_started_at) + timedelta(seconds=SLOT_SECONDS)
+        lines.append(
+            f"記録があったのは {formatting.stamp(recorded[0].slot_started_at)}"
+            f" から {ended:%H:%M} まで ・ うち"
+            f" {formatting.percent(100 * plugged / covered if covered else None)}"
+            " の時間は外部電源につないでいました。"
+        )
+    else:
+        lines.append("この 1 日の記録はありませんでした。")
     reached = [episode for episode in pulldowns if episode.duration_seconds is not None]
     if reached:
         episode = reached[-1]
         lines.append(
             f"庫内は {formatting.celsius(episode.interior_temperature_start_celsius, 0)} から"
-            f" {formatting.duration(episode.duration_seconds)}で設定温度に届きました。"
+            f" {formatting.duration(episode.duration_seconds)}で設定温度に届きました"
+            f" (今日 {len(reached)} 回)。"
         )
     return "\n".join(lines)
 
 
-def _footnote(away: timedelta | None) -> str:
-    device = "Anker Solix EverFrost 2"
-    if away is None:
-        return device
-    return f"前回のアップロードから {formatting.hours(away.total_seconds() / 3600)} ・ {device}"
+def _against_yesterday(today: queries.Energy, yesterday: queries.Energy) -> str:
+    """How today's draw compares with yesterday's, or why it does not.
+
+    Yesterday can be absent for two different reasons -- the cooler was off, or it
+    was running on external power all day -- and neither makes "0 Wh" a number worth
+    dividing by. Both answer the same way: there is nothing to compare with.
+    """
+    before, after = yesterday.discharged_watt_hours, today.discharged_watt_hours
+    if not before or after is None:
+        return "昨日と比べる記録なし"
+    difference = after - before
+    if abs(difference) < 1:
+        return "昨日とほぼ同じ"
+    direction = "多い" if difference > 0 else "少ない"
+    return f"昨日より {formatting.watt_hours(abs(difference))} {direction}"
+
+
+def _footnote() -> str:
+    return "Anker Solix EverFrost 2"
 
 
 def _text(
     latest: StateUpdate,
-    start: datetime,
-    end: datetime,
-    energy: queries.Energy,
+    now: datetime,
+    today: queries.Energy,
+    yesterday: queries.Energy,
     pulldowns: list[queries.Pulldown],
     morning: datetime,
     projected: float | None,
     refused: str | None,
-    away: timedelta | None,
+    remaining: float | None,
 ) -> str:
     """The same thing in one paragraph, for whoever does not get the blocks.
 
@@ -433,18 +403,16 @@ def _text(
         outlook = "外部電源につながっているので翌朝の見込みはなし"
     else:
         outlook = "記録が足りないので翌朝の見込みはなし"
-    since = (
-        f" (前回のアップロードから {formatting.hours(away.total_seconds() / 3600)})" if away else ""
-    )
+    left = f" 空になるまで約 {formatting.hours(remaining)}。" if remaining is not None else ""
     return (
-        f"ポータブル冷蔵庫のバッテリー {formatting.full_stamp(end)}{since}"
+        f"今日のポータブル冷蔵庫 {formatting.full_stamp(now)}"
         f" — 残量 {formatting.percent(latest.state_of_charge_percent)}"
-        f" ({formatting.stamp(latest.updated_at)} 時点)、{outlook}。"
+        f" ({formatting.stamp(latest.updated_at)} 時点)、{outlook}。{left}"
         f" 庫内 {formatting.celsius(latest.interior_temperature_celsius, 0)}"
         f" (設定 {formatting.celsius(latest.setpoint_celsius, 0)})、"
         f"周辺 {formatting.celsius(latest.ambient_temperature_celsius)}。"
-        f" {formatting.stamp(start)} から"
-        f" 消費 {formatting.watt_hours(energy.discharged_watt_hours)}"
-        f" / 充電 {formatting.watt_hours(energy.charged_watt_hours)}、"
+        f" 今日の消費 {formatting.watt_hours(today.discharged_watt_hours)}"
+        f" / 充電 {formatting.watt_hours(today.charged_watt_hours)}"
+        f" ({_against_yesterday(today, yesterday)})、"
         f"設定温度まで冷却 {len(pulldowns)} 回。"
     )

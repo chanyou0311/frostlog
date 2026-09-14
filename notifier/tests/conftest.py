@@ -10,7 +10,6 @@ import pytest
 
 from frostlog_notifier.settings import Settings
 from frostlog_notifier.slack import Posted
-from frostlog_notifier.state import PostedNotifications
 from frostlog_notifier.warehouse import Parameters, Row
 
 #: Canned rows for one statement, or a function of the statement's parameters.
@@ -26,13 +25,15 @@ def statement_name(sql: str) -> str:
 
 
 class FakeWarehouse:
-    """Answers the notifier's queries from canned rows, and keeps the posted table itself."""
+    """Answers the notifier's queries from canned rows.
+
+    It has no writes to record: the notifier reads the warehouse and says what it
+    finds, and remembers nothing between runs.
+    """
 
     def __init__(self, answers: dict[str, Any] | None = None) -> None:
         self.answers: dict[str, Any] = answers or {}
-        self.posted: list[dict[str, Any]] = []
         self.queried: list[tuple[str, dict[str, Any]]] = []
-        self.executed: list[tuple[str, dict[str, Any]]] = []
 
     def table(self, name: str) -> str:
         return f"`frostlog-test.frostlog.{name}`"
@@ -41,36 +42,12 @@ class FakeWarehouse:
         name = statement_name(sql)
         given = dict(parameters or {})
         self.queried.append((name, given))
-        if name == "is_posted":
-            matched = [
-                row
-                for row in self.posted
-                if row["kind"] == given["kind"] and row["key"] == given["key"]
-            ]
-            return [{"posted_count": len(matched)}]
-        if name == "posted_keys":
-            return [
-                {"key": row["key"]}
-                for row in self.posted
-                if row["kind"] == given["kind"] and row["key"] in given["keys"]
-            ]
-        if name == "latest_coverage_end":
-            ends = [
-                row["coverage_end"]
-                for row in self.posted
-                if row["kind"] == given["kind"] and row.get("coverage_end") is not None
-            ]
-            return [{"coverage_end": max(ends)}] if ends else []
         answer: Any = self.answers.get(name, [])
         rows: list[Row] = answer(given) if callable(answer) else answer
         return rows
 
     def execute(self, sql: str, parameters: Parameters | None = None) -> None:
-        name = statement_name(sql)
-        given = dict(parameters or {})
-        self.executed.append((name, given))
-        if name == "record_posted":
-            self.posted.append(given)
+        raise AssertionError(f"the notifier must not write to the warehouse (tried {sql!r})")
 
 
 class FakeSlack:
@@ -95,11 +72,6 @@ class FakeSlack:
 @pytest.fixture
 def warehouse() -> FakeWarehouse:
     return FakeWarehouse()
-
-
-@pytest.fixture
-def posted(warehouse: FakeWarehouse) -> PostedNotifications:
-    return PostedNotifications(warehouse, "notifier_posted")
 
 
 @pytest.fixture

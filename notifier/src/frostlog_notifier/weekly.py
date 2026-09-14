@@ -8,17 +8,11 @@ than a gap in the arithmetic.
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from statistics import median
 
 from frostlog_notifier import charts, folding, formatting, queries
-from frostlog_notifier.clock import (
-    iso_week_bounds,
-    iso_week_key,
-    jst_dates,
-    previous_iso_week,
-    to_jst,
-)
+from frostlog_notifier.clock import jst_dates, to_jst
 from frostlog_notifier.notification import WEEKLY, Notification
 from frostlog_notifier.queries import Band, Pulldown, Snapshot
 from frostlog_notifier.warehouse import Warehouse
@@ -210,37 +204,37 @@ def by_hour(slots: list[Snapshot]) -> list[Snapshot]:
     return folding.fold(slots, 4)
 
 
-def due_week(moment: datetime) -> tuple[int, int]:
-    """The ISO week to summarise now: the one before the week ``moment`` is in."""
-    return previous_iso_week(moment)
+#: The window: the seven days behind the moment the job runs.
+WINDOW = timedelta(days=7)
 
 
-def build(warehouse: Warehouse, iso_year: int, iso_week: int, bands: list[Band]) -> Notification:
-    """One week's summary. The bands come in because a backlog builds several weeks.
+def build(warehouse: Warehouse, now: datetime) -> Notification:
+    """The last seven days, counted back from ``now``.
 
-    They are eight rows of a dimension that cannot change between two of those weeks,
-    so reading them here would be the same round trip up to WEEKLY_BACKLOG_WEEKS
-    times in one run.
+    A rolling window and not an ISO week. The job runs Saturday morning, and the
+    most recent ISO week closed the Sunday before it -- a summary of that week would
+    be six days stale on arrival. Counting back from the moment it runs also means
+    nothing has to be remembered about which week was last reported.
     """
-    start, end = iso_week_bounds(iso_year, iso_week)
+    start, end = now - WINDOW, now
     hours = by_hour(queries.snapshots(warehouse, start, end))
     pulldowns = queries.finished_pulldowns_between(warehouse, start, end)
     days = jst_dates(start, end)
+    bands = queries.ambient_bands(warehouse)
     summary = summarize(hours, bands, pulldowns, days)
-    key = iso_week_key(iso_year, iso_week)
+    title = f"{days[0]:%m-%d} 〜 {days[-1]:%m-%d}"
     return Notification(
         kind=WEEKLY,
-        key=key,
-        text=_text(summary, key, days),
-        blocks=_blocks(summary, key, days),
+        text=_text(summary, title, days),
+        blocks=_blocks(summary, title, days),
     )
 
 
-def _blocks(summary: Summary, key: str, days: list[date]) -> list[dict]:
+def _blocks(summary: Summary, title: str, days: list[date]) -> list[dict]:
     blocks: list[dict] = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": f"📅 {key} の週次まとめ", "emoji": True},
+            "text": {"type": "plain_text", "text": f"📅 直近 7 日 ({title})", "emoji": True},
         },
         {
             "type": "section",
@@ -300,9 +294,9 @@ def _band_chart(summary: Summary) -> dict | None:
     )
 
 
-def _text(summary: Summary, key: str, days: list[date]) -> str:
+def _text(summary: Summary, title: str, days: list[date]) -> str:
     lines = [
-        f":calendar: 週の要約 {key} ({days[0]:%m-%d} - {days[-1]:%m-%d})",
+        f":calendar: 直近 7 日の要約 ({days[0]:%m-%d} - {days[-1]:%m-%d})",
         f"消費 {formatting.watt_hours(summary.discharged_watt_hours)}"
         f" / 充電 {formatting.watt_hours(summary.charged_watt_hours)}"
         f" / 差引 {formatting.watt_hours(summary.net_watt_hours)}",
