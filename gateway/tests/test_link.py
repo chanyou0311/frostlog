@@ -356,11 +356,12 @@ def test_a_setpoint_is_written_in_the_unit_the_cooler_displays(
     assert _sent_parameters(session, cooler, "4080")[0xA3].raw == b"\x01\x32"
 
 
-def test_an_acknowledgement_that_arrives_during_the_write_is_not_missed(
+def test_an_acknowledgement_that_arrives_during_the_write_is_handled_after_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The notification loop runs while a write is awaited: the cooler's answer to
-    # the frame can be handled before ``command`` has got its turn back.
+    # The cooler's answer can be notified while the frame is still being written;
+    # one writer at a time means it is handled once the write is done, so the stream
+    # keeps the order sent, accepted, applied and the answer is not missed.
     cooler = Cooler()
     harness = Harness(monkeypatch, negotiation_timeout=1e9)
     harness.negotiated(monkeypatch, cooler)
@@ -369,11 +370,7 @@ def test_an_acknowledgement_that_arrives_during_the_write_is_not_missed(
         async def write(self, data: bytes) -> None:
             await super().write(data)
             if parse_frame(data).cmd.hex() == "4080":
-                state = harness.link._state
-                assert state is not None
-                await harness.link._handle(
-                    cooler.message(ACK, b"\xa1\x01\x31"), cast(ble.Session, self), state
-                )
+                self.script.appendleft(cooler.message(ACK, b"\xa1\x01\x31"))
 
     session = AnsweringSession(
         harness.clock,
@@ -386,8 +383,8 @@ def test_an_acknowledgement_that_arrives_during_the_write_is_not_missed(
     asyncio.run(harness.link._run_session(cast(ble.Session, session), asyncio.Event()))
     assert harness.kinds("command") == [
         "command_requested",
-        "command_accepted",
         "command_sent",
+        "command_accepted",
         "command_applied",
     ]
 

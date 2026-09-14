@@ -41,26 +41,28 @@ class Subscriber:
 
     def __init__(self, limit: int) -> None:
         self._limit = limit
-        self._events: deque[dict[str, Any]] = deque()
+        # Each entry is one event and the line it is sent as: encoded once by the
+        # stream, however many readers there are.
+        self._events: deque[tuple[dict[str, Any], bytes]] = deque()
         self._lost: dict[str, Any] | None = None
         self._lost_count = 0
         self._waiting = asyncio.Event()
 
-    def put(self, event: dict[str, Any]) -> None:
+    def put(self, event: dict[str, Any], encoded: bytes) -> None:
         if len(self._events) >= self._limit:
-            self._lost = self._events.popleft()
+            self._lost, _ = self._events.popleft()
             self._lost_count += 1
-        self._events.append(event)
+        self._events.append((event, encoded))
         self._waiting.set()
 
-    async def next(self) -> dict[str, Any]:
-        """The next event for this reader, waiting until there is one."""
+    async def next(self) -> bytes:
+        """The next line for this reader, waiting until there is one."""
         while not self._events and self._lost is None:
             self._waiting.clear()
             await self._waiting.wait()
         if self._lost is not None:
-            return self._dropped()
-        return self._events.popleft()
+            return line(self._dropped())
+        return self._events.popleft()[1]
 
     def _dropped(self) -> dict[str, Any]:
         """The stand-in for what this reader lost, handed to it before the next event.
@@ -102,8 +104,9 @@ class EventStream:
             "kind": kind,
             **{key: value for key, value in fields.items() if value is not None},
         }
+        encoded = line(event)
         for subscriber in self._subscribers:
-            subscriber.put(event)
+            subscriber.put(event, encoded)
         log.debug("%s", event)
         return event
 
@@ -141,7 +144,7 @@ async def serve(stream: EventStream, path: Path) -> asyncio.Server:
                 if event not in done:
                     event.cancel()
                     break
-                out.write(line(event.result()))
+                out.write(event.result())
                 await out.drain()  # this is where a slow reader falls behind
         except (ConnectionError, OSError):
             pass

@@ -81,10 +81,14 @@ class Link:
         self._silence_timeout = silence_timeout
         self._command_timeout = command_timeout
         self._connections = 0
-        self._connection = 0
         self._session: ble.Session | None = None
         self._state: _SessionState | None = None
         self._pending: _Pending | None = None
+        # One writer at a time: the session loop handling a notification, or a command
+        # being written. Serialized, an acknowledgement cannot be handled while the
+        # write it answers is still in flight, and the stream keeps the order sent,
+        # accepted, applied.
+        self._lock = asyncio.Lock()
 
     # --- the connection ---------------------------------------------------------
 
@@ -112,7 +116,7 @@ class Link:
                 async with ble.Session(device) as session:
                     connected = True
                     self._connections += 1
-                    self._connection = self._connections
+                    self._session = session
                     self._emit("ble_connected", address=session.address, name=session.name)
                     await self._run_session(session, stop)
             except (ble.BleakError, OSError, TimeoutError) as exc:
@@ -127,7 +131,6 @@ class Link:
             self._unconfirmed("the link dropped")
         self._session = None
         self._state = None
-        self._connection = 0
 
     async def _run_session(self, session: ble.Session, stop: asyncio.Event) -> None:
         state = _SessionState(handshake.SolixHandshake())
@@ -142,7 +145,8 @@ class Link:
             data = await session.next_notification(timeout=1.0)
             if data is not None:
                 last_seen = last_message = clock.uptime()
-                await self._handle(data, session, state)
+                async with self._lock:
+                    await self._handle(data, session, state)
                 continue
             if clock.uptime() - last_message >= self._silence_timeout:
                 self._emit("ble_silent", address=session.address)
@@ -224,19 +228,12 @@ class Link:
             firmware=device.firmware,
             serial=device.serial,
         )
-        await self._ask_state(session, state)
 
     async def _ask_state(self, session: ble.Session, state: "_SessionState") -> None:
-        """Ask for a state report, if this dialect can be asked; the answer comes as 4840.
-
-        Only the Solix dialect: the Prime handshake ends by asking for what it wants
-        itself, and 4040 is not one of its commands.
-        """
-        cipher = state.handshake.cipher
-        if cipher is None or state.handshake.variant != "solix":
-            return
+        """Ask for a state report; the answer comes as 4840."""
+        assert state.handshake.cipher is not None
         state.state_asked_at = clock.uptime()
-        await session.write(commands.state_request(cipher, int(time.time())))
+        await session.write(commands.state_request(state.handshake.cipher, int(time.time())))
 
     # --- commands ---------------------------------------------------------------
 
@@ -246,34 +243,34 @@ class Link:
         self._emit(
             "command_requested", command_id=command_id, address=self._address, **_asked(request)
         )
-        try:
-            command, session, cipher, unit = self._accept(request)
-        except commands.Rejected as exc:
-            self._emit("command_rejected", command_id=command_id, error=exc.reason)
-            return {"command_id": command_id, "status": "rejected", "error": exc.reason}
-        # Claimed before the write, not after it: the acknowledgement can arrive while
-        # the write is still being awaited, and a second request meanwhile must find
-        # the link busy.
-        pending = self._pending = _Pending(
-            id=command_id, command=command, deadline=clock.uptime() + self._command_timeout
-        )
-        frame = command.frame(cipher, unit, int(time.time()))
-        try:
-            await session.write(frame)
-        except (ble.BleakError, OSError) as exc:
-            # The link was there when it was checked and is not there now.
-            log.warning("the command could not be written: %s", exc)
-            if self._pending is pending:  # unless the link already said it dropped
-                self._pending = None
+        async with self._lock:
+            try:
+                command, session, cipher, unit = self._accept(request)
+                frame = command.frame(cipher, unit, int(time.time()))
+                # A write that hangs is a link that is gone, whatever bleak thinks; the
+                # client is answered within the same bound it can expect for the outcome.
+                await asyncio.wait_for(session.write(frame), self._command_timeout)
+            except commands.Rejected as exc:
+                self._emit("command_rejected", command_id=command_id, error=exc.reason)
+                return {"command_id": command_id, "status": "rejected", "error": exc.reason}
+            except (ble.BleakError, OSError, TimeoutError) as exc:
+                # The link was there when it was checked and is not there now.
+                log.warning("the command could not be written: %s", exc)
                 self._emit("command_rejected", command_id=command_id, error="not_connected")
-            return {"command_id": command_id, "status": "rejected", "error": "not_connected"}
-        self._emit(
-            "command_sent",
-            command_id=command_id,
-            cmd=command.cmd.hex(),
-            frames=[frame.hex()],
-            address=session.address,
-        )
+                return {"command_id": command_id, "status": "rejected", "error": "not_connected"}
+            self._emit(
+                "command_sent",
+                command_id=command_id,
+                cmd=commands.CMD_SETPOINT.hex(),
+                frames=[frame.hex()],
+                address=session.address,
+            )
+            if self._session is session:  # unless the link dropped during the write
+                self._pending = _Pending(
+                    id=command_id, command=command, deadline=clock.uptime() + self._command_timeout
+                )
+            else:
+                self._emit("command_unconfirmed", command_id=command_id, error="the link dropped")
         return {"command_id": command_id, "status": "accepted"}
 
     def _accept(self, request: Any) -> tuple[commands.Command, ble.Session, handshake.Cipher, str]:
@@ -327,7 +324,8 @@ class Link:
     # --- events -----------------------------------------------------------------
 
     def _emit(self, kind: str, **fields: Any) -> None:
-        self._stream.emit(kind, connection=self._connection, **fields)
+        connection = self._connections if self._session is not None else 0
+        self._stream.emit(kind, connection=connection, **fields)
 
     def _message(self, address: str, frames: list[str], **fields: Any) -> None:
         self._emit("message", model=MODEL, address=address, frames=frames, **fields)
@@ -395,8 +393,12 @@ class _SessionState:
         ]
 
     def state_wanted(self, now: float) -> bool:
-        """Whether the state is still unknown and it is time to ask (again)."""
-        if self.latest is not None or not self.handshake.done:
+        """Whether the state is still unknown and it is time to ask (again).
+
+        Only the Solix dialect can be asked: the Prime handshake ends by asking for
+        what it wants itself, and 4040 is not one of its commands.
+        """
+        if self.latest is not None or not self.handshake.done or self.handshake.variant != "solix":
             return False
         return self.state_asked_at is None or now - self.state_asked_at >= STATE_REQUEST_RETRY
 

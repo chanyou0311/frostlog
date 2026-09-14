@@ -48,18 +48,17 @@ class Command:
 
     setting: str
     celsius: int
-    cmd: bytes = CMD_SETPOINT
 
     @property
     def ack_cmd(self) -> str:
         """The cmd the cooler acknowledges with: the request's, with bit 0x0800 set."""
-        return f"{int.from_bytes(self.cmd, 'big') | 0x0800:04x}"
+        return f"{int.from_bytes(CMD_SETPOINT, 'big') | 0x0800:04x}"
 
     def frame(self, cipher: Cipher, display_unit: str, timestamp: int) -> bytes:
         value = to_display(self.celsius, display_unit)
         return _frame(
             cipher,
-            self.cmd,
+            CMD_SETPOINT,
             [
                 Parameter(0xA1, None, b"\x21"),
                 Parameter(0xA3, 0x01, value.to_bytes(1, "little", signed=True)),
