@@ -103,8 +103,8 @@ scripts/deploy.sh                                # Pi へ配布 (既定 chanyou@
 - Terraform の apply は GitHub Actions のみ。ローカルから apply しない。
 - HMAC キー・Slack トークン・Wi-Fi の PSK は画面にもログにも出さない
   (`terraform output -raw` や `op read` から直接流し込む)。
-- 無料枠のみ。Artifact Registry だけは datacontract-cli の依存 (pyarrow で 124 MB) が重く、
-  超過を許容している。
+- 無料枠のみ。Artifact Registry だけは、コンテナイメージの合計が枠に収まらないので超過を
+  許容している。
 - **`°C` と書く。`℃` は使わない。**
 
 ## 設計の決まりごと

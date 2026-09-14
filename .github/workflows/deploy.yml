@@ -71,16 +71,10 @@ jobs:
           docker push "$IMAGE:${{ github.sha }}"
           docker push "$IMAGE:latest"
 
-      - name: Update the Cloud Run service image
-        if: ${{ matrix.kind == 'service' }}
+      # `gcloud run services update` and `gcloud run jobs update` take the same
+      # arguments, so the kind is the only thing that differs.
+      - name: Update the Cloud Run image
         run: |
-          gcloud run services update ${{ matrix.name }} \
-            --project=${{ env.PROJECT_ID }} --region=${{ env.REGION }} \
-            --image=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ matrix.name }}:${{ github.sha }}
-
-      - name: Update the Cloud Run job image
-        if: ${{ matrix.kind == 'job' }}
-        run: |
-          gcloud run jobs update ${{ matrix.name }} \
+          gcloud run ${{ matrix.kind }}s update ${{ matrix.name }} \
             --project=${{ env.PROJECT_ID }} --region=${{ env.REGION }} \
             --image=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ matrix.name }}:${{ github.sha }}

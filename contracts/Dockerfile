@@ -23,15 +23,13 @@ COPY contracts/*.odcs.yaml /app/contracts/
 COPY contracts/job /app/contracts/job
 RUN uv sync --locked --no-dev
 
-# The contracts are the one path that is not where a checkout would put it: the
-# package is installed into the virtualenv, so the directory it would count back to
-# does not exist here. Everything else this job is told -- the datasets, the topic's
-# short name, the Secret Manager names of the healthcheck URL and the bucket's HMAC
-# key -- differs per deployment and comes from Terraform. The project id is not among
-# them: it is resolved from the credentials the execution runs with, and
+# The contracts sit beside the job here exactly as they do in a checkout, which is
+# how the job finds them without being told. What it is told -- the topic's short
+# name, the Secret Manager names of the healthcheck URL and the bucket's HMAC key --
+# differs per deployment and comes from Terraform. The project id is not among them:
+# it is resolved from the credentials the execution runs with, and
 # FROSTLOG_GCP_PROJECT overrides that.
-ENV PATH="/app/.venv/bin:${PATH}" \
-    FROSTLOG_CONTRACTS_DIR=/app/contracts
+ENV PATH="/app/.venv/bin:${PATH}"
 
 # Terraform sets the same command on the job; keep the two equal, so that running the
 # image by hand does what the nightly execution does.
