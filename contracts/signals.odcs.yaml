@@ -22,9 +22,7 @@ description:
   usage: >
     Consumed by frostlog-notifier through a Pub/Sub push subscription. Message bodies are
     JSON objects with the fields below; unknown fields must be ignored. A consumer is
-    free to act on an event or to ignore it; frostlog-notifier acts only on
-    quality_report, and reads the warehouse on its own schedule instead of on
-    semantic_updated.
+    free to act on an event or to ignore it.
   limitations: >
     Delivery is at-least-once: a consumer that must act exactly once on an event has to
     deduplicate on run_id itself. semantic_updated is published only for runs whose

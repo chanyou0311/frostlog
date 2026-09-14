@@ -4,14 +4,14 @@
 Raspberry Pi で記録し、バッテリー残量にまつわる問いに Slack で答えるためのリポジトリ。
 
 **2 つのデータプロダクトと 1 つのデータアプリケーション**で構成し、境界はデータコントラクト
-(`contracts/*.odcs.yaml`) が持つ。契約が守られているかを毎日訊くのは、どちらのプロダクトにも
+(`contracts/*.odcs.yaml`) が持つ。契約が守られているかを定時に訊くのは、どちらのプロダクトにも
 属さない 4 つめのユニット。
 
 | | 何を出すか | 実体 |
 |---|---|---|
 | `frostlog-collection` | 測ったものをそのまま | Pi の収集/送出 (`src/frostlog/`) → GCS |
 | `frostlog-semantics` | 意味づけしたテーブル | dbt (`semantics/dbt/`) → BigQuery |
-| データアプリケーション | Slack の通知 | `notifier/` → Cloud Run |
+| `frostlog-notifier` | Slack の通知 (データアプリケーション) | `notifier/` → Cloud Run |
 | `frostlog-contracts` | 契約テストの結果 | `contracts/job/` → Cloud Run job |
 
 答えたい問いは 4 つ: A 残量が条件でどう変わるか / B 帰宅時の残量と翌朝の見通し /
@@ -62,8 +62,8 @@ scripts/deploy.sh                                # Pi へ配布 (既定 chanyou@
 - **dbt の `config()` はパース時に解決される。** `execute` が False のその時点で、`run_query`
   の結果は空。`incremental_predicates` にコンパイル中のクエリ結果を入れると `in (null)` が
   焼き付き、MERGE が何にも一致せず**毎回全行が INSERT される**。本番で 55,762 行 / 実体
-  23,861 キーまで膨らんだ。実行依存の値を parse 解決される config に入れてはいけない。いまは
-  全テーブルを毎回作り直す (`+materialized: table`) ので MERGE 自体が無い。
+  23,861 キーまで膨らんだ。実行依存の値を parse 解決される config に入れてはいけない。この後、
+  全テーブルを毎回作り直す設計 (`+materialized: table`) にして MERGE そのものを無くした。
 - **ロードジョブは、自分のスキーマが名前を挙げた列に DEFAULT を入れない。** NULL を入れる。
   Data Transfer Service は常に宛先の全列を名前で挙げるので、`DEFAULT CURRENT_TIMESTAMP()` は
   **DTS 経由では絶対に発火しない**。`load_table_from_uri` で手元から試すと動くので気づけない
@@ -134,4 +134,6 @@ scripts/deploy.sh                                # Pi へ配布 (既定 chanyou@
 - **なぜ**その形なのか。過去形の経緯はいくら書いてよい (過去は陳腐化しない)
 - 1 ファイルを読んでも見えない**不変条件** (「notifier は BigQuery に一切書かない」)
 - ユニットの名前と契約 ID。これは構成ではなく identity なので変わらない
+- 契約の `slaProperties` が約束する頻度と遅延。これは構成の写しではなく consumer への約束で、
+  契約だけが持てる。約束ではない実装の時刻や間隔 (「03:07 に走る」) は契約にも書かない
 - 実行できるコマンド。動かなくなれば CI か手が気づく
