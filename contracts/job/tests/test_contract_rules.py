@@ -8,11 +8,9 @@ import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pytest
-
-duckdb = pytest.importorskip("duckdb")
-sqlglot = pytest.importorskip("sqlglot")
-yaml = pytest.importorskip("yaml")
+import duckdb
+import sqlglot
+import yaml
 
 CONTRACT = Path(__file__).resolve().parents[3] / "contracts" / "semantics.odcs.yaml"
 FACT = "fact_cooler_state_update"
@@ -74,7 +72,9 @@ def warehouse(raw: list[tuple], fact: list[tuple]) -> duckdb.DuckDBPyConnection:
 
 
 def unreflected(raw: list[tuple], fact: list[tuple]) -> int:
-    return warehouse(raw, fact).execute(rule("every_report_is_reflected")).fetchone()[0]
+    row = warehouse(raw, fact).execute(rule("every_report_is_reflected")).fetchone()
+    assert row is not None  # the rule counts, so it always answers with one row
+    return int(row[0])
 
 
 def test_a_chunk_that_is_fully_reflected_passes() -> None:

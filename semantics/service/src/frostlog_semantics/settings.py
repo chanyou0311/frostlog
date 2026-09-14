@@ -34,10 +34,6 @@ class Settings(BaseSettings):
     #: name; :func:`frostlog_semantics.project.topic_path` turns it into the full one).
     signals_topic: str | None = None
 
-    #: Where the contracts are. Only the sample loader reads them, and only from a
-    #: checkout: the service's image does not carry them.
-    contracts_dir: Path = ROOT / "contracts"
-
     #: The collection product's bucket. Nothing here loads from it any more -- a
     #: transfer does that -- but the mark saying how far the transform has built lives
     #: in it, because a bucket object is free to read and a warehouse row is not.

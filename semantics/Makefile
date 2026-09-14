@@ -59,4 +59,4 @@ ci-warehouse:
 	$(UV) python -m frostlog_semantics.samples --part 2
 	$(DBT) build $(DIRS) --target ci
 	$(DBT) test $(DIRS) --target ci --select test_type:unit
-	$(MAKE) -C ../contracts test CONTRACT=semantics SERVER=ci
+	$(MAKE) -C ../contracts test CONTRACT=semantics FROSTLOG_SEMANTICS_CONTRACT_SERVER=ci

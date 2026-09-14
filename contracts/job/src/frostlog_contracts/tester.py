@@ -64,9 +64,6 @@ def s3_credentials(payload: str) -> dict[str, str] | None:
 class DatacontractTester:
     """:class:`ContractTester` that shells out to datacontract-cli."""
 
-    def __init__(self, environment: dict[str, str] | None = None) -> None:
-        self._environment = environment or {}
-
     def test(
         self,
         contract: Path,
@@ -90,11 +87,7 @@ class DatacontractTester:
             ]
             if checks:
                 command += ["--checks", checks]
-            completed = shell.run(
-                command,
-                timeout=TEST_TIMEOUT_SECONDS,
-                environment={**self._environment, **(environment or {})},
-            )
+            completed = shell.run(command, timeout=TEST_TIMEOUT_SECONDS, environment=environment)
             output = completed.output
             failed = failed_checks(report.read_text()) if report.exists() else None
         if failed is None:

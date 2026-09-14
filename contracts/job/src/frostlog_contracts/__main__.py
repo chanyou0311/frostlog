@@ -5,8 +5,8 @@ result is published as a ``quality_report`` so the Slack application can say so,
 and a run in which everything passed pings the dead man's switch.
 
 It is a job rather than an endpoint of either service because it belongs to
-neither data product: it is the check that both are keeping their word, and it
-deploys on its own so that fixing the check does not redeploy what is checked.
+neither data product: it is the check that both are keeping their word. It has an
+image of its own, carrying the contracts and datacontract-cli and nothing else.
 
 A contract that fails, and one that could not be tested at all, are findings:
 they are reported, and they make the run exit non-zero so the execution itself
@@ -64,7 +64,7 @@ def build_services(settings: Settings | None = None) -> Services:
     project = resolve_project(settings.gcp_project)
     return Services(
         settings=settings,
-        tester=DatacontractTester(settings.warehouse_environment(project)),
+        tester=DatacontractTester(),
         publisher=publisher_for(project, settings.signals_topic),
         secrets=SecretManagerReader(secretmanager.SecretManagerServiceClient(), project),
     )

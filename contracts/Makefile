@@ -10,14 +10,11 @@
 UV := uv run --project job
 #: Which contract to test. Empty means all of them, which is what the daily run does.
 CONTRACT ?=
-#: Which server of the contract to test against. Empty means the one the job picks per
-#: contract, which is production -- see below.
-SERVER ?=
 
 .PHONY: install check lint test
 
 install:
-	uv sync --project job
+	uv sync --project job --locked
 
 # Everything that needs no data.
 check:
@@ -29,18 +26,11 @@ check:
 lint:
 	for path in *.odcs.yaml; do $(UV) datacontract lint "$$path" || exit 1; done
 
-# Two ways to ask, because there are two questions.
-#
-# Without SERVER: through the job, the same code path the nightly Cloud Run execution
-# takes -- what passes here is what passes there. CONTRACT=collection (or semantics)
-# narrows it, which is how one product is held to its word before the other exists.
-#
-# With SERVER: one contract against one named server, straight through
-# datacontract-cli. This is for a server the job never picks, such as the CI dataset
-# that `make -C semantics ci-warehouse` has just rebuilt from the sample chunks.
+# Always through the job, never straight through datacontract-cli: what passes here
+# is then what passes at night. CONTRACT=collection (or semantics) narrows it, which
+# is how one product is held to its word before the other exists. Another server --
+# the CI dataset, say -- is asked for the way the job itself takes it, by setting the
+# contract's server in the environment:
+#   make test CONTRACT=semantics FROSTLOG_SEMANTICS_CONTRACT_SERVER=ci
 test:
-ifeq ($(SERVER),)
 	$(UV) python -m frostlog_contracts $(if $(CONTRACT),--contract $(CONTRACT))
-else
-	$(UV) datacontract test $(CONTRACT).odcs.yaml --server $(SERVER)
-endif
