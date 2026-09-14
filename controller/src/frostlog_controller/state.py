@@ -6,9 +6,10 @@ acts once per change and nothing else needs remembering between runs.
 
 import json
 import logging
-import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+from frostlog_controller.paths import xdg_path
 
 log = logging.getLogger("frostlog_controller")
 
@@ -20,11 +21,12 @@ class State:
 
 
 def state_path() -> Path:
-    env = os.environ.get("FROSTLOG_CONTROLLER_STATE")
-    if env:
-        return Path(env)
-    state_home = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
-    return Path(state_home) / "frostlog" / "controller.json"
+    return xdg_path(
+        "FROSTLOG_CONTROLLER_STATE",
+        "XDG_STATE_HOME",
+        Path.home() / ".local" / "state",
+        "controller.json",
+    )
 
 
 def load(path: Path) -> State | None:

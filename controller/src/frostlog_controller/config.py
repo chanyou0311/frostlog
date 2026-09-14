@@ -6,11 +6,12 @@ the file is re-read every run rather than cached, since nothing here justifies
 a resident process.
 """
 
-import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from frostlog_controller.paths import xdg_path
 
 
 class ConfigError(Exception):
@@ -26,11 +27,9 @@ class Config:
 
 
 def config_path() -> Path:
-    env = os.environ.get("FROSTLOG_CONTROLLER_CONFIG")
-    if env:
-        return Path(env)
-    config_home = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(config_home) / "frostlog" / "controller.toml"
+    return xdg_path(
+        "FROSTLOG_CONTROLLER_CONFIG", "XDG_CONFIG_HOME", Path.home() / ".config", "controller.toml"
+    )
 
 
 def load_config(path: Path | None = None) -> Config:
