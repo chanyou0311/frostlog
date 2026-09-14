@@ -6,7 +6,7 @@ protocol can only read: the notifier writes nothing to the warehouse, and a
 protocol without a write method is how that stays true.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from datetime import date, datetime
 from typing import Any, Protocol
 
@@ -52,15 +52,12 @@ class BigQueryWarehouse:
         return f"`{self._project}.{self._dataset}.{name}`"
 
     def rows(self, sql: str, parameters: Parameters | None = None) -> list[Row]:
-        return [dict(row) for row in self._run(sql, parameters)]
-
-    def _run(self, sql: str, parameters: Parameters | None) -> Sequence[Any]:
         from google.api_core import exceptions
         from google.cloud import bigquery
 
         config = bigquery.QueryJobConfig(query_parameters=self._query_parameters(parameters or {}))
         try:
-            return list(self.client.query(sql, job_config=config).result())
+            return [dict(row) for row in self.client.query(sql, job_config=config).result()]
         except (exceptions.ServerError, exceptions.TooManyRequests, exceptions.RetryError) as exc:
             raise Transient(f"BigQuery is unavailable: {exc}") from exc
 

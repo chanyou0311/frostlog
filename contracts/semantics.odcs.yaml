@@ -20,11 +20,9 @@ description:
     under given conditions, and how long the interior takes to reach the setpoint.
   usage: >
     Read by frostlog-notifier (Slack digests) and by ad-hoc analysis. Consumers depend
-    only on the tables listed here. A consumer that wants to hear when they changed can
-    subscribe to the topic of contracts/signals.odcs.yaml — a channel of its own, which
-    this product publishes `semantic_updated` to — but nothing obliges it to; the
-    notifier reads these tables on its own schedule. The raw bytes are never needed
-    downstream.
+    only on the tables listed here. This product also publishes `semantic_updated` to
+    the topic of contracts/signals.odcs.yaml, whose contract says what a consumer may
+    do with it. The raw bytes are never needed downstream.
     Estimates (next-morning level, hours left, next pull-down time) are not stored: they
     are computed by consumers from these actuals.
   limitations: >

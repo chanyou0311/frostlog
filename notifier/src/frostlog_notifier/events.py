@@ -20,7 +20,6 @@ class SemanticUpdated(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    #: The contract's discriminator; parse() branches on it.
     event: Literal["semantic_updated"] = "semantic_updated"
     run_id: str
     published_at: datetime
