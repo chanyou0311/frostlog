@@ -4,7 +4,7 @@ from typing import Any
 
 from frostlog_controller import state
 from frostlog_controller.config import Config
-from frostlog_controller.gateway import GatewayError
+from frostlog_controller.gateway import GatewayError, GatewayUnreachable
 from frostlog_controller.presence import NmcliRunner
 from frostlog_controller.run import run
 
@@ -108,9 +108,20 @@ def test_rejected_command_keeps_the_old_judgment_and_counts_the_attempt(tmp_path
 def test_connection_error_is_treated_like_a_rejection(tmp_path: Path) -> None:
     path = _state_path(tmp_path)
     state.save(path, state.State(home=False, attempts=0))
-    sender = RecordingSender(error=GatewayError("no gateway"))
+    sender = RecordingSender(error=GatewayUnreachable("no gateway"))
     run(CONFIG, path, tmp_path / "commands.sock", _nmcli(True), sender)
     assert state.load(path) == state.State(home=False, attempts=1)
+
+
+def test_an_unknown_outcome_is_not_asked_again(tmp_path: Path) -> None:
+    # The request went out and no answer came back: the gateway may have written it,
+    # so asking again could write over what the cooler or a hand has set since.
+    path = _state_path(tmp_path)
+    state.save(path, state.State(home=False, attempts=0))
+    sender = RecordingSender(error=GatewayError("no answer"))
+    run(CONFIG, path, tmp_path / "commands.sock", _nmcli(True), sender)
+    assert len(sender.calls) == 1
+    assert state.load(path) == state.State(home=True, attempts=0)
 
 
 def test_gives_up_at_max_attempts_and_adopts_the_new_judgment(tmp_path: Path) -> None:

@@ -19,7 +19,12 @@ TIMEOUT_SECONDS = 30.0
 
 
 class GatewayError(Exception):
-    """Could not reach the gateway, or its response was not well-formed."""
+    """The request went out, and what became of it is unknown: no answer, or one that
+    could not be read. Not to be retried -- the gateway may well have written it."""
+
+
+class GatewayUnreachable(GatewayError):
+    """The request never went out: no socket, no gateway. Safe to try again."""
 
 
 def socket_dir() -> Path:
@@ -47,10 +52,13 @@ def send_command(
     """Send one command request and return the gateway's decoded response."""
     request = {"setting": setting, "value": value, "source": source, "reason": reason}
     line = json.dumps(request) + "\n"
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(TIMEOUT_SECONDS)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(TIMEOUT_SECONDS)
+        try:
             sock.connect(str(path))
+        except OSError as exc:
+            raise GatewayUnreachable(f"cannot reach the gateway at {path}: {exc}") from None
+        try:
             sock.sendall(line.encode("utf-8"))
             sock.shutdown(socket.SHUT_WR)
             chunks = []
@@ -59,8 +67,8 @@ def send_command(
                 if not chunk:
                     break
                 chunks.append(chunk)
-    except OSError as exc:
-        raise GatewayError(f"cannot reach the gateway at {path}: {exc}") from None
+        except OSError as exc:
+            raise GatewayError(f"no answer from the gateway: {exc}") from None
     response = b"".join(chunks).decode("utf-8").strip()
     if not response:
         raise GatewayError("gateway closed the connection without a response")

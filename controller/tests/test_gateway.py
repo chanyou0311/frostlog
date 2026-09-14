@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from frostlog_controller import gateway
-from frostlog_controller.gateway import GatewayError, send_command
+from frostlog_controller.gateway import GatewayError, GatewayUnreachable, send_command
 
 
 @pytest.fixture
@@ -21,7 +21,9 @@ def socket_path() -> Iterator[Path]:
         yield Path(directory) / "c.sock"
 
 
-def _fake_gateway(path: Path, response: dict[str, Any]) -> tuple[threading.Thread, list[bytes]]:
+def _fake_gateway(
+    path: Path, response: dict[str, Any], answer: bool = True
+) -> tuple[threading.Thread, list[bytes]]:
     """A gateway that accepts one connection, echoes what it received, and replies once."""
     received: list[bytes] = []
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -38,7 +40,8 @@ def _fake_gateway(path: Path, response: dict[str, Any]) -> tuple[threading.Threa
                     break
                 data += chunk
             received.append(data)
-            conn.sendall((json.dumps(response) + "\n").encode("utf-8"))
+            if answer:
+                conn.sendall((json.dumps(response) + "\n").encode("utf-8"))
         server.close()
 
     thread = threading.Thread(target=handle, daemon=True)
@@ -85,5 +88,17 @@ def test_the_socket_is_where_the_units_agree_it_is(monkeypatch: pytest.MonkeyPat
 
 def test_send_command_no_server(socket_path: Path) -> None:
     path = socket_path  # nothing listens here
-    with pytest.raises(GatewayError):
+    with pytest.raises(GatewayUnreachable):
         send_command(path, "setpoint_celsius", 20, "controller", "arrived_home")
+
+
+def test_a_gateway_that_takes_the_request_and_says_nothing_is_not_unreachable(
+    socket_path: Path,
+) -> None:
+    # The request went out; that it was not answered is a different failure from
+    # never having got through, and the caller must not treat it as one.
+    thread, _ = _fake_gateway(socket_path, {}, answer=False)
+    with pytest.raises(GatewayError) as caught:
+        send_command(socket_path, "setpoint_celsius", 20, "controller", "arrived_home")
+    thread.join(timeout=5)
+    assert not isinstance(caught.value, GatewayUnreachable)

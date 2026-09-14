@@ -57,12 +57,18 @@ def run(
         accepted = response.get("status") == "accepted"
         if not accepted:
             log.info("gateway rejected the command: %s", response.get("error"))
-    except gateway.GatewayError as exc:
+    except gateway.GatewayUnreachable as exc:
         log.info("could not reach the gateway: %s", exc)
         accepted = False
+    except gateway.GatewayError as exc:
+        # The request went out and its answer did not come back. Asking again would
+        # write the value a second time, over whatever the cooler -- or a hand -- has
+        # set since; the outcome is on the gateway's stream, and the judgment stands.
+        log.warning("the command's outcome is unknown, not asking again: %s", exc)
+        accepted = True
 
     if accepted:
-        log.info("command accepted, judgment now home=%s", home_now)
+        log.info("command taken, judgment now home=%s", home_now)
         state.save(state_path, state.State(home=home_now, attempts=0))
         return
 
