@@ -1,0 +1,10 @@
+[Unit]
+Description=frostlog: check home Wi-Fi presence
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+Unit=frostlog-controller.service
+
+[Install]
+WantedBy=timers.target
