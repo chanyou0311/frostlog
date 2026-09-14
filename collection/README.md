@@ -15,7 +15,7 @@ Raspberry Pi で記録し、クラウドのバケットへ送るデータロガ�
 `v1/<stream>/dt=<日付>/<開始オフセット>.jsonl.gz` という不変のチャンクで、どこまで送ったかはバケット側の
 メタデータ（`end`）が正。空行や NUL で埋まった行はチャンクに入れない（オフセットはローカルのバイト位置のまま）。
 アップロード自体の記録（`upload_started` / `upload_done`）は `events` 以外のチャンクを送った回だけ残す
-（毎回書くと events だけが増え続け、5 分ごとに LIST + PUT を払うことになるため）。
+（毎回書くと events だけが増え続け、送るたびに LIST + PUT を払うことになるため）。
 
 ## 使い方
 
@@ -34,7 +34,7 @@ uv run python scripts/build_samples.py                   # ../contracts/samples 
 Pi には Mac から `make deploy`（`TARGET=user@host` で宛先を変える）で配る。このディレクトリの中身が
 そのまま Pi の `~/frostlog/` になるので、systemd unit が指す `~/frostlog/.venv/bin/frostlog` と
 インストーラの位置関係は Pi 側で変わらない。Pi 上ではユーザー単位の systemd が `frostlog-cooler` を
-常駐させ、`frostlog-upload.timer` が 5 分おきに送る。`frostlog-cooler` は
+常駐させ、`frostlog-upload.timer` が定期的に送る。`frostlog-cooler` は
 `FROSTLOG_COOLER_ADDRESS` を設定して再起動すると常駐する（未設定だと近くの Anker 機器を何でも
 掴んでしまうため、ユニットの `ExecCondition` で起動をスキップする）。
 データは `~/.local/state/frostlog`、設定は `~/.config/frostlog/env`、ログは
