@@ -74,13 +74,13 @@ class Cooler:
     def __init__(self) -> None:
         self.cipher = CbcCipher(SECRET)
 
-    def state(self, cmd: str = "4402", **changes: Any) -> bytes:
+    def state(self, **changes: Any) -> bytes:
         """A captured state report with a value or two changed, as the cooler sent it."""
         body = bytearray.fromhex(captured.DISCHARGING.plain)
         for key, value in changes.items():
             at = body.index(_PARAMETERS[key]) + 3
             body[at : at + 1] = _VALUES[key](value)
-        return self.message(cmd, bytes(body))
+        return self.message("4402", bytes(body))
 
     def message(self, cmd: str, plain: bytes) -> bytes:
         return build_frame(TELEMETRY, bytes.fromhex(cmd), self.cipher.encrypt(plain))
