@@ -55,9 +55,6 @@ dbus-fast = { SKIP_CYTHON = "1" }
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-# Every cloud unit is its own uv project with its own dependencies; the ci
-# workflow checks each of them from its own directory.
-extend-exclude = ["contracts", "notifier", "semantics"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
@@ -66,9 +63,10 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 "tests/*" = ["E501"]  # captured byte sequences are long
 
 [tool.ty.src]
-# The cloud units have their own project, environment and checks; the Pi's
-# environment does not contain their dependencies.
-exclude = ["contracts", "notifier", "semantics"]
+# Without this ty walks up the tree looking for configuration and would take
+# whatever is above this directory as the project to check. The Pi's package is
+# its own project, and its environment is the only one that has bleak.
+include = ["src", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

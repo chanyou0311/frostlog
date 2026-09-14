@@ -11,11 +11,11 @@ from pathlib import Path
 
 from frostlog import records
 
-ROOT = Path(__file__).resolve().parent.parent
-SAMPLES = ROOT / "contracts" / "samples" / "collection"
+COLLECTION = Path(__file__).resolve().parent.parent
+SAMPLES = COLLECTION.parent / "contracts" / "samples" / "collection"
 
 _SPEC = importlib.util.spec_from_file_location(
-    "build_samples", ROOT / "scripts" / "build_samples.py"
+    "build_samples", COLLECTION / "scripts" / "build_samples.py"
 )
 assert _SPEC and _SPEC.loader
 build_samples = importlib.util.module_from_spec(_SPEC)
@@ -57,5 +57,5 @@ def test_the_committed_samples_are_what_the_builder_writes() -> None:
         expected = "".join(records.line(row) for row in rows)
         path = SAMPLES / stream / "2026-09-06.json"
         assert path.read_text(encoding="utf-8") == expected, (
-            "the samples are stale: run scripts/build_samples.py and commit the result"
+            "the samples are stale: run collection/scripts/build_samples.py and commit it"
         )
