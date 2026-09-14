@@ -1,9 +1,12 @@
 """Access to the BigQuery dataset holding the semantic data product.
 
 Everything above this module speaks the :class:`Warehouse` protocol, so the
-tests run the real queries against a fake that answers by statement name. The
-protocol can only read: the notifier writes nothing to the warehouse, and a
-protocol without a write method is how that stays true.
+tests run the real queries against a fake that answers by statement name.
+
+The notifier writes nothing to the warehouse. What enforces that is the service
+account, which can read the dataset and not write it; the protocol records the
+intent by having no write method, and the tests' fake refuses any statement that
+is not a query.
 """
 
 from collections.abc import Mapping

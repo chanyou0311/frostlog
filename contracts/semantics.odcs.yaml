@@ -317,12 +317,12 @@ schema:
           twice is reflected once and counts as reflected, and a chunk of which only
           some reports were loaded is caught.
 
-          The two hours are the wait a row is owed, not a tolerance for loss. A
-          transfer runs every fifteen minutes and a build every hour, so a row that
-          lands a moment after one build waits nearly an hour for the next; two hours
-          clears that with room for the build itself. Without the wait this rule would
-          fail almost every night, because the daily check runs at 03:07 and transfers
-          land between the 03:00 build and it.
+          The two hours are the wait a row is owed, not a tolerance for loss. A row
+          that lands a moment after one build waits a whole build interval for the
+          next, and the build itself takes time; two hours covers one interval of the
+          transfer, one of the build, and the build. Without the wait this rule would
+          fail whenever the check happens to run shortly after a build with transfers
+          landed in between -- which, on the schedules in use, was almost every night.
 
           It is measured on `_PARTITIONTIME`, when the row landed, not on `ts`, when
           the cooler spoke: a trip's backlog is recorded days before it reaches the

@@ -40,6 +40,19 @@ class FakeWarehouse:
 
     def rows(self, sql: str, parameters: Parameters | None = None) -> list[Row]:
         name = statement_name(sql)
+        # The notifier only reads. A protocol without a write method cannot stop a
+        # DELETE handed to rows(), so the fake does.
+        first_word = next(
+            (
+                line.split()[0].upper()
+                for line in sql.splitlines()
+                if line.strip() and not line.lstrip().startswith("--")
+            ),
+            "",
+        )
+        assert first_word in {"SELECT", "WITH"}, (
+            f"the notifier must not write to the warehouse: {name}"
+        )
         given = dict(parameters or {})
         self.queried.append((name, given))
         answer: Any = self.answers.get(name, [])
