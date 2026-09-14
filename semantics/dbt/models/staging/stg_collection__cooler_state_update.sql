@@ -1,5 +1,8 @@
--- The state reports (cmd 4402), one row each, with their timestamps repaired and
--- the seconds each state is taken to hold.
+-- The state reports, one row each, with their timestamps repaired and the seconds
+-- each state is taken to hold. A report is what the cooler sends by itself (cmd
+-- 4402) or what it answers the gateway's request with after connecting (cmd 4840):
+-- the same body under two headers, and the first state of a connection is usually
+-- the answer, since the cooler does not always speak first.
 --
 -- A report whose body could not be decoded, or which is missing a value the
 -- dimensional model requires, is dropped here rather than carried as nulls: the
@@ -17,7 +20,7 @@ with decoded as (
         payload,
         environment
     from {{ source('raw', 'raw_cooler') }}
-    where cmd = '4402'
+    where cmd in ('4402', '4840')
       and boot_id is not null
       and uptime_seconds is not null
       and ts is not null

@@ -89,15 +89,21 @@ class GatewaySubscriber:
             if connection is not None:
                 delay = self._reconnect_delay
                 reader, writer = connection
+                error = None
                 try:
                     await self._read(reader, stop, deadline)
+                except (ConnectionError, OSError, ValueError) as exc:
+                    # The socket was reset under the read, or carried a line too long
+                    # to be one of the gateway's. Either way the stream is gone, and
+                    # that is a row, not the end of the run.
+                    error = str(exc)
                 finally:
                     writer.close()
                     with contextlib.suppress(ConnectionError, OSError):
                         await writer.wait_closed()
-                if not self._running(stop, deadline):
+                if error is None and not self._running(stop, deadline):
                     return  # this run is over, and the gateway is still there
-                self._down()
+                self._down(error)
             await self._pause(stop, delay, deadline)
             delay = min(delay * 2, self._reconnect_delay_max)
 

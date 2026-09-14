@@ -154,6 +154,26 @@ def test_the_air_is_measured_once_for_every_message(socket_dir: Path) -> None:
     assert all(row.environment and row.environment.temperature_celsius == 25.2 for row in messages)
 
 
+def test_a_sensor_that_fails_is_reported_once_a_minute(monkeypatch: pytest.MonkeyPatch) -> None:
+    from frostlog.ambient import sampler as sampler_module
+
+    now = 1000.0
+    monkeypatch.setattr(sampler_module.clock, "uptime", lambda: now)
+    failures: list[records.Event] = []
+    sampler = EnvironmentSampler(_Sensor(fail=True), failures.append, report_interval=60.0)
+
+    async def three_messages() -> list[records.Environment | None]:
+        nonlocal now
+        readings = [await sampler.sample(), await sampler.sample()]  # a second apart
+        now += 61.0
+        readings.append(await sampler.sample())  # after the reporting interval
+        return readings
+
+    assert asyncio.run(three_messages()) == [None, None, None]
+    assert [event.kind for event in failures] == ["environment_read_failed"] * 2
+    assert failures[0].model_dump()["sensor"] == "dht20"
+
+
 def test_a_message_whose_payload_is_not_what_the_contract_says_keeps_its_bytes(
     socket_dir: Path,
 ) -> None:
@@ -241,6 +261,17 @@ def test_a_hole_in_the_numbering_is_a_row(socket_dir: Path) -> None:
     written = gap.model_dump()
     assert written["expected"] == 2 and written["received"] == 5
     assert written["uptime_seconds"] == STAMP["uptime_seconds"]
+
+
+def test_a_stream_that_cannot_be_read_is_a_row_and_a_reconnection(socket_dir: Path) -> None:
+    # A line longer than a reader will buffer is not one of the gateway's; the
+    # reader raises, and the run goes on as it does when the gateway hangs up.
+    too_long = {"seq": 1, "connection": 0, **STAMP, "kind": "ble_error", "error": "x" * 70_000}
+
+    rows = _run(socket_dir / EVENTS_SOCKET, [too_long], 3)
+
+    assert _kinds(rows) == ["gateway_connected", "gateway_disconnected", "gateway_connected"]
+    assert rows[1].model_dump()["error"]
 
 
 def test_a_gateway_that_is_not_running_is_waited_for(socket_dir: Path) -> None:

@@ -30,7 +30,7 @@ _STAMP = [
 _PAYLOAD = SchemaField(
     "payload",
     "RECORD",
-    description="Decoded body of a state report (cmd 4402).",
+    description="Decoded body of a state report (cmd 4402, or 4840 answering a request).",
     fields=[
         SchemaField("setpoint_celsius", "INT64"),
         SchemaField("interior_temperature_celsius", "INT64"),
