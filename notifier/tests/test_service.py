@@ -9,7 +9,6 @@ import pytest
 from conftest import (
     FakeSlack,
     FakeWarehouse,
-    ambient_band_rows,
     at,
     pulldown_row,
     state_update,
@@ -41,7 +40,6 @@ def recorded() -> FakeWarehouse:
             "energy_between": [{"discharged_watt_hours": 128.4, "charged_watt_hours": 40.2}],
             "finished_pulldowns_between": [pulldown_row(at("2026-09-11", 8, 12))],
             "snapshots": day_of_slots(NOW),
-            "ambient_bands": ambient_band_rows(),
         }
     )
 
@@ -145,7 +143,6 @@ def test_the_warehouse_being_rebuilt_is_not_news(
             "published_at": NOW,
             "rows_arrived": 412,
             "build_passed": True,
-            "upload_runs": [],
         }
     )
 

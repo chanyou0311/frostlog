@@ -207,23 +207,6 @@ def pulldown_row(started_at: datetime, **overrides: Any) -> dict[str, Any]:
     return row | overrides
 
 
-def upload_run(
-    finished_at: datetime,
-    started_at: datetime | None = None,
-    previous_finished_at: datetime | None = None,
-    **overrides: Any,
-) -> dict[str, Any]:
-    """One entry of the semantic_updated event's upload_runs array."""
-    row = {
-        "finished_at": finished_at,
-        "started_at": started_at,
-        "previous_finished_at": previous_finished_at,
-        "chunk_count": 3,
-        "line_count": 412,
-    }
-    return row | overrides
-
-
 def ambient_band_rows() -> list[dict[str, Any]]:
     """The seeded ambient temperature bands: 5 °C steps from < 5 to >= 40."""
     bands = [{"band_key": 1, "label": "< 5 °C", "lower_celsius": None, "upper_celsius": 5.0}]

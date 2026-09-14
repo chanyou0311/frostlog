@@ -12,7 +12,6 @@ from frostlog_contracts.settings import Settings as ContractSettings
 from frostlog_contracts.tester import ContractTestResult
 from frostlog_platform.events import Event
 from frostlog_semantics.app import Services
-from frostlog_semantics.events import UploadRun
 from frostlog_semantics.settings import Settings
 from frostlog_semantics.transform import BuildResult
 from frostlog_semantics.warehouse import Arrivals
@@ -25,7 +24,6 @@ HMAC_SECRET = "frostlog-collection-hmac"
 
 class FakeWarehouse:
     def __init__(self) -> None:
-        self.runs: list[UploadRun] = []
         self.arrived = Arrivals(rows=3, counts={"raw_cooler": 50, "raw_events": 5})
         self.asked_since: list[datetime] = []
         self.asked_built_through: list[dict[str, int]] = []
@@ -33,10 +31,6 @@ class FakeWarehouse:
     def arrivals(self, built_through: Mapping[str, int]) -> Arrivals:
         self.asked_built_through.append(dict(built_through))
         return self.arrived
-
-    def upload_runs(self, since: datetime) -> list[UploadRun]:
-        self.asked_since.append(since)
-        return self.runs
 
 
 class FakeBuiltThrough:

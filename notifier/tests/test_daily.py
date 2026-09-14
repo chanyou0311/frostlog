@@ -243,7 +243,7 @@ def test_the_day_is_reported_against_the_day_before_it() -> None:
     notification = daily.build(warehouse_with(energy_between=energy), NOW)
 
     assert notification is not None
-    assert "その前の 24 時間より 100.0 Wh 多い" in notification.text
+    assert "前日より 100.0 Wh 多い" in notification.text
 
 
 def test_a_day_with_nothing_to_compare_against_says_so() -> None:
@@ -254,7 +254,7 @@ def test_a_day_with_nothing_to_compare_against_says_so() -> None:
     notification = daily.build(warehouse_with(energy_between=energy), NOW)
 
     assert notification is not None
-    assert "その前の 24 時間と比べる記録なし" in notification.text
+    assert "前日と比べる記録なし" in notification.text
 
 
 def test_nothing_is_summarised_before_any_state_update() -> None:

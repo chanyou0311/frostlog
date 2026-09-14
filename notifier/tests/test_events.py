@@ -1,6 +1,5 @@
 import base64
 import json
-from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -38,43 +37,6 @@ def test_a_semantic_updated_event_is_read() -> None:
     assert isinstance(event, SemanticUpdated)
     assert event.rows_arrived == 412
     assert event.build_passed is True
-
-
-def test_the_upload_runs_that_arrived_are_read() -> None:
-    event = parse(
-        envelope(
-            SEMANTIC_UPDATED
-            | {
-                "upload_runs": [
-                    {
-                        "finished_at": "2026-09-11T12:03:02Z",
-                        "started_at": "2026-09-11T12:03:00Z",
-                        "previous_finished_at": "2026-09-11T03:01:00Z",
-                        "chunk_count": 3,
-                        "line_count": 412,
-                    }
-                ]
-            }
-        )
-    )
-    assert isinstance(event, SemanticUpdated)
-    [run] = event.upload_runs
-    assert run.began_at == datetime(2026, 9, 11, 12, 3, tzinfo=UTC)
-    assert run.previous_finished_at == datetime(2026, 9, 11, 3, 1, tzinfo=UTC)
-
-
-def test_an_event_that_carries_no_upload_run_has_an_empty_list() -> None:
-    event = parse(envelope(SEMANTIC_UPDATED))
-    assert isinstance(event, SemanticUpdated)
-    assert event.upload_runs == []
-
-
-def test_an_upload_run_without_a_start_falls_back_to_its_end() -> None:
-    event = parse(
-        envelope(SEMANTIC_UPDATED | {"upload_runs": [{"finished_at": "2026-09-11T12:03:02Z"}]})
-    )
-    assert isinstance(event, SemanticUpdated)
-    assert event.upload_runs[0].began_at == datetime(2026, 9, 11, 12, 3, 2, tzinfo=UTC)
 
 
 def test_a_quality_report_is_told_apart_by_its_event_field() -> None:
