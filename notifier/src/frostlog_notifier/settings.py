@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     slack_bot_token: str | None = None
     #: Name of the Secret Manager secret holding the token (the name, never the token).
     slack_bot_token_secret: str | None = None
-    slack_channel: str = "#fumo"
+    slack_channel: str = "#talk"
 
 
 def resolve_project(settings: Settings) -> str:

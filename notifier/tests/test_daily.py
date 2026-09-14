@@ -119,7 +119,7 @@ def test_there_is_no_outlook_while_charging() -> None:
         warehouse_with(latest_state_update=[dict(charging.model_dump())]), NOW
     )
     assert notification is not None
-    assert "外部電源につながっているので翌朝の見込みはなし" in notification.text
+    assert "外部電源につながっているので先の見込みはなし" in notification.text
 
 
 def test_there_is_no_outlook_without_an_unplugged_hour() -> None:
@@ -235,7 +235,7 @@ def test_the_summary_reads_the_warehouse_and_writes_nothing() -> None:
     ]
 
 
-def test_today_is_reported_against_yesterday() -> None:
+def test_the_day_is_reported_against_the_day_before_it() -> None:
     def energy(given: dict) -> list[dict]:
         today = given["start"] >= NOW - daily.TODAY
         return [{"discharged_watt_hours": 300.0 if today else 200.0, "charged_watt_hours": 0.0}]
@@ -243,10 +243,10 @@ def test_today_is_reported_against_yesterday() -> None:
     notification = daily.build(warehouse_with(energy_between=energy), NOW)
 
     assert notification is not None
-    assert "昨日より 100.0 Wh 多い" in notification.text
+    assert "その前の 24 時間より 100.0 Wh 多い" in notification.text
 
 
-def test_a_day_with_no_yesterday_to_compare_says_so() -> None:
+def test_a_day_with_nothing_to_compare_against_says_so() -> None:
     def energy(given: dict) -> list[dict]:
         today = given["start"] >= NOW - daily.TODAY
         return [{"discharged_watt_hours": 300.0 if today else 0.0, "charged_watt_hours": 0.0}]
@@ -254,8 +254,35 @@ def test_a_day_with_no_yesterday_to_compare_says_so() -> None:
     notification = daily.build(warehouse_with(energy_between=energy), NOW)
 
     assert notification is not None
-    assert "昨日と比べる記録なし" in notification.text
+    assert "その前の 24 時間と比べる記録なし" in notification.text
 
 
 def test_nothing_is_summarised_before_any_state_update() -> None:
     assert daily.build(warehouse_with(latest_state_update=[]), NOW) is None
+
+
+def test_a_battery_that_empties_before_morning_is_given_the_hour_not_a_zero() -> None:
+    """The projection saturates at zero, so "翌朝 0 %" reads as "it lasts the night".
+
+    It does not: at this slope the cooler stops hours before morning, and when that
+    happens is the thing worth knowing tonight.
+    """
+    # The slots fall 1 %/h, so 5 % runs out five hours from the reading -- the job
+    # fires at 20:00 JST and the outlook's morning is 07:00, eleven hours away.
+    nearly_empty = state_update(RETURN, state_of_charge_percent=5)
+
+    notification = daily.build(warehouse_with(latest_state_update=[nearly_empty]), NOW)
+
+    assert notification is not None
+    assert "ごろに空になる見込み" in notification.text
+    assert "翌朝" not in notification.text
+
+
+def test_everything_the_message_says_comes_before_the_charts() -> None:
+    """A reader who stops at the first picture has already read all of it."""
+    notification = daily.build(warehouse_with(), NOW)
+
+    assert notification is not None
+    kinds = [block["type"] for block in notification.blocks]
+    first_chart = kinds.index("data_visualization")
+    assert "section" not in kinds[first_chart:], kinds

@@ -144,7 +144,16 @@ def build(warehouse: Warehouse, now: datetime) -> Notification | None:
             latest, now, today, yesterday, pulldowns, morning, projected, refused, remaining
         ),
         blocks=_blocks(
-            latest, today, yesterday, pulldowns, morning, projected, refused, remaining, recorded
+            latest,
+            now,
+            today,
+            yesterday,
+            pulldowns,
+            morning,
+            projected,
+            refused,
+            remaining,
+            recorded,
         ),
     )
 
@@ -206,6 +215,7 @@ def _label(moment: datetime, factor: int, dated: bool) -> str:
 
 def _blocks(
     latest: StateUpdate,
+    now: datetime,
     today: queries.Energy,
     yesterday: queries.Energy,
     pulldowns: list[queries.Pulldown],
@@ -221,7 +231,7 @@ def _blocks(
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": "🧊 今日のポータブル冷蔵庫",
+                "text": "🧊 ポータブル冷蔵庫の 24 時間",
                 "emoji": True,
             },
         },
@@ -229,7 +239,7 @@ def _blocks(
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": _lead(latest, morning, projected, refused, remaining),
+                "text": _lead(latest, now, morning, projected, refused, remaining),
             },
         },
         {
@@ -253,6 +263,14 @@ def _blocks(
             ],
         },
     ]
+    blocks.append(
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": _period(today, yesterday, pulldowns, recorded)},
+        }
+    )
+    # The charts come last of the body. Everything the message says is said before
+    # them, so a reader who stops at the first picture has already read all of it.
     if recorded:
         labels, points = _folded(recorded)
         charge = charts.line(
@@ -273,12 +291,6 @@ def _blocks(
             ],
         )
         blocks += charts.at_most(charge, temperature)
-    blocks.append(
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": _period(today, yesterday, pulldowns, recorded)},
-        }
-    )
     blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": _footnote()}]})
     return blocks
 
@@ -295,12 +307,18 @@ def _power(latest: StateUpdate) -> str:
 
 def _lead(
     latest: StateUpdate,
+    now: datetime,
     morning: datetime,
     projected: float | None,
     refused: str | None,
     remaining: float | None,
 ) -> str:
     """What the reader came for, in the first lines.
+
+    The outlook is stated as whichever comes first. A battery that runs out before
+    morning has a time, and saying "翌朝 0 %" instead would be true and useless: the
+    projection saturates at zero, so it reads as "it lasts the night and is then
+    empty" when the cooler will in fact stop hours earlier.
 
     The reading is dated. It is the last one that arrived, which after a quiet day
     may be hours old, and a number stated without its time would be read as now.
@@ -309,17 +327,25 @@ def _lead(
         f"*残量 {formatting.percent(latest.state_of_charge_percent)}"
         f" ({formatting.stamp(latest.updated_at)} 時点)*"
     ]
-    if projected is not None:
+    empty = now + timedelta(hours=remaining) if remaining is not None else None
+    if refused == PLUGGED_IN:
+        lines.append("いま外部電源につながっているので、この先の見込みは出していません。")
+    elif refused == NO_SLOPE:
+        lines.append(
+            "電源につないでいない時間の記録が足りないので、この先の見込みは出していません。"
+        )
+    elif empty is not None and empty < morning:
+        lines.append(
+            f"このまま充電しなければ、{to_jst(empty):%-H:%M} ごろに空になる見込みです"
+            f" (あと約 {formatting.hours(remaining)})。"
+        )
+    else:
         lines.append(
             f"このまま充電しなければ、翌朝 {to_jst(morning):%-H:%M} には"
             f" {formatting.percent(projected)} の見込みです。"
         )
-    elif refused == PLUGGED_IN:
-        lines.append("いま外部電源につながっているので、翌朝の見込みは出していません。")
-    else:
-        lines.append("電源につないでいない時間の記録が足りないので、翌朝の見込みは出していません。")
-    if remaining is not None:
-        lines.append(f"このペースなら、空になるまで約 {formatting.hours(remaining)}。")
+        if remaining is not None:
+            lines.append(f"このペースなら、空になるまで約 {formatting.hours(remaining)}。")
     return "\n".join(lines)
 
 
@@ -331,7 +357,7 @@ def _period(
 ) -> str:
     """The day's energy against the one before it, and the two things the chart cannot draw."""
     lines = [
-        f"*今日* 消費 {formatting.watt_hours(today.discharged_watt_hours)}"
+        f"*この 24 時間* 消費 {formatting.watt_hours(today.discharged_watt_hours)}"
         f" ・ 充電 {formatting.watt_hours(today.charged_watt_hours)}"
         f" ({_against_yesterday(today, yesterday)})"
     ]
@@ -355,26 +381,26 @@ def _period(
         lines.append(
             f"庫内は {formatting.celsius(episode.interior_temperature_start_celsius, 0)} から"
             f" {formatting.duration(episode.duration_seconds)}で設定温度に届きました"
-            f" (今日 {len(reached)} 回)。"
+            f" (24 時間で {len(reached)} 回)。"
         )
     return "\n".join(lines)
 
 
 def _against_yesterday(today: queries.Energy, yesterday: queries.Energy) -> str:
-    """How today's draw compares with yesterday's, or why it does not.
+    """How the last day's draw compares with the day before it, or why it does not.
 
-    Yesterday can be absent for two different reasons -- the cooler was off, or it
-    was running on external power all day -- and neither makes "0 Wh" a number worth
-    dividing by. Both answer the same way: there is nothing to compare with.
+    The day before can be empty for two different reasons -- the cooler was off, or
+    it ran on external power throughout -- and neither makes "0 Wh" a number worth
+    comparing against. Both answer the same way: there is nothing to compare with.
     """
     before, after = yesterday.discharged_watt_hours, today.discharged_watt_hours
     if not before or after is None:
-        return "昨日と比べる記録なし"
+        return "その前の 24 時間と比べる記録なし"
     difference = after - before
     if abs(difference) < 1:
-        return "昨日とほぼ同じ"
+        return "その前の 24 時間とほぼ同じ"
     direction = "多い" if difference > 0 else "少ない"
-    return f"昨日より {formatting.watt_hours(abs(difference))} {direction}"
+    return f"その前の 24 時間より {formatting.watt_hours(abs(difference))} {direction}"
 
 
 def _footnote() -> str:
@@ -397,21 +423,27 @@ def _text(
     A notification on a locked phone, a screen reader, a search result: Slack
     shows this and nothing else, so it has to stand on its own.
     """
-    if projected is not None:
-        outlook = f"翌朝 {to_jst(morning):%-H:%M} には {formatting.percent(projected)} の見込み"
-    elif refused == PLUGGED_IN:
-        outlook = "外部電源につながっているので翌朝の見込みはなし"
+    empty = now + timedelta(hours=remaining) if remaining is not None else None
+    left = ""
+    if refused == PLUGGED_IN:
+        outlook = "外部電源につながっているので先の見込みはなし"
+    elif refused == NO_SLOPE:
+        outlook = "記録が足りないので先の見込みはなし"
+    elif empty is not None and empty < morning:
+        outlook = (
+            f"{to_jst(empty):%-H:%M} ごろに空になる見込み (あと約 {formatting.hours(remaining)})"
+        )
     else:
-        outlook = "記録が足りないので翌朝の見込みはなし"
-    left = f" 空になるまで約 {formatting.hours(remaining)}。" if remaining is not None else ""
+        outlook = f"翌朝 {to_jst(morning):%-H:%M} には {formatting.percent(projected)} の見込み"
+        left = f" 空になるまで約 {formatting.hours(remaining)}。" if remaining is not None else ""
     return (
-        f"今日のポータブル冷蔵庫 {formatting.full_stamp(now)}"
+        f"ポータブル冷蔵庫の 24 時間 {formatting.full_stamp(now)}"
         f" — 残量 {formatting.percent(latest.state_of_charge_percent)}"
         f" ({formatting.stamp(latest.updated_at)} 時点)、{outlook}。{left}"
         f" 庫内 {formatting.celsius(latest.interior_temperature_celsius, 0)}"
         f" (設定 {formatting.celsius(latest.setpoint_celsius, 0)})、"
         f"周辺 {formatting.celsius(latest.ambient_temperature_celsius)}。"
-        f" 今日の消費 {formatting.watt_hours(today.discharged_watt_hours)}"
+        f" この 24 時間の消費 {formatting.watt_hours(today.discharged_watt_hours)}"
         f" / 充電 {formatting.watt_hours(today.charged_watt_hours)}"
         f" ({_against_yesterday(today, yesterday)})、"
         f"設定温度まで冷却 {len(pulldowns)} 回。"

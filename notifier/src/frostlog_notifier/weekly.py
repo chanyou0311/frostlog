@@ -9,7 +9,6 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from statistics import median
 
 from frostlog_notifier import charts, folding, formatting, queries
 from frostlog_notifier.clock import jst_dates, to_jst
@@ -41,6 +40,9 @@ class DailyEnergy:
     day: date
     discharged_watt_hours: float
     charged_watt_hours: float
+    #: The day's lowest and highest reading, or None on a day nothing was recorded.
+    lowest_percent: int | None = None
+    highest_percent: int | None = None
 
 
 @dataclass(frozen=True)
@@ -185,11 +187,32 @@ def _triggers(pulldowns: list[Pulldown]) -> list[TriggerCount]:
 def _daily(hours: list[Snapshot], days: list[date]) -> list[DailyEnergy]:
     discharged: dict[date, float] = defaultdict(float)
     charged: dict[date, float] = defaultdict(float)
+    readings: dict[date, list[int]] = defaultdict(list)
     for hour in hours:
         day = to_jst(hour.slot_started_at).date()
         discharged[day] += hour.discharged_watt_hours or 0.0
         charged[day] += hour.charged_watt_hours or 0.0
-    return [DailyEnergy(day, discharged[day], charged[day]) for day in days]
+        if hour.covered_seconds > 0:
+            # Both ends: an hour that fell from 80 to 60 holds the day's high and its
+            # low at once, and taking only one of them would lose half of every swing.
+            readings[day] += [
+                percent
+                for percent in (
+                    hour.state_of_charge_start_percent,
+                    hour.state_of_charge_end_percent,
+                )
+                if percent is not None
+            ]
+    return [
+        DailyEnergy(
+            day,
+            discharged[day],
+            charged[day],
+            lowest_percent=min(readings[day]) if readings[day] else None,
+            highest_percent=max(readings[day]) if readings[day] else None,
+        )
+        for day in days
+    ]
 
 
 def by_hour(slots: list[Snapshot]) -> list[Snapshot]:
@@ -255,7 +278,7 @@ def _blocks(summary: Summary, title: str, days: list[date]) -> list[dict]:
             charts.Series("充電", [day.charged_watt_hours for day in summary.daily]),
         ],
     )
-    blocks += charts.at_most(energy, _band_chart(summary))
+    blocks += charts.at_most(energy, _charge_chart(summary))
     blocks.append(
         {
             "type": "context",
@@ -273,23 +296,27 @@ def _blocks(summary: Summary, title: str, days: list[date]) -> list[dict]:
     return blocks
 
 
-def _band_chart(summary: Summary) -> dict | None:
-    """How fast the battery drains at each ambient temperature, and how much it varies.
+def _charge_chart(summary: Summary) -> dict | None:
+    """How far the battery swung each day of the week.
 
-    A box plot said this in one mark per band; Slack draws lines, so the spread is
-    three of them. The middle line is the one to read — the outer two say how much
-    a single hour can differ from it.
+    A day nothing was recorded in is left out rather than drawn flat or carried over
+    from the day before: Slack cannot draw a hole, and a hole invented here would
+    claim a reading nobody took. The labels are dates, so a day that is missing shows
+    as a gap in them.
     """
-    bands = [band for band in summary.bands if band.samples]
-    if not bands:
+    recorded = [
+        day
+        for day in summary.daily
+        if day.lowest_percent is not None and day.highest_percent is not None
+    ]
+    if not recorded:
         return None
     return charts.line(
-        "周辺温度ごとの残量変化 (%/h)",
-        [band.label for band in bands],
+        "日ごとのバッテリー残量 (%)",
+        [day.day.strftime("%m-%d") for day in recorded],
         [
-            charts.Series("最も速い", [round(min(band.samples), 2) for band in bands]),
-            charts.Series("中央値", [round(median(band.samples), 2) for band in bands]),
-            charts.Series("最も遅い", [round(max(band.samples), 2) for band in bands]),
+            charts.Series("最高", [day.highest_percent for day in recorded]),
+            charts.Series("最低", [day.lowest_percent for day in recorded]),
         ],
     )
 

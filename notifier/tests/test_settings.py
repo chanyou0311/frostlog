@@ -15,7 +15,7 @@ def test_the_environment_names_the_dataset_and_the_token_secret(
     assert settings.bigquery_dataset == "frostlog"
     assert settings.slack_bot_token_secret == "frostlog-slack-bot-token"
     assert settings.slack_bot_token is None
-    assert settings.slack_channel == "#fumo"
+    assert settings.slack_channel == "#talk"
     assert settings.gcp_project is None
 
 
