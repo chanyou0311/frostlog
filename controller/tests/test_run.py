@@ -66,6 +66,17 @@ def test_unchanged_presence_does_nothing(tmp_path: Path) -> None:
     assert state.load(path) == state.State(home=True, attempts=0)
 
 
+def test_a_change_that_undid_itself_takes_its_failed_attempts_with_it(tmp_path: Path) -> None:
+    # Leaving failed a few times, then presence came back to the stored judgment:
+    # the next change starts its own count, not this one's.
+    path = _state_path(tmp_path)
+    state.save(path, state.State(home=True, attempts=CONFIG.max_attempts - 1))
+    sender = RecordingSender()
+    run(CONFIG, path, tmp_path / "commands.sock", _nmcli(True), sender)
+    assert sender.calls == []
+    assert state.load(path) == state.State(home=True, attempts=0)
+
+
 def test_arriving_home_sends_the_home_setpoint(tmp_path: Path) -> None:
     path = _state_path(tmp_path)
     state.save(path, state.State(home=False, attempts=0))

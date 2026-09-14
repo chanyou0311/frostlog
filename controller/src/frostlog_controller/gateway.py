@@ -12,7 +12,10 @@ import socket
 from pathlib import Path
 from typing import Any
 
-TIMEOUT_SECONDS = 5.0
+#: The gateway answers only after the frame has gone to the cooler, and a Bluetooth
+#: write on a poor link can take seconds. Giving up sooner than the write would count
+#: a command that reached the cooler as one that did not, and send it again.
+TIMEOUT_SECONDS = 30.0
 
 
 class GatewayError(Exception):
@@ -20,10 +23,17 @@ class GatewayError(Exception):
 
 
 def socket_dir() -> Path:
+    """Where the gateway's sockets are: the same answer the gateway and the collector give.
+
+    Without either variable there is no answer; a relative path would look like a
+    gateway that is down, and be retried as one.
+    """
     env = os.environ.get("FROSTLOG_GATEWAY_SOCKET_DIR")
     if env:
         return Path(env)
-    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "")
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime_dir:
+        raise GatewayError("set FROSTLOG_GATEWAY_SOCKET_DIR or XDG_RUNTIME_DIR")
     return Path(runtime_dir) / "frostlog"
 
 

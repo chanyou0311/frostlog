@@ -38,6 +38,10 @@ def run(
 
     if home_now == current.home:
         log.info("presence unchanged (home=%s), nothing to do", home_now)
+        if current.attempts:
+            # A change that was still being retried has been undone by the presence
+            # itself. Its failures are not the next change's to inherit.
+            state.save(state_path, state.State(home=current.home, attempts=0))
         return
 
     setpoint = config.home_setpoint_celsius if home_now else config.away_setpoint_celsius

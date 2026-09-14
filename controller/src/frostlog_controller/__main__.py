@@ -24,10 +24,11 @@ def main() -> int:
     )
     try:
         config = load_config()
-    except ConfigError as exc:
+        socket_path = gateway.socket_path()
+    except (ConfigError, gateway.GatewayError) as exc:
         log.error("%s", exc)
         return 2
-    run(config, state.state_path(), gateway.socket_path())
+    run(config, state.state_path(), socket_path)
     return 0
 
 

@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from frostlog_controller import gateway
 from frostlog_controller.gateway import GatewayError, send_command
 
 
@@ -68,6 +69,18 @@ def test_send_command_rejected(socket_path: Path) -> None:
     thread.join(timeout=5)
     assert response["status"] == "rejected"
     assert response["error"] == "not_connected"
+
+
+def test_the_socket_is_where_the_units_agree_it_is(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FROSTLOG_GATEWAY_SOCKET_DIR", raising=False)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    assert gateway.socket_path() == Path("/run/user/1000/frostlog/commands.sock")
+    monkeypatch.setenv("FROSTLOG_GATEWAY_SOCKET_DIR", "/somewhere/else")
+    assert gateway.socket_path() == Path("/somewhere/else/commands.sock")
+    monkeypatch.delenv("FROSTLOG_GATEWAY_SOCKET_DIR")
+    monkeypatch.delenv("XDG_RUNTIME_DIR")
+    with pytest.raises(GatewayError):
+        gateway.socket_path()  # not a relative path that looks like a gateway that is down
 
 
 def test_send_command_no_server(socket_path: Path) -> None:
