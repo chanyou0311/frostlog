@@ -84,11 +84,23 @@ RAW_EVENTS = [
     SchemaField("chip", "STRING"),
     SchemaField("firmware", "STRING"),
     SchemaField("serial", "STRING"),
+    # Deprecated in the contract and no longer written; the rows that have it keep it.
     SchemaField("secret", "STRING"),
     SchemaField("cmd", "STRING"),
     SchemaField("sensor", "STRING"),
     SchemaField("uploaded_chunk_count", "INT64"),
     SchemaField("uploaded_line_count", "INT64"),
+    # The steps of a command written to the cooler.
+    SchemaField("command_id", "STRING"),
+    SchemaField("source", "STRING"),
+    SchemaField("reason", "STRING"),
+    SchemaField("setting", "STRING"),
+    SchemaField("value", "STRING"),
+    SchemaField("frames", "STRING", mode="REPEATED"),
+    # What the collector lost of the stream it reads.
+    SchemaField("count", "INT64"),
+    SchemaField("expected", "INT64"),
+    SchemaField("received", "INT64"),
 ]
 
 SCHEMAS: dict[str, list[SchemaField]] = {"raw_cooler": RAW_COOLER, "raw_events": RAW_EVENTS}
