@@ -32,7 +32,8 @@ jobs:
 
   # The three data contracts are the source of truth; nothing is generated from
   # them, so they are checked directly: well-formed, no breaking change against
-  # main, and the collection contract holds for the sample chunks built from real messages.
+  # main, and the collection contract holds for the sample chunks built from real
+  # messages. The job that holds production to those same contracts lives here too.
   contracts:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -43,11 +44,9 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           version: ${{ env.UV_VERSION }}
-      - name: datacontract lint
-        run: |
-          for path in contracts/*.odcs.yaml; do
-            uvx --python 3.13 --from "$DATACONTRACT_CLI" datacontract lint "$path"
-          done
+      - run: make -C contracts install
+      - run: make -C contracts check
+      - run: make -C contracts lint
       # A contract promises nothing until it says it is active. While it is a draft
       # its shape is still being settled and may change in ways a consumer could not
       # survive -- there is no consumer yet. What `active` turns on is this check,
@@ -111,7 +110,9 @@ jobs:
       matrix:
         include:
           - dockerfile: semantics/Dockerfile
-            context: . # bakes in contracts/
+            context: . # bakes in semantics/dbt
+          - dockerfile: contracts/Dockerfile
+            context: . # bakes in contracts/*.odcs.yaml
           - dockerfile: notifier/Dockerfile
             context: notifier
     steps:
@@ -147,4 +148,6 @@ jobs:
           workload_identity_provider: projects/${{ vars.FROSTLOG_GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: frostlog-ci@${{ env.FROSTLOG_GCP_PROJECT }}.iam.gserviceaccount.com
       - run: make -C semantics install
+      # ci-warehouse ends by handing the result to the contract-test job.
+      - run: make -C contracts install
       - run: make -C semantics ci-warehouse

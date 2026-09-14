@@ -1,8 +1,8 @@
 # Build the Cloud Run images and swap them in. The services and the job themselves
 # (sizing, service accounts, env vars, triggers) are defined in fumo-terraform
 # (envs/gcp-chanyou-frostlog); this workflow only updates the container image.
-# One image can carry more than one deployable: the contract-test job runs from the
-# semantics image with a command of its own, so it is updated alongside it.
+# Every deployable has an image of its own and is named after it, so the image and
+# what runs it can be read off each other.
 # Auth is Workload Identity Federation: the repository variable
 # FROSTLOG_GCP_PROJECT_NUMBER must be set once after the project is bootstrapped.
 name: Deploy
@@ -34,17 +34,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # semantics builds from the repository root (it bakes in contracts/), and its
-          # image is what the contract-test job runs too; notifier is self-contained in
-          # its own directory.
-          - service: frostlog-semantics
+          # semantics and contracts each need something that sits beside them rather
+          # than inside them (the dbt project, the contract files), so they build from
+          # the repository root; notifier is self-contained in its own directory.
+          - name: frostlog-semantics
+            kind: service
             dockerfile: semantics/Dockerfile
             context: .
-            job: frostlog-contracts
-          - service: frostlog-notifier
+          - name: frostlog-contracts
+            kind: job
+            dockerfile: contracts/Dockerfile
+            context: .
+          - name: frostlog-notifier
+            kind: service
             dockerfile: notifier/Dockerfile
             context: notifier
-            job: ""
     steps:
       - uses: actions/checkout@v7
 
@@ -61,21 +65,22 @@ jobs:
 
       - name: Build and push
         env:
-          IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ matrix.service }}
+          IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ matrix.name }}
         run: |
           docker build -f ${{ matrix.dockerfile }} -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" ${{ matrix.context }}
           docker push "$IMAGE:${{ github.sha }}"
           docker push "$IMAGE:latest"
 
       - name: Update the Cloud Run service image
+        if: ${{ matrix.kind == 'service' }}
         run: |
-          gcloud run services update ${{ matrix.service }} \
+          gcloud run services update ${{ matrix.name }} \
             --project=${{ env.PROJECT_ID }} --region=${{ env.REGION }} \
-            --image=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ matrix.service }}:${{ github.sha }}
+            --image=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ matrix.name }}:${{ github.sha }}
 
       - name: Update the Cloud Run job image
-        if: ${{ matrix.job != '' }}
+        if: ${{ matrix.kind == 'job' }}
         run: |
-          gcloud run jobs update ${{ matrix.job }} \
+          gcloud run jobs update ${{ matrix.name }} \
             --project=${{ env.PROJECT_ID }} --region=${{ env.REGION }} \
-            --image=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ matrix.service }}:${{ github.sha }}
+            --image=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ matrix.name }}:${{ github.sha }}
