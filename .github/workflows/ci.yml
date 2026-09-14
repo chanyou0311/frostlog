@@ -61,6 +61,20 @@ jobs:
       - run: make -C collection install
       - run: make -C collection check
 
+  # The one process that holds the cooler's Bluetooth link. The radio is faked in
+  # its tests and its sockets are real ones in a temporary directory, so no Pi and
+  # no cooler are needed here either.
+  gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: make -C gateway install
+      - run: make -C gateway check
+
   # The three data contracts are the source of truth; nothing is generated from
   # them, so they are checked directly: well-formed, no breaking change against
   # main, and the collection contract holds for the sample chunks built from real

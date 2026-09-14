@@ -1,0 +1,22 @@
+[Unit]
+Description=frostlog: hold the cooler's Bluetooth link and serve it on two sockets
+
+[Service]
+# Started means the sockets are bound, not that the process exists: the units
+# ordered after this one read them, and would otherwise write down a gateway
+# that is not there at every boot while this one is still importing.
+Type=notify
+TimeoutStartSec=60
+EnvironmentFile=-%E/frostlog/env
+# Without a pinned address the gateway would latch onto any nearby Anker device,
+# so the service is skipped (not failed) until FROSTLOG_COOLER_ADDRESS is set.
+ExecCondition=/bin/sh -c 'test -n "$FROSTLOG_COOLER_ADDRESS"'
+# The sockets live here and go when the gateway does; a client that finds none
+# knows there is nothing holding the link.
+RuntimeDirectory=frostlog
+ExecStart=%h/frostlog-gateway/.venv/bin/frostlog-gateway run
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
