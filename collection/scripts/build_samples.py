@@ -3,12 +3,9 @@
 
 The samples are what one day's chunk of each stream looks like: real messages
 captured from the cooler (``tests/captured.py``) turned into v1 records, one
-connection's worth of them. Run after changing the record shape:
-
-    uv run python scripts/build_samples.py
-
-The output is deterministic, so a run that changes nothing leaves the files
-untouched in git.
+connection's worth of them. Run `make samples` in collection/ after changing the
+record shape. The output is deterministic, so a run that changes nothing leaves
+the files untouched in git.
 """
 
 import sys
@@ -16,8 +13,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
+COLLECTION = Path(__file__).resolve().parent.parent
+REPOSITORY = COLLECTION.parent
+sys.path.insert(0, str(COLLECTION / "tests"))
 
 import captured  # noqa: E402
 
@@ -25,7 +23,7 @@ from frostlog import records  # noqa: E402
 from frostlog.cooler.everfrost.decoder import decode_state  # noqa: E402
 from frostlog.cooler.everfrost.protocol import parse_frame  # noqa: E402
 
-SAMPLES = ROOT / "contracts" / "samples" / "collection"
+SAMPLES = REPOSITORY / "contracts" / "samples" / "collection"
 DAY = datetime(2026, 9, 6, 11, 2, 10, 719777, tzinfo=UTC)
 UPTIME = 867.1
 MODEL = "everfrost"
@@ -153,7 +151,7 @@ def write(stream: str, rows: list[records.Cooler] | list[records.Event]) -> None
     path.parent.mkdir(parents=True, exist_ok=True)
     content = "".join(records.line(row) for row in rows).encode("utf-8")
     path.write_bytes(content)
-    print(f"{path.relative_to(ROOT)}: {len(rows)} records, {len(content)} bytes")
+    print(f"{path.relative_to(REPOSITORY)}: {len(rows)} records, {len(content)} bytes")
 
 
 def main() -> None:

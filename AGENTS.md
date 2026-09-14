@@ -9,7 +9,7 @@ Raspberry Pi で記録し、バッテリー残量にまつわる問いに Slack 
 
 | | 何を出すか | 実体 |
 |---|---|---|
-| `frostlog-collection` | 測ったものをそのまま | Pi の収集/送出 (`src/frostlog/`) → GCS |
+| `frostlog-collection` | 測ったものをそのまま | Pi の収集/送出 (`collection/`) → GCS |
 | `frostlog-semantics` | 意味づけしたテーブル | dbt (`semantics/dbt/`) → BigQuery |
 | `frostlog-notifier` | Slack の通知 (データアプリケーション) | `notifier/` → Cloud Run |
 | `frostlog-contracts` | 契約テストの結果 | `contracts/job/` → Cloud Run job |
@@ -20,7 +20,7 @@ C 外出中あと何時間もつか / D 設定温度に到達するまでの時�
 ## データの流れ
 
 何がいつ動くか (間隔、時刻、リソース名) はここに書かない。`fumo-terraform` の `.tf`、Pi の
-systemd unit (`scripts/systemd/`)、各 `Makefile` がそのまま語る。ここにあるのは形だけ。
+systemd unit (`collection/scripts/systemd/`)、各 `Makefile` がそのまま語る。ここにあるのは形だけ。
 
 ```
 Pi: frostlog-collection  (BLE を常時受信し、周辺温湿度も同時に記録。timer が前回の続きから
@@ -42,13 +42,14 @@ Cloud Scheduler が定時に Cloud Run job frostlog-contracts を起こし、契
 ## 必須コマンド
 
 ```bash
-uv run pytest                                    # コレクター (リポジトリ直下が Pi のパッケージ)
+make -C collection check                         # コレクター (Pi のパッケージ)。lint + test
 make -C semantics check                          # lint + test + dbt parse (ウェアハウス不要)
 make -C semantics ci-warehouse                   # 実 BigQuery で通し。ADC が要る
 make -C contracts check                          # 契約テストジョブ自身の lint + test
 make -C contracts lint                           # 契約そのものが well-formed か
 make -C contracts test CONTRACT=collection       # 本番のデータを契約に当てる。ADC が要る
-scripts/deploy.sh                                # Pi へ配布 (既定 chanyou@192.168.100.40)
+make -C notifier check                           # Slack アプリケーションの lint + test
+make -C collection deploy                        # Pi へ配布 (PI=user@host で宛先を変える)
 ```
 
 ## 踏みやすい罠 (MUST)
@@ -76,7 +77,7 @@ scripts/deploy.sh                                # Pi へ配布 (既定 chanyou@
   当てる (`semantics/Makefile`)。配信の途中で組んでも、全テーブルを作り直す以上は何も増えない。
 - **botocore 1.36 以降は PUT に CRC32 を付ける。** GCS の S3 互換 API はこれを受け付けず
   `SignatureDoesNotMatch` を返す。資格情報の問題に見えるが違う (LIST と HEAD は同じ鍵で通る)。
-  `request_checksum_calculation="when_required"` が要る (`src/frostlog/upload/s3.py`)。
+  `request_checksum_calculation="when_required"` が要る (`collection/src/frostlog/upload/s3.py`)。
 - **GCP の `display_name` は 100 バイト。** 文字数ではないので日本語だとすぐ超える。
 - **通知は差分ではなく「窓の絵」。** イベント駆動だと同じ事実が何度も届く (当時の producer は
   直近 25 時間ぶんの upload_runs を返していたので、1 回の帰宅が最大 48 イベントに載った) ので、「もう言ったか」

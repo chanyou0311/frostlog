@@ -14,8 +14,8 @@ env:
   UV_VERSION: "0.12.10"
 
 jobs:
-  # The collector: the Pi's package at the repository root.
-  collector:
+  # The collection data product: the Pi's package.
+  collection:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -23,11 +23,8 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           version: ${{ env.UV_VERSION }}
-      - run: uv sync --locked
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run ty check
-      - run: uv run pytest
+      - run: make -C collection install
+      - run: make -C collection check
 
   # The three data contracts are the source of truth; nothing is generated from
   # them, so they are checked directly: well-formed, no breaking change against
@@ -88,19 +85,13 @@ jobs:
   notifier:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: notifier
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           version: ${{ env.UV_VERSION }}
-      - run: uv sync --locked
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run ty check
-      - run: uv run pytest
+      - run: make -C notifier install
+      - run: make -C notifier check
 
   # The container images must at least build; deploy.yml pushes them from main.
   images:

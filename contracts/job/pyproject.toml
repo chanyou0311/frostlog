@@ -42,9 +42,9 @@ target-version = "py313"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
-# Without a [tool.ty] section here ty walks up to the repository root, adopts the
-# Pi package's configuration and type-checks src/frostlog against this job's
-# environment. This job is its own project.
+# Without a [tool.ty] section here ty walks up the tree looking for configuration
+# and would take whatever is above this directory as the project to check. This job
+# is its own project, with its own dependencies.
 [tool.ty.src]
 include = ["src", "tests"]
 

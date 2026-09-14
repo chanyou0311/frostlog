@@ -49,5 +49,5 @@ python = ".venv"
 
 [tool.ty.src]
 # This project only: ty walks up the tree looking for configuration, and would
-# otherwise take the repository root's pyproject.toml as the project to check.
+# otherwise take whatever is above this directory as the project to check.
 include = ["src", "tests"]
