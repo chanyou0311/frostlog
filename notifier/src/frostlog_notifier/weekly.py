@@ -10,7 +10,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-from frostlog_notifier import charts, folding, formatting, queries
+from frostlog_notifier import charts, clock, folding, formatting, queries
 from frostlog_notifier.clock import jst_dates, to_jst
 from frostlog_notifier.notification import WEEKLY, Notification
 from frostlog_notifier.queries import Pulldown, Snapshot
@@ -170,7 +170,13 @@ def build(warehouse: Warehouse, now: datetime) -> Notification:
     be six days stale on arrival. Counting back from the moment it runs also means
     nothing has to be remembered about which week was last reported.
     """
-    start, end = now - WINDOW, now
+    # Ends at the last JST midnight, not at the moment the job fires. The energy is
+    # bucketed by calendar day, and a window that began at nine in the morning made
+    # the first and last buckets half days standing beside whole ones, in the same
+    # chart and at the same width. What it costs is the hours since midnight, which
+    # the evening summary reports anyway.
+    end = clock.jst_midnight(now)
+    start = end - WINDOW
     hours = by_hour(queries.snapshots(warehouse, start, end))
     pulldowns = queries.finished_pulldowns_between(warehouse, start, end)
     days = jst_dates(start, end)

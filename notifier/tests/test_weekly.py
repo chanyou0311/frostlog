@@ -2,14 +2,16 @@ from datetime import UTC, datetime, timedelta
 
 from conftest import FakeWarehouse, empty_slot, pulldown_row, quarters
 
-from frostlog_notifier import weekly
+from frostlog_notifier import clock, weekly
 from frostlog_notifier.clock import jst_dates, to_jst
 from frostlog_notifier.notification import WEEKLY
 from frostlog_notifier.queries import Pulldown, Snapshot
 
-#: The job fires Saturday 09:00 JST; the window is the seven days behind it.
+#: The job fires Saturday 09:00 JST; the window is the seven whole JST days behind
+#: the last midnight, so it ends at 09-19 00:00 JST rather than at the firing.
 NOW = datetime(2026, 9, 19, 0, 0, tzinfo=UTC)  # 09:00 JST, Saturday
-START, END = NOW - weekly.WINDOW, NOW
+END = clock.jst_midnight(NOW)
+START = END - weekly.WINDOW
 
 
 def week_of_slots() -> list[dict]:
@@ -191,3 +193,19 @@ def test_a_day_with_no_reading_is_left_out_of_the_battery_chart() -> None:
     labels = [point["label"] for point in charted[1]["chart"]["series"][0]["data"]]
     assert f"{target:%m-%d}" not in labels
     assert labels, "the other days are still drawn"
+
+
+def test_seven_days_make_seven_buckets_whatever_hour_the_job_runs() -> None:
+    """A window that began mid-morning put half days beside whole ones in one chart.
+
+    The bars are calendar days, so the window has to be calendar days too — however
+    the schedule happens to be set.
+    """
+    warehouse = FakeWarehouse({"snapshots": week_of_slots(), "finished_pulldowns_between": []})
+
+    for hour in (0, 9, 20, 23):
+        fired = NOW.replace(hour=hour)
+        notification = weekly.build(warehouse, fired)
+        bars = [b for b in notification.blocks if b.get("title", "").startswith("日ごとの電力量")]
+        labels = [point["label"] for point in bars[0]["chart"]["series"][0]["data"]]
+        assert len(labels) == 7, f"{hour} 時に走らせたら {len(labels)} 本: {labels}"
