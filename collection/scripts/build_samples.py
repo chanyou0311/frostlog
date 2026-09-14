@@ -125,6 +125,26 @@ def setpoint_frame(celsius: int, seconds: float) -> str:
 def event_rows() -> list[records.Event]:
     end = 9.2 + (STATE_REPORT_COUNT + 1) * 3.0
     return [
+        # Every run of the collector starts here: it found the gateway's stream.
+        records.Event(**at(-310.0), kind="gateway_connected"),
+        # An earlier connection, from before anything could be written to the cooler:
+        # its ble_negotiated still carries the session key. The column is deprecated
+        # and no connection since has one, but a day of old rows still shows it, and a
+        # consumer that meets one should find it described.
+        records.Event(
+            **at(-305.0), kind="ble_connected", address=captured.ADDRESS, name=captured.NAME
+        ),
+        records.Event(
+            **at(-304.1),
+            kind="ble_negotiated",
+            variant="solix",
+            mtu=253,
+            chip=captured.CHIP,
+            firmware=captured.FIRMWARE,
+            serial=captured.SERIAL_NUMBER,
+            secret=captured.SECRET,
+        ),
+        records.Event(**at(-300.0), kind="ble_disconnected", address=captured.ADDRESS),
         records.Event(
             **at(-0.5), kind="ble_connected", address=captured.ADDRESS, name=captured.NAME
         ),
@@ -169,6 +189,11 @@ def event_rows() -> list[records.Event]:
         ),
         records.Event(**at(130.2), kind="command_accepted", command_id=ARRIVED),
         records.Event(**at(132.6), kind="command_applied", command_id=ARRIVED),
+        # What the collector saw of the stream it was reading: events the gateway threw
+        # away because this reader was behind, and a jump in the numbering it could not
+        # account for. Neither is common; both are rows rather than silence.
+        records.Event(**at(140.0), kind="gateway_dropped", count=23),
+        records.Event(**at(150.0), kind="gateway_gap", expected=8841, received=8844),
         records.Event(**at(end), kind="ble_silent", address=captured.ADDRESS),
         records.Event(**at(end + 0.2), kind="ble_disconnected", address=captured.ADDRESS),
         records.Event(**at(end + 15.0), kind="ble_device_not_found", address=captured.ADDRESS),
@@ -196,6 +221,14 @@ def event_rows() -> list[records.Event]:
         records.Event(
             **at(end + 121.1), kind="upload_done", uploaded_chunk_count=1, uploaded_line_count=42
         ),
+        # The gateway was restarted. Its sockets went with it, so the collector waited
+        # and looked again; nothing of the cooler was recorded in between.
+        records.Event(
+            **at(end + 200.0),
+            kind="gateway_disconnected",
+            error="[Errno 2] No such file or directory",
+        ),
+        records.Event(**at(end + 212.0), kind="gateway_connected"),
     ]
 
 

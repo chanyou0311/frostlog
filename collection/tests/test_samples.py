@@ -50,8 +50,11 @@ def test_the_samples_show_what_the_contract_describes() -> None:
     # One command from asked-for to seen in a state report, and one that never left.
     assert {"command_requested", "command_sent", "command_accepted", "command_applied"} <= kinds
     assert "command_rejected" in kinds
-    # The session key is no longer written down: it opens the cooler to whoever has it.
-    assert not any("secret" in event for event in events)
+    # What the collector saw of the stream it was reading.
+    assert {"gateway_connected", "gateway_disconnected", "gateway_dropped", "gateway_gap"} <= kinds
+    # The session key is no longer written down, and rows from before it stopped have it.
+    negotiated = [event for event in events if event["kind"] == "ble_negotiated"]
+    assert "secret" not in negotiated[-1] and "secret" in negotiated[0]
 
 
 def test_the_committed_samples_are_what_the_builder_writes() -> None:

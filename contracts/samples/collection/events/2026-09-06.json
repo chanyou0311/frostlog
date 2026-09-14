@@ -1,3 +1,7 @@
+{"ts":"2026-09-06T10:57:00.719777Z","uptime_seconds":557.1,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"gateway_connected"}
+{"ts":"2026-09-06T10:57:05.719777Z","uptime_seconds":562.1,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"ble_connected","address":"F4:9D:8A:C3:4F:84","name":"SOLIX Everfrost 2 26L"}
+{"ts":"2026-09-06T10:57:06.619777Z","uptime_seconds":563.0,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"ble_negotiated","variant":"solix","mtu":253,"chip":"ESP32","firmware":"0.0.0.3","serial":"ANSDHW40F15400347","secret":"5bdccb1557ac395da3542dccebe02ac015aa95129109a955753f440a88916308"}
+{"ts":"2026-09-06T10:57:10.719777Z","uptime_seconds":567.1,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"ble_disconnected","address":"F4:9D:8A:C3:4F:84"}
 {"ts":"2026-09-06T11:02:10.219777Z","uptime_seconds":866.6,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"ble_connected","address":"F4:9D:8A:C3:4F:84","name":"SOLIX Everfrost 2 26L"}
 {"ts":"2026-09-06T11:02:11.619777Z","uptime_seconds":868.0,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"ble_negotiated","variant":"solix","mtu":253,"chip":"ESP32","firmware":"0.0.0.3","serial":"ANSDHW40F15400347"}
 {"ts":"2026-09-06T11:03:10.719777Z","uptime_seconds":927.1,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"environment_read_failed","sensor":"dht20","error":"DHT20: I2C error: [Errno 5] Input/output error"}
@@ -7,6 +11,8 @@
 {"ts":"2026-09-06T11:04:20.819777Z","uptime_seconds":997.2,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"command_sent","command_id":"0f0b6a4c-8f8b-4a1f-9a1e-2c2a6d3f5b71","cmd":"4080","frames":["ff091a0003000f40806477cbe3be98700aa142b046b90a86caad"],"address":"F4:9D:8A:C3:4F:84"}
 {"ts":"2026-09-06T11:04:20.919777Z","uptime_seconds":997.3,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"command_accepted","command_id":"0f0b6a4c-8f8b-4a1f-9a1e-2c2a6d3f5b71"}
 {"ts":"2026-09-06T11:04:23.319777Z","uptime_seconds":999.7,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"command_applied","command_id":"0f0b6a4c-8f8b-4a1f-9a1e-2c2a6d3f5b71"}
+{"ts":"2026-09-06T11:04:30.719777Z","uptime_seconds":1007.1,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"gateway_dropped","count":23}
+{"ts":"2026-09-06T11:04:40.719777Z","uptime_seconds":1017.1,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"gateway_gap","expected":8841,"received":8844}
 {"ts":"2026-09-06T11:04:46.919777Z","uptime_seconds":1023.3,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"ble_silent","address":"F4:9D:8A:C3:4F:84"}
 {"ts":"2026-09-06T11:04:47.119777Z","uptime_seconds":1023.5,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"ble_disconnected","address":"F4:9D:8A:C3:4F:84"}
 {"ts":"2026-09-06T11:05:01.919777Z","uptime_seconds":1038.3,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"ble_device_not_found","address":"F4:9D:8A:C3:4F:84"}
@@ -15,3 +21,5 @@
 {"ts":"2026-09-06T11:05:46.919777Z","uptime_seconds":1083.3,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"ble_handshake_failed","cmd":"0821","error":"stage 5: expected a 64-byte public key, got 32"}
 {"ts":"2026-09-06T11:06:46.919777Z","uptime_seconds":1143.3,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"upload_started"}
 {"ts":"2026-09-06T11:06:48.019777Z","uptime_seconds":1144.4,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"upload_done","uploaded_chunk_count":1,"uploaded_line_count":42}
+{"ts":"2026-09-06T11:08:06.919777Z","uptime_seconds":1223.3,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"gateway_disconnected","error":"[Errno 2] No such file or directory"}
+{"ts":"2026-09-06T11:08:18.919777Z","uptime_seconds":1235.3,"boot_id":"b70259bb-dc6a-43f1-8eac-84925d851c2d","ts_synced":true,"type":"event","kind":"gateway_connected"}
