@@ -1,7 +1,8 @@
 # Tasks for the semantic data product. Run them from this directory.
 #
-# Everything goes through the service's uv project, which holds dbt and
-# datacontract-cli in its `transform` dependency group.
+# Everything goes through the service's uv project, which holds dbt in its
+# `transform` dependency group. The contracts are held to by a job of their own
+# (../contracts), which this delegates to.
 #
 # `check` needs nothing but a checkout. Every other target talks to BigQuery
 # through Application Default Credentials and reads FROSTLOG_BQ_PROJECT (the
@@ -10,12 +11,9 @@
 UV := uv run --project service --group transform
 DBT := $(UV) dbt
 DIRS := --project-dir dbt --profiles-dir dbt
-CONTRACTS := ../contracts
 TARGET ?= prod
-#: Passed through to the contract-test job, e.g. CONTRACT_ARGS="--contract collection".
-CONTRACT_ARGS ?=
 
-.PHONY: install check lint test parse build unit-test contract-test ci-warehouse lint-contracts
+.PHONY: install check lint test parse build unit-test ci-warehouse
 
 install:
 	uv sync --project service --group transform
@@ -28,9 +26,8 @@ lint:
 	cd service && uv run ruff format --check .
 	cd service && uv run ty check
 
-# The contract-rule tests transpile the contract SQL and run it on DuckDB (transform group).
 test:
-	cd service && uv run --group transform pytest
+	cd service && uv run pytest
 
 parse:
 	$(DBT) parse $(DIRS)
@@ -44,17 +41,6 @@ build:
 # The dbt unit tests. They run their fixtures as queries, so they need BigQuery.
 unit-test:
 	$(DBT) test $(DIRS) --target $(TARGET) --select test_type:unit
-
-# The data contracts against the data that is really there. Testing the raw
-# contract reads the bucket through its S3 API, so it wants
-# DATACONTRACT_S3_ACCESS_KEY_ID / DATACONTRACT_S3_SECRET_ACCESS_KEY (the service
-# job reads them from Secret Manager; a person exports their own HMAC key).
-# Both contracts against production, through the job that does it daily — the same
-# code path, so what passes here is what passes there. `--contract collection` (or
-# semantics) narrows it, which is how one product is held to its word before the
-# other exists. Needs Application Default Credentials.
-contract-test:
-	$(UV) python -m frostlog_contracts $(CONTRACT_ARGS)
 
 # The whole warehouse, end to end, on the sample chunks in the repository: the CI
 # dataset's raw tables are rebuilt from them with the same kind of load job the
@@ -73,8 +59,4 @@ ci-warehouse:
 	$(UV) python -m frostlog_semantics.samples --part 2
 	$(DBT) build $(DIRS) --target ci
 	$(DBT) test $(DIRS) --target ci --select test_type:unit
-	$(UV) datacontract test $(CONTRACTS)/semantics.odcs.yaml --server ci
-
-lint-contracts:
-	$(UV) datacontract lint $(CONTRACTS)/collection.odcs.yaml
-	$(UV) datacontract lint $(CONTRACTS)/semantics.odcs.yaml
+	$(MAKE) -C ../contracts test CONTRACT=semantics FROSTLOG_SEMANTICS_CONTRACT_SERVER=ci

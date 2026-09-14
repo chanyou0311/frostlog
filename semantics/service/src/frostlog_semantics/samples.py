@@ -16,9 +16,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-from frostlog_platform.project import resolve_project
 from frostlog_semantics import raw_objects
-from frostlog_semantics.settings import Settings
+from frostlog_semantics.project import resolve_project
+from frostlog_semantics.settings import ROOT, Settings
 
 log = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ def split(path: Path, workspace: Path) -> list[Path]:
     return parts
 
 
-def load(settings: Settings, part: int | None = None) -> None:
+def load(settings: Settings, contracts_dir: Path, part: int | None = None) -> None:
     """Rebuild the CI raw tables from the samples.
 
     ``part`` loads only the first or only the second half of every sample, as two
@@ -66,7 +66,7 @@ def load(settings: Settings, part: int | None = None) -> None:
 
     from frostlog_semantics.warehouse import BigQueryWarehouse
 
-    chunks = sample_chunks(settings.contracts_dir)
+    chunks = sample_chunks(contracts_dir)
     project = resolve_project(settings.gcp_project)
     warehouse = BigQueryWarehouse(
         bigquery.Client(project=project),
@@ -104,10 +104,17 @@ def main(argv: list[str] | None = None) -> int:
         choices=(1, 2),
         help="load only this half of every sample, as one of two deliveries",
     )
+    # Not a setting: this runs from a checkout, never from the service's image, so
+    # there is nothing for a deployment to say about it.
+    parser.add_argument(
+        "--contracts-dir",
+        type=Path,
+        default=ROOT / "contracts",
+        help="where the sample chunks are (default: the contracts directory of this checkout)",
+    )
     arguments = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(message)s")
-    settings = Settings()
-    load(settings, arguments.part)
+    load(Settings(), arguments.contracts_dir, arguments.part)
     return 0
 
 

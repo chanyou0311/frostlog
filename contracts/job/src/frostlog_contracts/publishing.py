@@ -1,15 +1,19 @@
-"""Putting an event on the topic both components announce themselves on.
+"""Putting an event on the topic this job announces its findings on.
 
 The topic and its messages are contracts/signals.odcs.yaml. What goes on it is
-each component's own business — the transform's ``semantic_updated``, the
-contract test's ``quality_report`` — so this module knows only that an event can
-say its name and turn itself into JSON.
+each producer's own business -- this one publishes ``quality_report`` -- so this
+module knows only that an event can say its name and turn itself into JSON.
+
+The semantics transform has its own copy of this (semantics/service): the two
+deploy separately and the contract, not a shared library, is what binds them. The
+one thing both must decide the same way is what happens when no topic is
+configured, or an event would be dropped in one and published in the other.
 """
 
 import logging
 from typing import Any, Protocol
 
-from frostlog_platform.project import topic_path
+from frostlog_contracts.project import topic_path
 
 log = logging.getLogger(__name__)
 
@@ -48,9 +52,7 @@ class NoPublisher:
 def publisher_for(project: str, topic: str | None) -> Publisher:
     """A publisher on ``topic``, or one that goes nowhere when there is no topic.
 
-    Local runs and tests have no topic; production does. Which of the two it is has
-    to be decided the same way in both components, or an event would be dropped in
-    one and published in the other.
+    Local runs and tests have no topic; production does.
     """
     if not topic:
         return NoPublisher()

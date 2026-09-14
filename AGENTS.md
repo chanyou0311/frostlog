@@ -4,13 +4,15 @@
 Raspberry Pi で記録し、バッテリー残量にまつわる問いに Slack で答えるためのリポジトリ。
 
 **2 つのデータプロダクトと 1 つのデータアプリケーション**で構成し、境界はデータコントラクト
-(`contracts/*.odcs.yaml`) が持つ。
+(`contracts/*.odcs.yaml`) が持つ。契約が守られているかを毎日訊くのは、どちらのプロダクトにも
+属さない 4 つめのユニット。
 
 | | 何を出すか | 実体 |
 |---|---|---|
 | `frostlog-collection` | 測ったものをそのまま | Pi の収集/送出 (`src/frostlog/`) → GCS |
 | `frostlog-semantics` | 意味づけしたテーブル | dbt (`semantics/dbt/`) → BigQuery |
 | データアプリケーション | Slack の通知 | `notifier/` → Cloud Run |
+| `frostlog-contracts` | 契約テストの結果 | `contracts/job/` → Cloud Run job |
 
 答えたい問いは 4 つ: A 残量が条件でどう変わるか / B 帰宅時の残量と翌朝の見通し /
 C 外出中あと何時間もつか / D 設定温度に到達するまでの時間。
@@ -43,7 +45,9 @@ Cloud Scheduler  frostlog-contract-test  毎日 03:07 → Cloud Run job  frostlo
 uv run pytest                                    # コレクター (リポジトリ直下が Pi のパッケージ)
 make -C semantics check                          # lint + test + dbt parse (ウェアハウス不要)
 make -C semantics ci-warehouse                   # 実 BigQuery で通し。ADC が要る
-make -C semantics contract-test CONTRACT_ARGS="--contract collection"
+make -C contracts check                          # 契約テストジョブ自身の lint + test
+make -C contracts lint                           # 契約そのものが well-formed か
+make -C contracts test CONTRACT=collection       # 本番のデータを契約に当てる。ADC が要る
 scripts/deploy.sh                                # Pi へ配布 (既定 chanyou@192.168.100.40)
 ```
 
@@ -99,8 +103,8 @@ scripts/deploy.sh                                # Pi へ配布 (既定 chanyou@
 - Terraform の apply は GitHub Actions のみ。ローカルから apply しない。
 - HMAC キー・Slack トークン・Wi-Fi の PSK は画面にもログにも出さない
   (`terraform output -raw` や `op read` から直接流し込む)。
-- 無料枠のみ。Artifact Registry だけは datacontract-cli の依存 (pyarrow で 124 MB) が重く、
-  超過を許容している。
+- 無料枠のみ。Artifact Registry だけは、コンテナイメージの合計が枠に収まらないので超過を
+  許容している。
 - **`°C` と書く。`℃` は使わない。**
 
 ## 設計の決まりごと

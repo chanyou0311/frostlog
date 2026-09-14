@@ -12,7 +12,6 @@ permissions:
 
 env:
   UV_VERSION: "0.12.10"
-  DATACONTRACT_CLI: "datacontract-cli[s3]==1.2.0"
 
 jobs:
   # The collector: the Pi's package at the repository root.
@@ -32,10 +31,11 @@ jobs:
 
   # The three data contracts are the source of truth; nothing is generated from
   # them, so they are checked directly: well-formed, no breaking change against
-  # main, and the collection contract holds for the sample chunks built from real messages.
+  # main, and the collection contract holds for the sample chunks built from real
+  # messages. The job that holds production to those same contracts lives here too.
   contracts:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -43,11 +43,9 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           version: ${{ env.UV_VERSION }}
-      - name: datacontract lint
-        run: |
-          for path in contracts/*.odcs.yaml; do
-            uvx --python 3.13 --from "$DATACONTRACT_CLI" datacontract lint "$path"
-          done
+      - run: make -C contracts install
+      - run: make -C contracts check
+      - run: make -C contracts lint
       # A contract promises nothing until it says it is active. While it is a draft
       # its shape is still being settled and may change in ways a consumer could not
       # survive -- there is no consumer yet. What `active` turns on is this check,
@@ -63,14 +61,16 @@ jobs:
             fi
             if git cat-file -e "origin/main:$path" 2>/dev/null; then
               git show "origin/main:$path" > "$RUNNER_TEMP/$(basename "$path")"
-              uvx --python 3.13 --from "$DATACONTRACT_CLI" datacontract breaking \
+              uv run --project contracts/job datacontract breaking \
                 "$RUNNER_TEMP/$(basename "$path")" "$path"
             else
               echo "$path is not on main yet; nothing to compare against"
             fi
           done
+      # The samples server's paths are relative to the repository root, so this one
+      # runs from there rather than through contracts/Makefile.
       - name: datacontract test (collection contract vs sample chunks)
-        run: uvx --python 3.13 --from "$DATACONTRACT_CLI" datacontract test contracts/collection.odcs.yaml --server samples
+        run: uv run --project contracts/job datacontract test contracts/collection.odcs.yaml --server samples
 
   # The semantic data product without a warehouse: service checks and dbt parse.
   semantics:
@@ -111,7 +111,9 @@ jobs:
       matrix:
         include:
           - dockerfile: semantics/Dockerfile
-            context: . # bakes in contracts/
+            context: . # bakes in semantics/dbt
+          - dockerfile: contracts/Dockerfile
+            context: . # bakes in contracts/*.odcs.yaml
           - dockerfile: notifier/Dockerfile
             context: notifier
     steps:
@@ -147,4 +149,6 @@ jobs:
           workload_identity_provider: projects/${{ vars.FROSTLOG_GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: frostlog-ci@${{ env.FROSTLOG_GCP_PROJECT }}.iam.gserviceaccount.com
       - run: make -C semantics install
+      # ci-warehouse ends by handing the result to the contract-test job.
+      - run: make -C contracts install
       - run: make -C semantics ci-warehouse

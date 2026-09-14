@@ -1,0 +1,13 @@
+# What no image needs. Two of the three build contexts are the repository root, so
+# without this a local build copies in whatever a checkout has been used for --
+# a virtualenv alone is hundreds of megabytes, and it would shadow the one uv
+# installs.
+.git
+.claude
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/target
+**/logs
+**/dbt_packages

@@ -52,7 +52,7 @@ dbt プロジェクト、スキーマの取り決めは `contracts/semantics.odc
 
 ```sh
 cd semantics
-make install        # service の uv プロジェクト（dbt と datacontract-cli を含む）
+make install        # service の uv プロジェクト（dbt を含む）
 make check          # ruff / ty / pytest / dbt parse — BigQuery なしで通る
 make build          # 全期間を作り直す（BigQuery が要る）
 make unit-test      # dbt のユニットテスト（同上）
@@ -63,6 +63,26 @@ make ci-warehouse   # contracts/samples から CI データセットを作り直
 かの目印 `_control/built_through.json` を置くバケット）、`FROSTLOG_BQ_DATASET`、
 `FROSTLOG_BQ_DATASET_CI`、
 `FROSTLOG_SIGNALS_TOPIC`（トピックの短い名前）、`FROSTLOG_GCP_PROJECT`（省略時は
+Application Default Credentials のプロジェクト）。
+
+## contracts/
+
+`*.odcs.yaml` がデータ契約そのもの（スキーマの正）で、`contracts/job` は本番のデータをその契約に
+当てる Cloud Run job（`frostlog-contracts`）。どちらのデータプロダクトにも属さない — 両方が
+約束を守っているかを確かめる側なので、自分の image を持ち、単独でデプロイする。
+
+```sh
+cd contracts
+make install                    # job の uv プロジェクト（datacontract-cli を含む）
+make check                      # ruff / ty / pytest — データ不要
+make lint                       # 契約そのものが well-formed か
+make test                       # 本番のデータを契約に当てる（ADC が要る）
+make test CONTRACT=collection   # 片方だけ
+```
+
+設定は環境変数（Terraform が Cloud Run job に与える）。`FROSTLOG_BQ_DATASET`、
+`FROSTLOG_SIGNALS_TOPIC`（トピックの短い名前）、`FROSTLOG_GCP_PROJECT`（省略時は
 Application Default Credentials のプロジェクト）。healthchecks.io の URL とバケットの HMAC 鍵は
 Secret Manager にあり、`FROSTLOG_CONTRACT_TEST_HEALTHCHECK_URL_SECRET` と
-`FROSTLOG_COLLECTION_HMAC_SECRET` にはその名前だけを渡す（読めなければ ping と raw 契約の検査を飛ばす）。
+`FROSTLOG_COLLECTION_HMAC_SECRET` にはその名前だけを渡す（読めなければ ping と収集契約の検査を
+飛ばす）。

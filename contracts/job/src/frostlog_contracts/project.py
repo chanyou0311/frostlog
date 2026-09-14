@@ -1,4 +1,4 @@
-"""Which GCP project a component is running in, and where its topic is.
+"""Which GCP project this job is running in, and where its topic is.
 
 Neither is configuration with a sensible default: the project is whatever the
 credentials belong to, and the topic's full name is built from it.
