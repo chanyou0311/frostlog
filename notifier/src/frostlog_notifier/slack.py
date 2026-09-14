@@ -70,11 +70,10 @@ class Slack:
             from slack_sdk.http_retry.builtin_handlers import RateLimitErrorRetryHandler
 
             self._client = WebClient(token=self.token)
-            # The SDK ships only a connection-error handler by default. A run can
-            # send seven messages in a row (a homecoming, five pull-downs and a
-            # weekly) and Slack allows about one a second per channel, so the
-            # second of them can come back 429. Without this the whole request
-            # fails and Pub/Sub redelivers it, which repeats every query behind it.
+            # The SDK ships only a connection-error handler by default. Slack allows
+            # about one message a second per channel, so a run that posts more than
+            # one can get a 429 on the second. Without this the whole request fails
+            # and the caller retries it, which repeats every query behind it.
             self._client.retry_handlers.append(RateLimitErrorRetryHandler(max_retry_count=2))
         return self._client
 

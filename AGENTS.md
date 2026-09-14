@@ -19,24 +19,24 @@ C 外出中あと何時間もつか / D 設定温度に到達するまでの時�
 
 ## データの流れ
 
+何がいつ動くか (間隔、時刻、リソース名) はここに書かない。`fumo-terraform` の `.tf`、Pi の
+systemd unit (`scripts/systemd/`)、各 `Makefile` がそのまま語る。ここにあるのは形だけ。
+
 ```
-Pi (frostlog-cooler.service : BLE を常時受信、周辺温湿度も同時に記録)
-  │ frostlog-upload.timer  5 分ごと、前回の続きからバイト単位で差分を送出
+Pi: frostlog-collection  (BLE を常時受信し、周辺温湿度も同時に記録。timer が前回の続きから
+  │                        バイト単位で差分を送出)
   ▼
 GCS  v1/{stream}/dt=YYYY-MM-DD/{offset:012d}.jsonl.gz   ← オブジェクト名は「ローカルファイルの何バイト目から」
-  │ BigQuery Data Transfer Service  15 分ごと (バケットを自前で読む。リポジトリにコードは無い)
+  │ BigQuery Data Transfer Service (バケットを自前で読む。リポジトリにコードは無い)
   ▼
-BigQuery  frostlog.raw_cooler / raw_events   ← バケットの形そのもの。列を足さない
-  │ Cloud Scheduler  frostlog-transform  1 時間ごと → POST /jobs/transform
-  │   積まれた行数 (tables.get の num_rows) が gs://…/_control/built_through.json の
-  │   目印より増えていたときだけ組む。増えていなければ何もしない
-  ▼   dbt build 一式 (unit test は除く) → Pub/Sub frostlog-signals
-Cloud Run service  frostlog-notifier  → Slack #fumo
-  │   signals から作るのは契約テスト失敗の警告だけ。サマリは時刻で起きる
-  ▲ Cloud Scheduler  frostlog-daily-summary   毎晩 20:00
-  ▲ Cloud Scheduler  frostlog-weekly-summary  毎週土曜 09:00
+BigQuery raw   ← バケットの形そのもの。列を足さない
+  │ Cloud Scheduler が定時に frostlog-semantics を起こす。積まれた行数 (tables.get の num_rows)
+  │ がバケットに置いた目印より増えていたときだけ組む。増えていなければ何もしない
+  ▼   dbt build 一式 → Pub/Sub frostlog-signals
+Cloud Run service frostlog-notifier → Slack
+      signals から作るのは契約テスト失敗の警告だけ。サマリは Cloud Scheduler が定時に起こす
 
-Cloud Scheduler  frostlog-contract-test  毎日 03:07 → Cloud Run job  frostlog-contracts
+Cloud Scheduler が定時に Cloud Run job frostlog-contracts を起こし、契約を本番データに当てる → signals
 ```
 
 ## 必須コマンド
@@ -70,7 +70,7 @@ scripts/deploy.sh                                # Pi へ配布 (既定 chanyou@
   (本番 31,966 行が全て NULL になった)。取り込み時刻が要るなら、列ではなく**テーブルの
   メタデータに訊く** — `tables.get` は無料で、`num_rows` は行が実際に積まれたときだけ動く
   (`modified` は 0 行のロードでも動いてしまうので使えない)。
-- **CI がサンプルを一括で配信すると、実運用のチャンク境界を踏めない。** チャンクは 5 分ごとに
+- **CI がサンプルを一括で配信すると、実運用のチャンク境界を踏めない。** チャンクは時間で
   切れるので、境界の直前の報告は**その続きを別のチャンクから受け取る**。`ci-warehouse` は
   サンプルを 2 つに割って配信し、両方が届いてから 1 回だけ組んで `held_seconds` を契約に
   当てる (`semantics/Makefile`)。配信の途中で組んでも、全テーブルを作り直す以上は何も増えない。
@@ -78,8 +78,8 @@ scripts/deploy.sh                                # Pi へ配布 (既定 chanyou@
   `SignatureDoesNotMatch` を返す。資格情報の問題に見えるが違う (LIST と HEAD は同じ鍵で通る)。
   `request_checksum_calculation="when_required"` が要る (`src/frostlog/upload/s3.py`)。
 - **GCP の `display_name` は 100 バイト。** 文字数ではないので日本語だとすぐ超える。
-- **通知は差分ではなく「窓の絵」。** イベント駆動だと同じ事実が何度も届く (producer の
-  upload_runs は 25 時間ぶんを返すので 1 回の帰宅が最大 48 イベントに載る) ので、「もう言ったか」
+- **通知は差分ではなく「窓の絵」。** イベント駆動だと同じ事実が何度も届く (当時の producer は
+  直近 25 時間ぶんの upload_runs を返していたので、1 回の帰宅が最大 48 イベントに載った) ので、「もう言ったか」
   を覚える表が要り、その表の置き場所で本番が 403 で落ちた。定時に「発火時点から遡る窓」を出す
   形にすると、覚えるものが無くなる — **notifier は BigQuery に一切書かない**。帰宅後に数日ぶんが
   一気に届いても、その晩の窓に映るだけで「取りこぼし」という状態が存在しない。
@@ -113,7 +113,25 @@ scripts/deploy.sh                                # Pi へ配布 (既定 chanyou@
   仕事であって、収集側は同じものを二度送ってよい。
 - **本番の dbt build は unit test を回さない** (`--exclude-resource-type unit_test`)。unit test は
   データではなく SQL の検査なので、SQL を変えた CI (`make -C semantics ci-warehouse`) が回す。
-  毎時回しても守るものは無く、1 本 10 MiB の課金だけが増える。
+  定時に回しても守るものは無く、1 本 10 MiB の課金だけが増える。
 - raw は届いたものをそのまま保つ。解釈できない行を落とすのは semantic モデルの側。
 - `contracts/` が真実。dbt モデルも service もそこから導く (生成はしない)。
 - ADR や設計ドキュメントはリポジトリに置かない。合意はセッションか GitHub の Issue/PR に残す。
+
+## 書き方の決まりごと
+
+**コードが語ることを、コメントやドキュメントに写さない。** 写した瞬間は正しくても、コードを
+変えたときに一緒に直されない。この節を書く前には「Scheduler は 3 本」「job は semantics と
+同じ image」「Slack #fumo に通知」がすべて嘘になっていた。
+
+書かない:
+- 数 (「service 2 本」「SA 11 個」)、cron 式、時刻、間隔、チャンネル名
+- リソース名・ファイル名・環境変数名の**一覧** (ディレクトリや `.tf` の写し)
+- 「いまは…」「現在は…」で始まる構成の説明
+- 他のファイルの中身を引き写した相互参照 (「Terraform が X=Y を渡す」)。参照するなら役割で書く
+
+書く:
+- **なぜ**その形なのか。過去形の経緯はいくら書いてよい (過去は陳腐化しない)
+- 1 ファイルを読んでも見えない**不変条件** (「notifier は BigQuery に一切書かない」)
+- ユニットの名前と契約 ID。これは構成ではなく identity なので変わらない
+- 実行できるコマンド。動かなくなれば CI か手が気づく

@@ -218,14 +218,14 @@ def test_a_battery_that_is_not_falling_has_no_hour_count() -> None:
     assert daily.hours_remaining(latest, flat) is None
 
 
-def test_the_summary_reads_the_warehouse_and_writes_nothing() -> None:
+def test_the_summary_asks_the_warehouse_these_questions() -> None:
     warehouse = warehouse_with()
 
     notification = daily.build(warehouse, NOW)
 
     assert notification is not None
     assert notification.kind == DAILY
-    # Five reads, once a day, and no write at all: FakeWarehouse.execute raises.
+    # Every statement the summary runs, by name, and how often.
     assert sorted(name for name, _ in warehouse.queried) == [
         "energy_between",
         "energy_between",

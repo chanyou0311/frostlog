@@ -78,4 +78,4 @@ def test_bigquery_being_unavailable_is_transient() -> None:
 def test_a_bad_query_is_not_transient() -> None:
     client = FakeClient(error=exceptions.BadRequest("syntax error"))
     with pytest.raises(exceptions.BadRequest):
-        warehouse(client).execute("SELECT 1")
+        warehouse(client).rows("SELECT 1")

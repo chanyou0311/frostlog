@@ -46,9 +46,6 @@ class FakeWarehouse:
         rows: list[Row] = answer(given) if callable(answer) else answer
         return rows
 
-    def execute(self, sql: str, parameters: Parameters | None = None) -> None:
-        raise AssertionError(f"the notifier must not write to the warehouse (tried {sql!r})")
-
 
 class FakeSlack:
     """Records what would have been posted; without a token it only counts dry runs."""
