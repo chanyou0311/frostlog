@@ -65,8 +65,10 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 [tool.ty.src]
 # Without this ty walks up the tree looking for configuration and would take
 # whatever is above this directory as the project to check. The Pi's package is
-# its own project, and its environment is the only one that has bleak.
-include = ["src", "tests"]
+# its own project, and its environment is the only one that has bleak. scripts/ is
+# listed because `include` replaces the default of "everything here", and the two
+# scripts were checked before the package moved into this directory.
+include = ["src", "tests", "scripts"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -11,7 +11,7 @@ Raspberry Pi で記録し、バッテリー残量にまつわる問いに Slack 
 | `frostlog-collection` | 測ったものをそのまま | [`collection/`](collection/) → GCS |
 | `frostlog-semantics` | 意味づけしたテーブル | [`semantics/`](semantics/) → BigQuery |
 | `frostlog-notifier` | Slack の通知 | [`notifier/`](notifier/) → Cloud Run |
-| `frostlog-contracts` | 契約テストの結果 | [`contracts/job/`](contracts/) → Cloud Run job |
+| `frostlog-contracts` | 契約テストの結果 | [`contracts/job/`](contracts/job/) → Cloud Run job |
 
 各ユニットの使い方はそれぞれの `README.md` と `Makefile` に、リポジトリ全体の決まりごとと
 踏みやすい罠は [AGENTS.md](AGENTS.md) にある。

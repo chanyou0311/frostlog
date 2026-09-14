@@ -10,7 +10,7 @@ make install                    # job の uv プロジェクト（datacontract-c
 make check                      # ruff / ty / pytest — データ不要
 make lint                       # 契約そのものが well-formed か
 make test                       # 本番のデータを契約に当てる（ADC が要る）
-make test CONTRACT=collection   # 片方だけ
+make test CONTRACT=collection   # 名指しした契約だけ
 ```
 
 設定は環境変数（Terraform が Cloud Run job に与える）。`FROSTLOG_BQ_DATASET`、

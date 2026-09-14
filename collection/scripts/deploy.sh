@@ -8,7 +8,6 @@ set -euo pipefail
 target="${1:-chanyou@192.168.100.40}"
 cd "$(dirname "$0")/.."
 rsync -az --delete \
-  --exclude .git --exclude .venv --exclude __pycache__ --exclude .pytest_cache \
-  --exclude .ruff_cache --exclude .claude --exclude .github \
+  --exclude .venv --exclude __pycache__ --exclude .pytest_cache --exclude .ruff_cache \
   ./ "$target:frostlog/"
 ssh "$target" 'bash frostlog/scripts/install.sh'

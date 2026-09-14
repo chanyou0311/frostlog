@@ -48,7 +48,7 @@ make -C semantics ci-warehouse                   # 実 BigQuery で通し。ADC 
 make -C contracts check                          # 契約テストジョブ自身の lint + test
 make -C contracts lint                           # 契約そのものが well-formed か
 make -C contracts test CONTRACT=collection       # 本番のデータを契約に当てる。ADC が要る
-make -C collection deploy                        # Pi へ配布 (既定 chanyou@192.168.100.40)
+make -C collection deploy                        # Pi へ配布 (PI=user@host で宛先を変える)
 ```
 
 ## 踏みやすい罠 (MUST)

@@ -1,10 +1,11 @@
 # Tasks for the collection data product. Run them from this directory.
 #
-# `check` needs nothing but a checkout. `deploy` reaches the Pi over ssh; TARGET
-# names it (user@host) when it is not the usual one.
+# `check` needs nothing but a checkout. `deploy` reaches the Pi over ssh.
 
-#: Where the Pi is, when it is not where deploy.sh looks by default.
-TARGET ?=
+#: The Pi, as user@host, when it is not the one deploy.sh looks for by default. Not
+#: called TARGET: that word is dbt's in semantics/Makefile, and an exported TARGET
+#: from one would leak into the other.
+PI ?=
 
 .PHONY: install check deploy
 
@@ -20,4 +21,4 @@ check:
 	uv run pytest
 
 deploy:
-	scripts/deploy.sh $(TARGET)
+	scripts/deploy.sh $(PI)

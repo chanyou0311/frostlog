@@ -31,7 +31,7 @@ uv run python scripts/build_samples.py                   # ../contracts/samples 
 
 設定は環境変数 `FROSTLOG_*`（`scripts/env.example`）。
 
-Pi には Mac から `make deploy`（`TARGET=user@host` で宛先を変える）で配る。このディレクトリの中身が
+Pi には Mac から `make deploy`（`PI=user@host` で宛先を変える）で配る。このディレクトリの中身が
 そのまま Pi の `~/frostlog/` になるので、systemd unit が指す `~/frostlog/.venv/bin/frostlog` と
 インストーラの位置関係は Pi 側で変わらない。Pi 上ではユーザー単位の systemd が `frostlog-cooler` を
 常駐させ、`frostlog-upload.timer` が定期的に送る。`frostlog-cooler` は
