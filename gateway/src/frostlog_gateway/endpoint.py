@@ -31,7 +31,7 @@ async def serve(command: Handler, path: Path) -> asyncio.Server:
                 return  # a client that connected and said nothing
             try:
                 request = json.loads(line)
-            except json.JSONDecodeError as exc:
+            except ValueError as exc:  # not JSON, or not even UTF-8
                 log.warning("a request that is not JSON: %s", exc)
                 request = None  # refused by the link, so that the stream carries it too
             out.write(json.dumps(await command(request), separators=(",", ":")).encode() + b"\n")

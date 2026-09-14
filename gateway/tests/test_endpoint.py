@@ -69,6 +69,15 @@ def test_a_line_that_is_not_json_reaches_the_link_as_nothing(socket_dir: Path) -
     assert json.loads(answer)["error"] == "invalid_request"
 
 
+def test_a_line_that_is_not_even_text_is_refused_the_same_way(socket_dir: Path) -> None:
+    # json.loads raises UnicodeDecodeError on bytes that are not UTF-8; that is not a
+    # JSONDecodeError, and a client that sent it is still owed an answer.
+    link = FakeLink({"command_id": "c0ffee", "status": "rejected", "error": "invalid_request"})
+    (answer,) = _serve(socket_dir, link, b'{"setting":"\xff"}\n')
+    assert link.asked == [None]
+    assert json.loads(answer)["error"] == "invalid_request"
+
+
 def test_a_client_that_says_nothing_is_not_a_request(socket_dir: Path) -> None:
     link = FakeLink()
     answers = _serve(socket_dir, link, b"\n", b"")

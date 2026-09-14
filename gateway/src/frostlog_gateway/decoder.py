@@ -90,8 +90,10 @@ def decode_state(plain: bytes) -> dict[str, Any]:
     unit = _choice(parameters, _DISPLAY_UNIT, _DISPLAY_UNITS)
     serial_number = battery[_BATTERY_SERIAL_NUMBER]
     state = {
-        "setpoint_celsius": _celsius(_signed(parameters, _SETPOINT), unit),
-        "interior_temperature_celsius": _celsius(_signed(parameters, _INTERIOR_TEMPERATURE), unit),
+        "setpoint_celsius": from_display(_signed(parameters, _SETPOINT), unit),
+        "interior_temperature_celsius": from_display(
+            _signed(parameters, _INTERIOR_TEMPERATURE), unit
+        ),
         "display_unit": unit,
         "input_watts": _signed(parameters, _INPUT_WATTS),
         "usb_a_output_watts": _watts(battery, _USB_A_OUTPUT_WATTS),
@@ -150,9 +152,19 @@ def _watts(battery: bytes, offset: int) -> int:
     return int.from_bytes(battery[offset : offset + 2], "little")
 
 
-def _celsius(value: int, unit: str) -> int:
-    """The cooler shows whole degrees in ``unit``; °F are converted, °C are already right."""
+def from_display(value: int, unit: str) -> int:
+    """°C for the whole degrees the cooler shows in ``unit``: °F are converted, °C are right.
+
+    The inverse of :func:`to_display`. Both live here because a setpoint that was
+    written must be recognised again in the next state report, and one rounding
+    rule in one place is what keeps the two readings the same number.
+    """
     return round((value - 32) * 5 / 9) if unit == "F" else value
+
+
+def to_display(celsius: int, unit: str) -> int:
+    """The whole degrees the cooler shows for ``celsius`` in ``unit``; a setpoint is written so."""
+    return round(celsius * 9 / 5 + 32) if unit == "F" else celsius
 
 
 def _ascii(value: bytes) -> str:

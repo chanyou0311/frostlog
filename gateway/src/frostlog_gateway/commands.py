@@ -17,6 +17,7 @@ state report has said which unit that is.
 from dataclasses import dataclass
 from typing import Any
 
+from frostlog_gateway.decoder import to_display
 from frostlog_gateway.handshake import Cipher
 from frostlog_gateway.protocol import (
     PATTERN_COMMAND,
@@ -55,7 +56,7 @@ class Command:
         return f"{int.from_bytes(self.cmd, 'big') | 0x0800:04x}"
 
     def frame(self, cipher: Cipher, display_unit: str, timestamp: int) -> bytes:
-        value = round(self.celsius * 9 / 5 + 32) if display_unit == "F" else self.celsius
+        value = to_display(self.celsius, display_unit)
         return _frame(
             cipher,
             self.cmd,

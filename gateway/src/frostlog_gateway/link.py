@@ -42,6 +42,9 @@ log = logging.getLogger(__name__)
 SILENCE_TIMEOUT = 900.0
 #: How long a command has to be acknowledged and reflected before it is called unconfirmed.
 COMMAND_TIMEOUT = 10.0
+#: How long to give the cooler to answer a state request before asking again. Until a
+#: state report has been read nothing can be written, however long the link stays up.
+STATE_REQUEST_RETRY = 60.0
 
 
 async def _wait(stop: asyncio.Event, seconds: float) -> None:
@@ -134,6 +137,8 @@ class Link:
             await session.write(frame)
         while not stop.is_set() and not session.disconnected.is_set():
             self._expire_command()
+            if state.state_wanted(clock.uptime()):
+                await self._ask_state(session, state)
             data = await session.next_notification(timeout=1.0)
             if data is not None:
                 last_seen = last_message = clock.uptime()
@@ -219,11 +224,19 @@ class Link:
             firmware=device.firmware,
             serial=device.serial,
         )
+        await self._ask_state(session, state)
+
+    async def _ask_state(self, session: ble.Session, state: "_SessionState") -> None:
+        """Ask for a state report, if this dialect can be asked; the answer comes as 4840.
+
+        Only the Solix dialect: the Prime handshake ends by asking for what it wants
+        itself, and 4040 is not one of its commands.
+        """
         cipher = state.handshake.cipher
-        # Only the Solix dialect: the Prime handshake ends by asking for what it wants
-        # itself, and 4040 is not one of its commands.
-        if cipher is not None and state.handshake.variant == "solix":
-            await session.write(commands.state_request(cipher, int(time.time())))
+        if cipher is None or state.handshake.variant != "solix":
+            return
+        state.state_asked_at = clock.uptime()
+        await session.write(commands.state_request(cipher, int(time.time())))
 
     # --- commands ---------------------------------------------------------------
 
@@ -235,15 +248,24 @@ class Link:
         )
         try:
             command, session, cipher, unit = self._accept(request)
-            frame = command.frame(cipher, unit, int(time.time()))
-            await session.write(frame)
         except commands.Rejected as exc:
             self._emit("command_rejected", command_id=command_id, error=exc.reason)
             return {"command_id": command_id, "status": "rejected", "error": exc.reason}
+        # Claimed before the write, not after it: the acknowledgement can arrive while
+        # the write is still being awaited, and a second request meanwhile must find
+        # the link busy.
+        pending = self._pending = _Pending(
+            id=command_id, command=command, deadline=clock.uptime() + self._command_timeout
+        )
+        frame = command.frame(cipher, unit, int(time.time()))
+        try:
+            await session.write(frame)
         except (ble.BleakError, OSError) as exc:
             # The link was there when it was checked and is not there now.
             log.warning("the command could not be written: %s", exc)
-            self._emit("command_rejected", command_id=command_id, error="not_connected")
+            if self._pending is pending:  # unless the link already said it dropped
+                self._pending = None
+                self._emit("command_rejected", command_id=command_id, error="not_connected")
             return {"command_id": command_id, "status": "rejected", "error": "not_connected"}
         self._emit(
             "command_sent",
@@ -251,9 +273,6 @@ class Link:
             cmd=command.cmd.hex(),
             frames=[frame.hex()],
             address=session.address,
-        )
-        self._pending = _Pending(
-            id=command_id, command=command, deadline=clock.uptime() + self._command_timeout
         )
         return {"command_id": command_id, "status": "accepted"}
 
@@ -285,7 +304,9 @@ class Link:
         if cmd == pending.command.ack_cmd and not pending.accepted:
             pending.accepted = True
             self._emit("command_accepted", command_id=pending.id)
-        if state is not None and pending.command.applied(state):
+        # A report showing the value proves the write only once the cooler has taken
+        # it: asked for what is already set, an unrelated report would show it too.
+        if pending.accepted and state is not None and pending.command.applied(state):
             self._emit("command_applied", command_id=pending.id)
             self._pending = None
 
@@ -367,9 +388,17 @@ class _SessionState:
         #: The last state report of this connection: the display unit to write in, and
         #: what a command is measured against. It does not outlive the connection.
         self.latest: dict[str, Any] | None = None
+        #: When the state was last asked for, so that an unanswered request is repeated.
+        self.state_asked_at: float | None = None
         self._untried: list[type[handshake.SolixHandshake | handshake.PrimeHandshake]] = [
             handshake.PrimeHandshake
         ]
+
+    def state_wanted(self, now: float) -> bool:
+        """Whether the state is still unknown and it is time to ask (again)."""
+        if self.latest is not None or not self.handshake.done:
+            return False
+        return self.state_asked_at is None or now - self.state_asked_at >= STATE_REQUEST_RETRY
 
     def try_next_variant(self) -> bool:
         """Continue the session with the next negotiation variant, if one is left;

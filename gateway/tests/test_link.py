@@ -356,6 +356,79 @@ def test_a_setpoint_is_written_in_the_unit_the_cooler_displays(
     assert _sent_parameters(session, cooler, "4080")[0xA3].raw == b"\x01\x32"
 
 
+def test_an_acknowledgement_that_arrives_during_the_write_is_not_missed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The notification loop runs while a write is awaited: the cooler's answer to
+    # the frame can be handled before ``command`` has got its turn back.
+    cooler = Cooler()
+    harness = Harness(monkeypatch, negotiation_timeout=1e9)
+    harness.negotiated(monkeypatch, cooler)
+
+    class AnsweringSession(FakeSession):
+        async def write(self, data: bytes) -> None:
+            await super().write(data)
+            if parse_frame(data).cmd.hex() == "4080":
+                state = harness.link._state
+                assert state is not None
+                await harness.link._handle(
+                    cooler.message(ACK, b"\xa1\x01\x31"), cast(ble.Session, self), state
+                )
+
+    session = AnsweringSession(
+        harness.clock,
+        [
+            cooler.state(),
+            harness.ask(setting="setpoint_celsius", value=4, source="test", reason="warmer"),
+            cooler.state(setpoint_celsius=4),
+        ],
+    )
+    asyncio.run(harness.link._run_session(cast(ble.Session, session), asyncio.Event()))
+    assert harness.kinds("command") == [
+        "command_requested",
+        "command_accepted",
+        "command_sent",
+        "command_applied",
+    ]
+
+
+def test_a_report_showing_the_value_proves_nothing_before_the_acknowledgement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Asked for what was already set, the next heartbeat would show it whether or
+    # not the write was taken.
+    cooler = Cooler()
+    harness = Harness(monkeypatch, negotiation_timeout=1e9)
+    harness.negotiated(monkeypatch, cooler)
+    harness.run(
+        [
+            cooler.state(setpoint_celsius=4),
+            harness.ask(setting="setpoint_celsius", value=4, source="test", reason="same"),
+            cooler.state(setpoint_celsius=4),
+            cooler.message(ACK, b"\xa1\x01\x31"),
+            cooler.state(setpoint_celsius=4),
+        ]
+    )
+    assert harness.kinds("command") == [
+        "command_requested",
+        "command_sent",
+        "command_accepted",
+        "command_applied",
+    ]
+
+
+def test_an_unanswered_state_request_is_repeated(monkeypatch: pytest.MonkeyPatch) -> None:
+    cooler = Cooler()
+    harness = Harness(monkeypatch, negotiation_timeout=1e9)
+    harness.negotiated(monkeypatch, cooler)
+    # A minute and a half of silence: asked at once, and again after a minute.
+    session = harness.run([None] * 90)
+    assert len(_written(session, "4040")) == 2
+    # Once the cooler has answered, there is nothing left to ask.
+    session = harness.run([cooler.state(), *[None] * 90])
+    assert len(_written(session, "4040")) == 1
+
+
 def test_a_command_the_cooler_ignores_is_called_unconfirmed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
