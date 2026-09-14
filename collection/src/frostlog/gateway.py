@@ -42,6 +42,11 @@ RECONNECT_DELAY_MAX = 30.0
 
 Sink = Callable[[records.Cooler | records.Event], None]
 
+
+class StreamLost(Exception):
+    """The gateway's socket failed under the reader; the events since are gone."""
+
+
 #: What every event carries to say where it sits in the stream. The stamp and the
 #: kind become columns; the numbering is the gateway's own bookkeeping, and is
 #: read here rather than recorded.
@@ -92,10 +97,10 @@ class GatewaySubscriber:
                 error = None
                 try:
                     await self._read(reader, stop, deadline)
-                except (ConnectionError, OSError, ValueError) as exc:
-                    # The socket was reset under the read, or carried a line too long
-                    # to be one of the gateway's. Either way the stream is gone, and
-                    # that is a row, not the end of the run.
+                except StreamLost as exc:
+                    # The socket was reset under the read: the stream is gone, and
+                    # that is a row, not the end of the run. A failure to write a
+                    # record is not caught here -- it is the recorder's, and fatal.
                     error = str(exc)
                 finally:
                     writer.close()
@@ -142,7 +147,13 @@ class GatewaySubscriber:
         self, reader: asyncio.StreamReader, stop: asyncio.Event, deadline: float | None
     ) -> None:
         while self._running(stop, deadline):
-            line = await self._line(reader, stop, deadline)
+            try:
+                line = await self._line(reader, stop, deadline)
+            except ValueError as exc:
+                # A line longer than a reader's buffer is not one of the gateway's;
+                # the reader has discarded it and the stream goes on.
+                log.warning("a line on the stream that is too long to read: %s", exc)
+                continue
             if not line:
                 return  # the gateway hung up, or this run is over
             try:
@@ -169,7 +180,10 @@ class GatewaySubscriber:
         if line not in done:
             line.cancel()
             return None
-        return line.result()
+        try:
+            return line.result()
+        except (ConnectionError, OSError) as exc:
+            raise StreamLost(str(exc)) from exc
 
     async def _record(self, event: dict[str, Any]) -> None:
         at = {field: event[field] for field in _STAMP if field in event}

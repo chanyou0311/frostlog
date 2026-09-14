@@ -263,15 +263,16 @@ def test_a_hole_in_the_numbering_is_a_row(socket_dir: Path) -> None:
     assert written["uptime_seconds"] == STAMP["uptime_seconds"]
 
 
-def test_a_stream_that_cannot_be_read_is_a_row_and_a_reconnection(socket_dir: Path) -> None:
-    # A line longer than a reader will buffer is not one of the gateway's; the
-    # reader raises, and the run goes on as it does when the gateway hangs up.
+def test_a_line_too_long_to_read_is_skipped(socket_dir: Path) -> None:
+    # A line longer than a reader will buffer is not one of the gateway's; the reader
+    # discards it and the stream goes on, the way a line that is not JSON does.
     too_long = {"seq": 1, "connection": 0, **STAMP, "kind": "ble_error", "error": "x" * 70_000}
+    fine = {"seq": 2, "connection": 0, **STAMP, "kind": "ble_error", "error": "short"}
 
-    rows = _run(socket_dir / EVENTS_SOCKET, [too_long], 3)
+    rows = _run(socket_dir / EVENTS_SOCKET, [too_long, fine], 2)
 
-    assert _kinds(rows) == ["gateway_connected", "gateway_disconnected", "gateway_connected"]
-    assert rows[1].model_dump()["error"]
+    assert _kinds(rows) == ["gateway_connected", "ble_error"]
+    assert rows[1].model_dump()["error"] == "short"
 
 
 def test_a_gateway_that_is_not_running_is_waited_for(socket_dir: Path) -> None:
@@ -280,7 +281,6 @@ def test_a_gateway_that_is_not_running_is_waited_for(socket_dir: Path) -> None:
     async def run() -> list[records.Record]:
         out: list[records.Record] = []
         stop = asyncio.Event()
-        appeared = asyncio.Event()
 
         def sink(record: records.Cooler | records.Event) -> None:
             out.append(record)
@@ -297,7 +297,6 @@ def test_a_gateway_that_is_not_running_is_waited_for(socket_dir: Path) -> None:
             await asyncio.sleep(0.05)
             missing.parent.mkdir()
             server = await _serve(missing, [MESSAGE])
-            appeared.set()
             return server
 
         server = await asyncio.wait_for(start_the_gateway(), timeout=10.0)
@@ -306,7 +305,6 @@ def test_a_gateway_that_is_not_running_is_waited_for(socket_dir: Path) -> None:
         finally:
             server.close()
             await server.wait_closed()
-        assert appeared.is_set()
         return out
 
     rows = asyncio.run(run())

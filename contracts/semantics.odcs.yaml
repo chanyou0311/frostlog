@@ -342,7 +342,7 @@ schema:
             SELECT DISTINCT r.boot_id, r.uptime_seconds
             FROM {project}.{dataset}.raw_cooler r
             WHERE r._PARTITIONTIME < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR)
-              AND r.cmd IN ('4402', '4840')
+              AND r.payload IS NOT NULL
               AND r.boot_id IS NOT NULL AND r.uptime_seconds IS NOT NULL AND r.ts IS NOT NULL
               AND r.payload.serial_number IS NOT NULL
               AND r.payload.setpoint_celsius IS NOT NULL
