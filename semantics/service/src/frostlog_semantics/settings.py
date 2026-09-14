@@ -19,12 +19,6 @@ class Settings(PlatformSettings):
     #: Dataset the CI warehouse check builds into.
     bq_dataset_ci: str = "frostlog_ci"
 
-    #: How far back a build looks for the collector's upload runs to announce. It no
-    #: longer decides whether to build -- the row counts do that -- so it only has to
-    #: be long enough that a run finishing between two builds is still reported. A day
-    #: and an hour covers an outage of any length worth reporting this way.
-    transform_lookback_hours: float = 25.0
-
     dbt_project_dir: Path = ROOT / "semantics" / "dbt"
     dbt_profiles_dir: Path = ROOT / "semantics" / "dbt"
     dbt_target: str = "prod"

@@ -64,14 +64,6 @@ class Pulldown(_Row):
     external_input_ratio: float | None = None
 
 
-class Band(_Row):
-    band_key: int
-    label: str
-    sort_order: int
-    lower_celsius: float | None = None
-    upper_celsius: float | None = None
-
-
 class Energy(_Row):
     discharged_watt_hours: float
     charged_watt_hours: float
@@ -209,14 +201,3 @@ def finished_pulldowns_between(
     """
     rows = warehouse.rows(sql, {"start": start, "end": end})
     return [Pulldown.model_validate(row) for row in rows]
-
-
-def ambient_bands(warehouse: Warehouse) -> list[Band]:
-    """The ambient temperature bands, in display order."""
-    sql = f"""
-      -- name: ambient_bands
-      SELECT band_key, label, lower_celsius, upper_celsius, sort_order
-      FROM {warehouse.table("band_ambient_temperature")}
-      ORDER BY sort_order
-    """
-    return [Band.model_validate(row) for row in warehouse.rows(sql)]

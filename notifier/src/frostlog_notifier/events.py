@@ -13,28 +13,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
-class UploadRun(BaseModel):
-    """One upload run of the collector, as its own events chunk reported it.
-
-    A report that the run ended, and no more: the contract does not promise that
-    the run's other chunks are loaded, or that the run shipped everything it had.
-    A summary built from it covers what the model held at the time.
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    finished_at: datetime
-    started_at: datetime | None = None
-    previous_finished_at: datetime | None = None
-    chunk_count: int = 0
-    line_count: int = 0
-
-    @property
-    def began_at(self) -> datetime:
-        """When the run started, or when it finished if the start was not recorded."""
-        return self.started_at or self.finished_at
-
-
 class SemanticUpdated(BaseModel):
     """The producer keeps its own copy (semantics/service/src/frostlog_semantics/events.py);
     the contract in contracts/signals.odcs.yaml is what both must match."""
@@ -51,10 +29,6 @@ class SemanticUpdated(BaseModel):
     #: read the contract's own shape would not notice when the shape changed.
     rows_arrived: int
     build_passed: bool
-    #: The collector's upload runs that reached the warehouse inside the build's
-    #: lookback window, so the same run arrives on more than one event;
-    #: homecoming settles that on finished_at.
-    upload_runs: list[UploadRun] = Field(default_factory=list)
 
 
 class QualityReport(BaseModel):

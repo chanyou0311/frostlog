@@ -26,6 +26,12 @@ def next_morning(moment: datetime) -> datetime:
     return morning.astimezone(UTC)
 
 
+def jst_midnight(moment: datetime) -> datetime:
+    """The most recent JST midnight at or before ``moment``, as a UTC timestamp."""
+    local = to_jst(moment)
+    return datetime.combine(local.date(), time(), tzinfo=JST).astimezone(UTC)
+
+
 def jst_dates(start: datetime, end: datetime) -> list[date]:
     """Every JST calendar date touched by the half-open interval [start, end)."""
     first, last = to_jst(start).date(), to_jst(end - timedelta(microseconds=1)).date()

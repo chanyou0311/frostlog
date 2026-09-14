@@ -231,7 +231,7 @@ def _blocks(
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": "🧊 ポータブル冷蔵庫の 24 時間",
+                "text": "🧊 ポータブル冷蔵庫",
                 "emoji": True,
             },
         },
@@ -273,13 +273,17 @@ def _blocks(
     # them, so a reader who stops at the first picture has already read all of it.
     if recorded:
         labels, points = _folded(recorded)
+        # A point is several slots folded together, and the label only names where it
+        # starts. Saying how wide it is keeps "14日 0時" from being read as midnight
+        # when it stands for the whole of the 14th.
+        grain = f" ・ 1 点 {formatting.duration(_fold_factor(recorded) * SLOT_SECONDS)}"
         charge = charts.line(
-            "バッテリー残量 (%)",
+            f"バッテリー残量 (%){grain}",
             labels,
             [charts.Series("残量", [point.state_of_charge_end_percent for point in points])],
         )
         temperature = charts.line(
-            "温度 (°C)",
+            f"温度 (°C){grain}",
             labels,
             [
                 charts.Series(
@@ -357,8 +361,8 @@ def _period(
 ) -> str:
     """The day's energy against the one before it, and the two things the chart cannot draw."""
     lines = [
-        f"*この 24 時間* 消費 {formatting.watt_hours(today.discharged_watt_hours)}"
-        f" ・ 充電 {formatting.watt_hours(today.charged_watt_hours)}"
+        f"*消費 {formatting.watt_hours(today.discharged_watt_hours)}"
+        f" ・ 充電 {formatting.watt_hours(today.charged_watt_hours)}*"
         f" ({_against_yesterday(today, yesterday)})"
     ]
     if recorded:
@@ -381,7 +385,7 @@ def _period(
         lines.append(
             f"庫内は {formatting.celsius(episode.interior_temperature_start_celsius, 0)} から"
             f" {formatting.duration(episode.duration_seconds)}で設定温度に届きました"
-            f" (24 時間で {len(reached)} 回)。"
+            f" (今日 {len(reached)} 回)。"
         )
     return "\n".join(lines)
 
@@ -395,12 +399,12 @@ def _against_yesterday(today: queries.Energy, yesterday: queries.Energy) -> str:
     """
     before, after = yesterday.discharged_watt_hours, today.discharged_watt_hours
     if not before or after is None:
-        return "その前の 24 時間と比べる記録なし"
+        return "前日と比べる記録なし"
     difference = after - before
     if abs(difference) < 1:
-        return "その前の 24 時間とほぼ同じ"
+        return "前日とほぼ同じ"
     direction = "多い" if difference > 0 else "少ない"
-    return f"その前の 24 時間より {formatting.watt_hours(abs(difference))} {direction}"
+    return f"前日より {formatting.watt_hours(abs(difference))} {direction}"
 
 
 def _footnote() -> str:
@@ -437,13 +441,13 @@ def _text(
         outlook = f"翌朝 {to_jst(morning):%-H:%M} には {formatting.percent(projected)} の見込み"
         left = f" 空になるまで約 {formatting.hours(remaining)}。" if remaining is not None else ""
     return (
-        f"ポータブル冷蔵庫の 24 時間 {formatting.full_stamp(now)}"
+        f"ポータブル冷蔵庫 {formatting.full_stamp(now)}"
         f" — 残量 {formatting.percent(latest.state_of_charge_percent)}"
         f" ({formatting.stamp(latest.updated_at)} 時点)、{outlook}。{left}"
         f" 庫内 {formatting.celsius(latest.interior_temperature_celsius, 0)}"
         f" (設定 {formatting.celsius(latest.setpoint_celsius, 0)})、"
         f"周辺 {formatting.celsius(latest.ambient_temperature_celsius)}。"
-        f" この 24 時間の消費 {formatting.watt_hours(today.discharged_watt_hours)}"
+        f" 消費 {formatting.watt_hours(today.discharged_watt_hours)}"
         f" / 充電 {formatting.watt_hours(today.charged_watt_hours)}"
         f" ({_against_yesterday(today, yesterday)})、"
         f"設定温度まで冷却 {len(pulldowns)} 回。"

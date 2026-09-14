@@ -26,7 +26,7 @@ The endpoint does not authenticate: only Cloud Run IAM (OIDC) may call it.
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -103,14 +103,12 @@ def create_app(services: Services | None = None) -> FastAPI:
 
 
 def transform_due(services: Services) -> dict[str, Any]:
-    """Rebuild the warehouse when chunks have arrived lately, and say so if any did.
+    """Rebuild the warehouse when rows have arrived since the last build, and say so.
 
-    The window is on arrival, not on the dates in the data: a trip's records are days
-    old when they land, but still need a build. The window decides whether to run,
-    while the build reads all the raw history. It reaches back further than the
-    schedule steps so that a run the scheduler missed is made good by the next one.
+    What decides is the count each raw table stands at against the count the last
+    build was given. A trip's records are days old when they land and still need a
+    build; a quiet hour needs none.
     """
-    since = datetime.now(UTC) - timedelta(hours=services.settings.transform_lookback_hours)
     arrivals = services.warehouse.arrivals(services.built_through.read())
     if not arrivals.rows:
         # Nothing came in. Replacing every table would repeat work with no new input,
@@ -118,37 +116,25 @@ def transform_due(services: Services) -> dict[str, Any]:
         # is decided by rows arriving, not by the days they fall on: a row the
         # collector could not stamp has no day and is still a reason to build.
         log.info("raw holds nothing a build has not been given; nothing to rebuild")
-        return {"status": "idle", "since": since.isoformat()}
+        return {"status": "idle", "rows_arrived": 0}
 
     build = services.transform.build()
     if not build.passed:
         # Scheduler retries; the build is idempotent and the window still holds.
         raise HTTPException(status_code=500, detail="dbt build failed")
 
-    # The collector writes upload_done after its PUTs, so a run's own completion travels
-    # in the next run's events chunk. Which chunks were processed in which order says
-    # nothing — they arrive on their own and a failed one comes back later — so this
-    # announces the runs that ended and leaves what they covered to whoever reads the
-    # model.
-    upload_runs = services.warehouse.upload_runs(since)
     services.publisher.publish(
         SemanticUpdated(
             run_id=uuid4().hex,
             published_at=datetime.now(UTC),
             rows_arrived=arrivals.rows,
             build_passed=True,
-            upload_runs=upload_runs,
         )
     )
     # Only now, when the build stood and the change was announced: a mark written
     # before either would hide rows a consumer was never told about.
     services.built_through.write(arrivals.counts)
-    return {
-        "status": "built",
-        "since": since.isoformat(),
-        "rows_arrived": arrivals.rows,
-        "upload_runs": len(upload_runs),
-    }
+    return {"status": "built", "rows_arrived": arrivals.rows}
 
 
 # Uvicorn configures its own loggers and leaves the root at WARNING with no handler,

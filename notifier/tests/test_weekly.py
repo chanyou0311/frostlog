@@ -1,16 +1,17 @@
 from datetime import UTC, datetime, timedelta
 
-from conftest import FakeWarehouse, ambient_band_rows, empty_slot, pulldown_row, quarters
+from conftest import FakeWarehouse, empty_slot, pulldown_row, quarters
 
-from frostlog_notifier import weekly
+from frostlog_notifier import clock, weekly
 from frostlog_notifier.clock import jst_dates, to_jst
 from frostlog_notifier.notification import WEEKLY
-from frostlog_notifier.queries import Band, Pulldown, Snapshot
+from frostlog_notifier.queries import Pulldown, Snapshot
 
-#: The job fires Saturday 09:00 JST; the window is the seven days behind it.
+#: The job fires Saturday 09:00 JST; the window is the seven whole JST days behind
+#: the last midnight, so it ends at 09-19 00:00 JST rather than at the firing.
 NOW = datetime(2026, 9, 19, 0, 0, tzinfo=UTC)  # 09:00 JST, Saturday
-START, END = NOW - weekly.WINDOW, NOW
-BANDS = [Band.model_validate(row) for row in ambient_band_rows()]
+END = clock.jst_midnight(NOW)
+START = END - weekly.WINDOW
 
 
 def week_of_slots() -> list[dict]:
@@ -59,7 +60,7 @@ def summarize(rows: list[dict] | None = None, pulldowns: list[dict] | None = Non
     # The week is asked by the hour, so the slots are folded first, as build() does.
     hours = weekly.by_hour([Snapshot.model_validate(row) for row in (rows or week_of_slots())])
     episodes = [Pulldown.model_validate(row) for row in (pulldowns or [])]
-    return weekly.summarize(hours, BANDS, episodes, jst_dates(START, END))
+    return weekly.summarize(hours, episodes, jst_dates(START, END))
 
 
 def test_the_totals_are_the_sums_of_the_hours() -> None:
@@ -98,23 +99,6 @@ def test_a_week_that_pays_for_itself_needs_no_driving() -> None:
         for index in range(24)
     ]
     assert summarize(rows).balancing_hours is None
-
-
-def test_the_drop_per_hour_is_reported_per_ambient_temperature_band() -> None:
-    summary = summarize()
-    bands = {band.label: band for band in summary.bands}
-    assert set(bands) == {"20..25 °C", "25..30 °C"}
-    assert bands["20..25 °C"].percent_per_hour == -1.0
-    assert bands["25..30 °C"].percent_per_hour == -2.0
-    # The plugged-in hours are left out of the bands entirely.
-    assert bands["20..25 °C"].hours == 24 * 7 - 5 - 7 - 6 * 7
-
-
-def test_the_hours_from_full_use_the_band_with_the_most_hours() -> None:
-    summary = summarize()
-    assert summary.most_common_band is not None
-    assert summary.most_common_band.label == "20..25 °C"
-    assert summary.hours_from_full == 100.0
 
 
 def test_gaps_between_the_first_and_the_last_hour_are_counted() -> None:
@@ -157,7 +141,6 @@ def test_the_summary_is_built_with_its_text_and_chart() -> None:
     warehouse = FakeWarehouse(
         {
             "snapshots": week_of_slots(),
-            "ambient_bands": ambient_band_rows(),
             "finished_pulldowns_between": [pulldown_row(START + timedelta(hours=1))],
         }
     )
@@ -168,7 +151,6 @@ def test_the_summary_is_built_with_its_text_and_chart() -> None:
         f"{jst_dates(START, END)[0]:%m-%d} - {jst_dates(START, END)[-1]:%m-%d}" in notification.text
     )
     assert "均衡に必要な走行" in notification.text
-    assert "100 % からの持ち時間" in notification.text
     assert "プルダウン 1 件" in notification.text
     assert "データ欠損: 5 時間" in notification.text
     kinds = [block["type"] for block in notification.blocks]
@@ -180,7 +162,6 @@ def test_the_second_chart_is_the_battery_across_the_days() -> None:
     warehouse = FakeWarehouse(
         {
             "snapshots": week_of_slots(),
-            "ambient_bands": ambient_band_rows(),
             "finished_pulldowns_between": [],
         }
     )
@@ -188,7 +169,10 @@ def test_the_second_chart_is_the_battery_across_the_days() -> None:
     notification = weekly.build(warehouse, NOW)
 
     charted = [b for b in notification.blocks if b["type"] == "data_visualization"]
-    assert [b["title"] for b in charted] == ["日ごとの電力量 (Wh)", "日ごとのバッテリー残量 (%)"]
+    assert [b["title"] for b in charted] == [
+        "日ごとの電力量 (Wh) ・ 1 点 1 日",
+        "日ごとのバッテリー残量 (%) ・ 1 点 1 日",
+    ]
     assert [s["name"] for s in charted[1]["chart"]["series"]] == ["最高", "最低"]
 
 
@@ -201,9 +185,7 @@ def test_a_day_with_no_reading_is_left_out_of_the_battery_chart() -> None:
         else row
         for row in week_of_slots()
     ]
-    warehouse = FakeWarehouse(
-        {"snapshots": rows, "ambient_bands": ambient_band_rows(), "finished_pulldowns_between": []}
-    )
+    warehouse = FakeWarehouse({"snapshots": rows, "finished_pulldowns_between": []})
 
     notification = weekly.build(warehouse, NOW)
 
@@ -211,3 +193,19 @@ def test_a_day_with_no_reading_is_left_out_of_the_battery_chart() -> None:
     labels = [point["label"] for point in charted[1]["chart"]["series"][0]["data"]]
     assert f"{target:%m-%d}" not in labels
     assert labels, "the other days are still drawn"
+
+
+def test_seven_days_make_seven_buckets_whatever_hour_the_job_runs() -> None:
+    """A window that began mid-morning put half days beside whole ones in one chart.
+
+    The bars are calendar days, so the window has to be calendar days too — however
+    the schedule happens to be set.
+    """
+    warehouse = FakeWarehouse({"snapshots": week_of_slots(), "finished_pulldowns_between": []})
+
+    for hour in (0, 9, 20, 23):
+        fired = NOW.replace(hour=hour)
+        notification = weekly.build(warehouse, fired)
+        bars = [b for b in notification.blocks if b.get("title", "").startswith("日ごとの電力量")]
+        labels = [point["label"] for point in bars[0]["chart"]["series"][0]["data"]]
+        assert len(labels) == 7, f"{hour} 時に走らせたら {len(labels)} 本: {labels}"
