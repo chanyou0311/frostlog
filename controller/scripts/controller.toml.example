@@ -1,0 +1,14 @@
+# frostlog-controller settings, re-read on every run.
+# Copy to ~/.config/frostlog/controller.toml and fill in home_ssid.
+
+# The Wi-Fi network that counts as "home". Required.
+home_ssid = "change-me"
+
+# °C requested on arriving home / leaving it.
+home_setpoint_celsius = 20
+away_setpoint_celsius = -20
+
+# Consecutive rejected or unreachable attempts before giving up on a change and
+# adopting it anyway. The timer keeps running either way, so a later presence
+# change gets its own attempts regardless of how this one ended.
+max_attempts = 5

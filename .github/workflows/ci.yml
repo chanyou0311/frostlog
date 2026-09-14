@@ -118,6 +118,18 @@ jobs:
       - name: datacontract test (collection contract vs sample chunks)
         run: uv run --project contracts/job datacontract test contracts/collection.odcs.yaml --server samples
 
+  # The controller: the Pi's presence-triggered setpoint job.
+  controller:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: make -C controller install
+      - run: make -C controller check
+
   # The semantic data product without a warehouse: service checks and dbt parse.
   semantics:
     runs-on: ubuntu-latest

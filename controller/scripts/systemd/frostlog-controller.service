@@ -1,0 +1,9 @@
+[Unit]
+Description=frostlog: switch the cooler's setpoint on home Wi-Fi presence change
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%E/frostlog/env
+Environment=PYTHONPATH=%h/frostlog-controller/src
+StateDirectory=frostlog
+ExecStart=/usr/bin/python3 -m frostlog_controller
