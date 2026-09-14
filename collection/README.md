@@ -26,7 +26,7 @@ make check                                               # ruff / ty / pytest
 uv run frostlog read ambient --interval 2 --count 3      # 配線の確認（--sensor am2320 も可）
 uv run frostlog read cooler --scan                       # 近くの Bluetooth 機器
 uv run frostlog read cooler --duration 60 | uv run frostlog decode
-uv run python scripts/build_samples.py                   # ../contracts/samples を作り直す
+make samples                                             # ../contracts/samples を作り直す
 ```
 
 設定は環境変数 `FROSTLOG_*`（`scripts/env.example`）。

@@ -3,12 +3,9 @@
 
 The samples are what one day's chunk of each stream looks like: real messages
 captured from the cooler (``tests/captured.py``) turned into v1 records, one
-connection's worth of them. Run after changing the record shape:
-
-    uv run --project collection python collection/scripts/build_samples.py
-
-The output is deterministic, so a run that changes nothing leaves the files
-untouched in git.
+connection's worth of them. Run `make samples` in collection/ after changing the
+record shape. The output is deterministic, so a run that changes nothing leaves
+the files untouched in git.
 """
 
 import sys

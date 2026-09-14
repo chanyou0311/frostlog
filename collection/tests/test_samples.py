@@ -57,5 +57,5 @@ def test_the_committed_samples_are_what_the_builder_writes() -> None:
         expected = "".join(records.line(row) for row in rows)
         path = SAMPLES / stream / "2026-09-06.json"
         assert path.read_text(encoding="utf-8") == expected, (
-            "the samples are stale: rebuild them with scripts/build_samples.py and commit"
+            "the samples are stale: run `make samples` in collection/ and commit"
         )

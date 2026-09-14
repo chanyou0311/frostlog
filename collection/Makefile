@@ -7,10 +7,15 @@
 #: from one would leak into the other.
 PI ?=
 
-.PHONY: install check deploy
+.PHONY: install check samples deploy
 
 install:
 	uv sync --locked
+
+# The sample chunks under ../contracts/samples, rebuilt from the captured messages.
+# Deterministic: a run that changes nothing leaves git clean.
+samples:
+	uv run python scripts/build_samples.py
 
 # Everything that needs no Pi. The sensors and the radio are faked in the tests,
 # so this passes on a Mac.
