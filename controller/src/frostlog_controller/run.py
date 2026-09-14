@@ -5,8 +5,6 @@ gateway socket instead of a real Pi. No retry loop lives here -- the timer that
 schedules the next run is the retry.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from pathlib import Path

@@ -6,12 +6,11 @@ the file is re-read every run rather than cached, since nothing here justifies
 a resident process.
 """
 
-from __future__ import annotations
-
 import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 class ConfigError(Exception):
@@ -21,8 +20,8 @@ class ConfigError(Exception):
 @dataclass(frozen=True)
 class Config:
     home_ssid: str
-    home_setpoint_celsius: float = 20
-    away_setpoint_celsius: float = -20
+    home_setpoint_celsius: int = 20
+    away_setpoint_celsius: int = -20
     max_attempts: int = 5
 
 
@@ -50,7 +49,15 @@ def load_config(path: Path | None = None) -> Config:
         raise ConfigError(f"{path}: home_ssid must be a non-empty string")
     return Config(
         home_ssid=home_ssid,
-        home_setpoint_celsius=data.get("home_setpoint_celsius", 20),
-        away_setpoint_celsius=data.get("away_setpoint_celsius", -20),
-        max_attempts=data.get("max_attempts", 5),
+        home_setpoint_celsius=_integer(data, "home_setpoint_celsius", 20, path),
+        away_setpoint_celsius=_integer(data, "away_setpoint_celsius", -20, path),
+        max_attempts=_integer(data, "max_attempts", 5, path),
     )
+
+
+def _integer(data: dict[str, Any], key: str, default: int, path: Path) -> int:
+    """A whole number, as the gateway wants it; `20.0` in TOML is a float and would be refused."""
+    value = data.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"{path}: {key} must be an integer")
+    return value

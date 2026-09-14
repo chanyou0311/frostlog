@@ -43,6 +43,14 @@ def test_overrides(tmp_path: Path) -> None:
     assert config.max_attempts == 3
 
 
+def test_setpoints_must_be_integers(tmp_path: Path) -> None:
+    # The gateway takes whole degrees; a TOML `20.0` is a float and would be refused there.
+    path = tmp_path / "controller.toml"
+    path.write_text('home_ssid = "Home"\nhome_setpoint_celsius = 20.0\n')
+    with pytest.raises(ConfigError, match="home_setpoint_celsius"):
+        load_config(path)
+
+
 def test_missing_file(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="no config file"):
         load_config(tmp_path / "does-not-exist.toml")

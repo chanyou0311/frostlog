@@ -6,9 +6,8 @@ could disagree with it. A failing or absent nmcli means "don't know", not
 "away" -- guessing away would move the setpoint on a Pi that never left.
 """
 
-from __future__ import annotations
-
 import logging
+import os
 import subprocess
 from collections.abc import Callable
 
@@ -20,7 +19,12 @@ NmcliRunner = Callable[[], "subprocess.CompletedProcess[str]"]
 
 
 def _run_nmcli() -> subprocess.CompletedProcess[str]:
-    return subprocess.run(NMCLI_COMMAND, capture_output=True, text=True, timeout=10)
+    # nmcli translates its yes/no with the locale -- the Pi answers はい/いいえ -- so it
+    # is asked in the C locale, where the words are the ones parsed below.
+    environment = {**os.environ, "LC_ALL": "C"}
+    return subprocess.run(
+        NMCLI_COMMAND, capture_output=True, text=True, timeout=10, env=environment
+    )
 
 
 def _unescape(value: str) -> str:

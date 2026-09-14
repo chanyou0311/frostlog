@@ -6,8 +6,6 @@ to a 0.3 s interpreter start, against a job meant to start and finish quickly,
 often.
 """
 
-from __future__ import annotations
-
 import logging
 import sys
 

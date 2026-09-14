@@ -1,4 +1,7 @@
 import subprocess
+from typing import Any
+
+import pytest
 
 from frostlog_controller.presence import is_home, parse_active_ssids
 
@@ -55,3 +58,16 @@ def test_is_home_unknown_when_nmcli_times_out() -> None:
 
 def test_is_home_unknown_when_nmcli_exits_nonzero() -> None:
     assert is_home("Home", runner=lambda: _result("", returncode=1, stderr="boom")) is None
+
+
+def test_nmcli_is_asked_in_the_c_locale(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The Pi's nmcli answers はい/いいえ in its own locale; the parser knows yes/no.
+    seen: dict[str, Any] = {}
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        seen["env"] = kwargs.get("env")
+        return _result("yes:Home\n")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert is_home("Home") is True
+    assert seen["env"]["LC_ALL"] == "C"

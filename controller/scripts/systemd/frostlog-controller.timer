@@ -4,6 +4,9 @@ Description=frostlog: check home Wi-Fi presence
 [Timer]
 OnBootSec=2min
 OnUnitActiveSec=1min
+# systemd coalesces timers within a minute by default, which would let a one-minute
+# timer drift to two.
+AccuracySec=5s
 Unit=frostlog-controller.service
 
 [Install]

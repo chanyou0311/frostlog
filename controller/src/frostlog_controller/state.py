@@ -4,8 +4,6 @@ Kept as one small JSON file rather than any command history -- the controller
 acts once per change and nothing else needs remembering between runs.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import os

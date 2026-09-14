@@ -6,8 +6,6 @@ connection error and an explicit rejection are both just "the command did not
 take"; callers are expected to treat them the same way.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import socket
