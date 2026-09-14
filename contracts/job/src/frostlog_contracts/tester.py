@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from frostlog_platform import shell
+from frostlog_contracts import shell
 
 log = logging.getLogger(__name__)
 

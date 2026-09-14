@@ -5,10 +5,8 @@ result is published as a ``quality_report`` so the Slack application can say so,
 and a run in which everything passed pings the dead man's switch.
 
 It is a job rather than an endpoint of either service because it belongs to
-neither data product: it is the check that both are keeping their word. It ships
-in the semantics image all the same — the contracts and datacontract-cli are
-already in there, and a second image would cost Artifact Registry storage that
-the free tier does not have.
+neither data product: it is the check that both are keeping their word, and it
+deploys on its own so that fixing the check does not redeploy what is checked.
 
 A contract that fails, and one that could not be tested at all, are findings:
 they are reported, and they make the run exit non-zero so the execution itself
@@ -33,6 +31,8 @@ from uuid import uuid4
 
 from frostlog_contracts import healthcheck
 from frostlog_contracts.events import QualityReport
+from frostlog_contracts.project import resolve_project
+from frostlog_contracts.publishing import Publisher, publisher_for
 from frostlog_contracts.secret_manager import SecretManagerReader, SecretReader
 from frostlog_contracts.settings import Settings
 from frostlog_contracts.tester import (
@@ -41,8 +41,6 @@ from frostlog_contracts.tester import (
     DatacontractTester,
     s3_credentials,
 )
-from frostlog_platform.events import Publisher, publisher_for
-from frostlog_platform.project import resolve_project
 
 log = logging.getLogger(__name__)
 

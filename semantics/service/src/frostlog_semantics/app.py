@@ -18,8 +18,8 @@ transform that fails publishes nothing -- consumers hear about a build only once
 stands.
 
 Whether the contracts are being kept is a different question, asked once a day by
-a job of its own (:mod:`frostlog_contracts`), because it is about both data
-products rather than this one.
+a job of its own (the ``frostlog-contracts`` unit under contracts/), because it is
+about both data products rather than this one.
 
 The endpoint does not authenticate: only Cloud Run IAM (OIDC) may call it.
 """
@@ -32,10 +32,10 @@ from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 
-from frostlog_platform.events import Publisher, publisher_for
-from frostlog_platform.project import resolve_project
 from frostlog_semantics.built_through import BucketBuiltThrough, BuiltThrough
 from frostlog_semantics.events import SemanticUpdated
+from frostlog_semantics.project import resolve_project
+from frostlog_semantics.publishing import Publisher, publisher_for
 from frostlog_semantics.settings import Settings
 from frostlog_semantics.transform import DbtTransform, Transform
 from frostlog_semantics.warehouse import (

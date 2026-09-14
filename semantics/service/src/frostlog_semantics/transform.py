@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from frostlog_platform import shell
+from frostlog_semantics import shell
 
 log = logging.getLogger(__name__)
 

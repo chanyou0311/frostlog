@@ -16,8 +16,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from frostlog_platform.project import resolve_project
 from frostlog_semantics import raw_objects
+from frostlog_semantics.project import resolve_project
 from frostlog_semantics.settings import Settings
 
 log = logging.getLogger(__name__)
