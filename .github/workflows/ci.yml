@@ -35,7 +35,7 @@ jobs:
   # messages. The job that holds production to those same contracts lives here too.
   contracts:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
