@@ -10,10 +10,45 @@ on:
 permissions:
   contents: read
 
+# A push to a branch that is already being checked supersedes the check in flight.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   UV_VERSION: "0.12.10"
 
 jobs:
+  # Which of the expensive jobs the change can affect. The unit checks are cheap
+  # and always run; building three images and rebuilding the CI warehouse are not,
+  # and a change to a README or to the Pi's package cannot change their outcome.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      images: ${{ steps.filter.outputs.images }}
+      warehouse: ${{ steps.filter.outputs.warehouse }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            images:
+              - 'semantics/**'
+              - 'contracts/**'
+              - 'notifier/**'
+              - '.dockerignore'
+              - '!**/*.md'
+            warehouse:
+              - 'semantics/**'
+              - 'contracts/**'
+              - '.github/workflows/ci.yml'
+              - '!**/*.md'
+
   # The collection data product: the Pi's package.
   collection:
     runs-on: ubuntu-latest
@@ -95,6 +130,8 @@ jobs:
 
   # The container images must at least build; deploy.yml pushes them from main.
   images:
+    needs: changes
+    if: ${{ needs.changes.outputs.images == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -116,8 +153,15 @@ jobs:
   # tested against the result. Runs only once the GCP project is wired up
   # (repository variable FROSTLOG_GCP_PROJECT_NUMBER), as frostlog-ci via
   # Workload Identity Federation; one run at a time because the dataset is shared.
+  # A pull request from a fork gets no id-token, so it cannot take this job and is
+  # not asked to; the unit checks above are what it is held to.
   warehouse:
-    if: ${{ vars.FROSTLOG_GCP_PROJECT_NUMBER != '' }}
+    needs: changes
+    if: >-
+      ${{ needs.changes.outputs.warehouse == 'true'
+          && vars.FROSTLOG_GCP_PROJECT_NUMBER != ''
+          && (github.event_name != 'pull_request'
+              || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:

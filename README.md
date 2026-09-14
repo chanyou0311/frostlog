@@ -15,3 +15,9 @@ Raspberry Pi で記録し、バッテリー残量にまつわる問いに Slack 
 
 各ユニットの使い方はそれぞれの `README.md` と `Makefile` に、リポジトリ全体の決まりごとと
 踏みやすい罠は [AGENTS.md](AGENTS.md) にある。
+
+## ライセンス
+
+[MIT](LICENSE)。Anker 機器の BLE プロトコル（フレーム形式、鍵交換、クライアント側の固定鍵）は
+[flip-dots/SolixBLE](https://github.com/flip-dots/SolixBLE)（MIT）の解析を参照し、そのキャプチャを
+テストベクタとして使っている。
