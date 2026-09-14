@@ -1,4 +1,4 @@
-"""The ``frostlog`` command: read sources, upload files, decode cooler records.
+"""The ``frostlog`` command: read sources and upload what was recorded.
 
 Data goes to stdout as JSON lines (or to files with ``--output``), logs go to
 stderr. Exit status 0 on success, 1 when the run failed, 2 for bad arguments.
@@ -159,10 +159,6 @@ def read_ambient(
 
 @read_app.command("cooler")
 def read_cooler(
-    address: Annotated[
-        str | None,
-        typer.Option(help="Bluetooth address of the cooler; default FROSTLOG_COOLER_ADDRESS."),
-    ] = None,
     duration: Annotated[float | None, typer.Option(help="Stop after this many seconds.")] = None,
     output: OutputOption = None,
     sensor: Annotated[
@@ -175,75 +171,32 @@ def read_cooler(
             help="Measure the air around the Pi with every message.",
         ),
     ] = True,
-    scan: Annotated[
-        bool, typer.Option("--scan", help="List nearby Bluetooth devices and exit.")
-    ] = False,
 ) -> None:
-    """Receive what the cooler sends over Bluetooth (FROSTLOG_COOLER_MODEL).
+    """Record what the gateway hears from the cooler, and the air around it.
 
-    The address is required: without one the receiver would latch onto whatever
-    Anker device is nearby and negotiate with it. Use --scan to find the cooler.
+    The Bluetooth link belongs to frostlog-gateway; this waits for its event stream
+    and keeps looking while it is not there (FROSTLOG_GATEWAY_SOCKET_DIR).
     """
-    from frostlog.cooler import registry
+    from frostlog.gateway import GatewaySubscriber, events_socket
 
     settings = load_settings()
     try:
-        scanner = registry.scanner(settings.cooler_model)
+        socket = events_socket(settings.gateway_socket_dir)
     except ValueError as exc:
         raise fail(str(exc)) from None
-    if scan:
-        try:
-            found = asyncio.run(scanner(10.0))
-        except Exception as exc:  # Bluetooth stack errors are library-specific
-            raise fail(f"scan failed: {exc}") from None
-        for device in found:
-            print(json.dumps(asdict(device)), flush=True)
-        return
-    address = address or settings.cooler_address
-    if address is None:
-        raise fail("set FROSTLOG_COOLER_ADDRESS or pass --address (--scan lists devices)")
     out = Output(output)
     sampler = environment_sampler(settings, sensor, out.write) if environment else None
-    receiver = registry.create_receiver(
-        settings.cooler_model, out.write, address, duration, sampler
-    )
+    subscriber = GatewaySubscriber(out.write, socket, sampler, duration)
 
     async def run() -> None:
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
         for signum in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(signum, stop.set)
-        await receiver.run(stop)
+        await subscriber.run(stop)
 
     with out:
         asyncio.run(run())
-
-
-@app.command("decode")
-def decode() -> None:
-    """Read cooler records on stdin and write them back with a "decoded" field (for development)."""
-    from frostlog.cooler import base, registry
-
-    decoders: dict[str, base.Decoder] = {}
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            record = records.from_json(line)
-        except ValidationError as exc:
-            log.warning("skipping a line that is not a record: %s", exc.errors()[0]["msg"])
-            continue
-        out = record.model_dump(mode="json", exclude_none=True)
-        if isinstance(record, records.Cooler):
-            if record.model not in decoders:
-                try:
-                    decoders[record.model] = registry.create_decoder(record.model)
-                except ValueError as exc:
-                    log.warning("%s", exc)
-                    continue
-            out["decoded"] = decoders[record.model].decode(record)
-        print(json.dumps(out), flush=True)
 
 
 @app.command("upload")

@@ -2,10 +2,13 @@
 """Build the sample chunks the data contract is tested against in CI.
 
 The samples are what one day's chunk of each stream looks like: real messages
-captured from the cooler (``tests/captured.py``) turned into v1 records, one
-connection's worth of them. Run `make samples` in collection/ after changing the
-record shape. The output is deterministic, so a run that changes nothing leaves
-the files untouched in git.
+captured from the cooler turned into v1 records, one connection's worth of them,
+with the events that surround them. They come from the gateway's fixtures and are
+decoded with the gateway's decoder, because that is where the cooler is spoken to;
+the collector depends on neither outside this script.
+
+Run `make samples` in collection/ after changing the record shape. The output is
+deterministic, so a run that changes nothing leaves the files untouched in git.
 """
 
 import sys
@@ -15,13 +18,13 @@ from typing import Any
 
 COLLECTION = Path(__file__).resolve().parent.parent
 REPOSITORY = COLLECTION.parent
-sys.path.insert(0, str(COLLECTION / "tests"))
+sys.path.insert(0, str(REPOSITORY / "gateway" / "tests"))
 
 import captured  # noqa: E402
+from frostlog_gateway.decoder import decode_state  # noqa: E402
+from frostlog_gateway.protocol import parse_frame  # noqa: E402
 
 from frostlog import records  # noqa: E402
-from frostlog.cooler.everfrost.decoder import decode_state  # noqa: E402
-from frostlog.cooler.everfrost.protocol import parse_frame  # noqa: E402
 
 SAMPLES = REPOSITORY / "contracts" / "samples" / "collection"
 DAY = datetime(2026, 9, 6, 11, 2, 10, 719777, tzinfo=UTC)
