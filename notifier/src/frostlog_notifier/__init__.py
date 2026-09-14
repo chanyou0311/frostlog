@@ -1,6 +1,6 @@
 """frostlog-notifier: the data application that posts Slack digests.
 
-It reads only the tables and events of ``contracts/semantics.odcs.yaml`` and keeps
-its own record of what it has already posted, so that Pub/Sub redelivering an
-event never produces a second message.
+It reads only the tables of ``contracts/semantics.odcs.yaml`` and the events of
+``contracts/signals.odcs.yaml``, and remembers nothing between runs: every summary
+is a picture of a window ending at the moment its job fires.
 """

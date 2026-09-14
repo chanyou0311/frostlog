@@ -1,1 +1,1 @@
-"""The semantic data product: raw chunks into BigQuery, dbt on top, events out."""
+"""The semantic data product: dbt on top of the raw tables, and an event when it ran."""

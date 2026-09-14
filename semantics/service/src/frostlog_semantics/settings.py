@@ -1,8 +1,8 @@
 """Machine-specific configuration read from FROSTLOG_* environment variables.
 
 Everything here is fixed for a deployment (which bucket, which dataset, which
-topic) and is set by Terraform on the Cloud Run service. What changes per
-request -- the object that arrived -- comes from the request itself.
+topic) and is set by Terraform on the Cloud Run service; a request carries
+nothing, it only says "now".
 
 One of these is counted rather than named: the path back to the repository root
 is a number of directories, so a copy of it in a module at another depth would be

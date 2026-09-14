@@ -1,7 +1,8 @@
-"""The Pub/Sub push envelope and the two events of the semantic data contract.
+"""The Pub/Sub push envelope and the events of contracts/signals.odcs.yaml.
 
-The topic carries both events; they are told apart by their fields, as the
-contract gives them no discriminator.
+The topic carries more than one kind of event; the contract's ``event`` field says
+which one a message is, and parsing branches on it rather than on which fields
+happen to be present.
 """
 
 import base64

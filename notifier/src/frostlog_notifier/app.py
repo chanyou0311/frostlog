@@ -1,4 +1,4 @@
-"""The Cloud Run service: a Pub/Sub push endpoint and the Monday job.
+"""The Cloud Run service: a Pub/Sub push endpoint and the scheduled summaries.
 
 Answers are chosen for the sender, not for the reader: Pub/Sub gets 200 for
 anything a retry cannot fix (a malformed message, a defect that would repeat)

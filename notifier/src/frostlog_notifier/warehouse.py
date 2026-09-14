@@ -1,7 +1,9 @@
 """Access to the BigQuery dataset holding the semantic data product.
 
 Everything above this module speaks the :class:`Warehouse` protocol, so the
-tests run the real queries against a fake that answers by statement name.
+tests run the real queries against a fake that answers by statement name. The
+protocol can only read: the notifier writes nothing to the warehouse, and a
+protocol without a write method is how that stays true.
 """
 
 from collections.abc import Mapping, Sequence
@@ -20,9 +22,6 @@ class Warehouse(Protocol):
 
     def rows(self, sql: str, parameters: Parameters | None = None) -> list[Row]:
         """Run a query and read all of its rows."""
-
-    def execute(self, sql: str, parameters: Parameters | None = None) -> None:
-        """Run a statement that returns nothing (DDL, INSERT)."""
 
 
 class BigQueryWarehouse:
@@ -54,9 +53,6 @@ class BigQueryWarehouse:
 
     def rows(self, sql: str, parameters: Parameters | None = None) -> list[Row]:
         return [dict(row) for row in self._run(sql, parameters)]
-
-    def execute(self, sql: str, parameters: Parameters | None = None) -> None:
-        self._run(sql, parameters)
 
     def _run(self, sql: str, parameters: Parameters | None) -> Sequence[Any]:
         from google.api_core import exceptions

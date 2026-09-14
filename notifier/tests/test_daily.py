@@ -225,7 +225,7 @@ def test_the_summary_reads_the_warehouse_and_writes_nothing() -> None:
 
     assert notification is not None
     assert notification.kind == DAILY
-    # Five reads, once a day, and no write at all: FakeWarehouse.execute raises.
+    # Reads only: the Warehouse protocol has no write method, so there is nothing to check.
     assert sorted(name for name, _ in warehouse.queried) == [
         "energy_between",
         "energy_between",
