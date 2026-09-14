@@ -44,8 +44,14 @@ def test_the_samples_show_what_the_contract_describes() -> None:
     assert any(row.payload and row.payload.display_unit == "F" for row in messages)
     assert any(row.error for row in messages)
     assert all(row.environment for row in messages)
-    kinds = {records.from_json(line).model_dump()["kind"] for line in _lines("events")}
+    events = [records.from_json(line).model_dump() for line in _lines("events")]
+    kinds = {event["kind"] for event in events}
     assert {"ble_connected", "ble_silent", "upload_done", "environment_read_failed"} <= kinds
+    # One command from asked-for to seen in a state report, and one that never left.
+    assert {"command_requested", "command_sent", "command_accepted", "command_applied"} <= kinds
+    assert "command_rejected" in kinds
+    # The session key is no longer written down: it opens the cooler to whoever has it.
+    assert not any("secret" in event for event in events)
 
 
 def test_the_committed_samples_are_what_the_builder_writes() -> None:
