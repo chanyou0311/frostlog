@@ -1,0 +1,71 @@
+[project]
+name = "frostlog-gateway"
+version = "0.1.0"
+description = "The one process that holds the cooler's Bluetooth link, on a Raspberry Pi"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "typer>=0.27",
+  "bleak>=3.0",
+  "cryptography>=50",
+  # A transitive dependency of cryptography, listed here only so that the piwheels
+  # source below applies to it (uv sources cover direct dependencies).
+  "cffi>=2.0",
+]
+
+[project.scripts]
+frostlog-gateway = "frostlog_gateway.cli:app"
+
+[dependency-groups]
+dev = [
+  "pytest>=9",
+  "ruff>=0.16",
+  "ty>=0.0.78",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/frostlog_gateway"]
+
+# The Raspberry Pi Zero is armv6l. PyPI has no armv6l wheels for the compiled
+# packages below, so on that machine they come from piwheels instead.
+[[tool.uv.index]]
+name = "piwheels"
+url = "https://www.piwheels.org/simple"
+explicit = true
+
+[tool.uv.sources]
+cryptography = [{ index = "piwheels", marker = "platform_machine == 'armv6l'" }]
+cffi = [{ index = "piwheels", marker = "platform_machine == 'armv6l'" }]
+
+# dbus-fast (used by bleak on Linux) has no armv6l wheel anywhere; build the
+# pure-Python variant from its sdist instead of compiling the Cython modules.
+[tool.uv.extra-build-variables]
+dbus-fast = { SKIP_CYTHON = "1" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]  # captured byte sequences are long
+
+[tool.ty.src]
+# Without this ty walks up the tree looking for configuration and would take
+# whatever is above this directory as the project to check. The gateway is its own
+# project, and its environment is the only one here that has bleak.
+include = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# `tests/captured.py` holds the messages the cooler really sent; the tests import it
+# as a module, the way pytest lets them.
+[tool.ty.environment]
+extra-paths = ["tests"]
