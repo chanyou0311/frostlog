@@ -263,6 +263,14 @@ def _blocks(
             ],
         },
     ]
+    blocks.append(
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": _period(today, yesterday, pulldowns, recorded)},
+        }
+    )
+    # The charts come last of the body. Everything the message says is said before
+    # them, so a reader who stops at the first picture has already read all of it.
     if recorded:
         labels, points = _folded(recorded)
         charge = charts.line(
@@ -283,12 +291,6 @@ def _blocks(
             ],
         )
         blocks += charts.at_most(charge, temperature)
-    blocks.append(
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": _period(today, yesterday, pulldowns, recorded)},
-        }
-    )
     blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": _footnote()}]})
     return blocks
 

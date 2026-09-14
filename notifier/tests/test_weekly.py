@@ -174,3 +174,40 @@ def test_the_summary_is_built_with_its_text_and_chart() -> None:
     kinds = [block["type"] for block in notification.blocks]
     assert kinds.count("data_visualization") == 2
     assert dict(warehouse.queried)["snapshots"] == {"start": START, "end": END}
+
+
+def test_the_second_chart_is_the_battery_across_the_days() -> None:
+    warehouse = FakeWarehouse(
+        {
+            "snapshots": week_of_slots(),
+            "ambient_bands": ambient_band_rows(),
+            "finished_pulldowns_between": [],
+        }
+    )
+
+    notification = weekly.build(warehouse, NOW)
+
+    charted = [b for b in notification.blocks if b["type"] == "data_visualization"]
+    assert [b["title"] for b in charted] == ["日ごとの電力量 (Wh)", "日ごとのバッテリー残量 (%)"]
+    assert [s["name"] for s in charted[1]["chart"]["series"]] == ["最高", "最低"]
+
+
+def test_a_day_with_no_reading_is_left_out_of_the_battery_chart() -> None:
+    """Slack cannot draw a hole, and a hole invented here would be a reading nobody took."""
+    target = jst_dates(START, END)[3]
+    rows = [
+        empty_slot(row["slot_started_at"])
+        if to_jst(row["slot_started_at"]).date() == target
+        else row
+        for row in week_of_slots()
+    ]
+    warehouse = FakeWarehouse(
+        {"snapshots": rows, "ambient_bands": ambient_band_rows(), "finished_pulldowns_between": []}
+    )
+
+    notification = weekly.build(warehouse, NOW)
+
+    charted = [b for b in notification.blocks if b["type"] == "data_visualization"]
+    labels = [point["label"] for point in charted[1]["chart"]["series"][0]["data"]]
+    assert f"{target:%m-%d}" not in labels
+    assert labels, "the other days are still drawn"

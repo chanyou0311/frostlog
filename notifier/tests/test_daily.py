@@ -276,3 +276,13 @@ def test_a_battery_that_empties_before_morning_is_given_the_hour_not_a_zero() ->
     assert notification is not None
     assert "ごろに空になる見込み" in notification.text
     assert "翌朝" not in notification.text
+
+
+def test_everything_the_message_says_comes_before_the_charts() -> None:
+    """A reader who stops at the first picture has already read all of it."""
+    notification = daily.build(warehouse_with(), NOW)
+
+    assert notification is not None
+    kinds = [block["type"] for block in notification.blocks]
+    first_chart = kinds.index("data_visualization")
+    assert "section" not in kinds[first_chart:], kinds
