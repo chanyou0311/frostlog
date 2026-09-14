@@ -1,12 +1,14 @@
 [Unit]
-Description=frostlog: receive what the cooler sends over Bluetooth
+Description=frostlog: record what the gateway hears from the cooler
+# The gateway holds the link; without it there is nothing to record. Started with
+# this unit, and not required by it: a gateway that is down is waited for, and the
+# waiting is itself a record.
+Wants=frostlog-gateway.service
+After=frostlog-gateway.service
 
 [Service]
 Type=simple
 EnvironmentFile=-%E/frostlog/env
-# Without a pinned address the receiver would latch onto any nearby Anker device,
-# so the service is skipped (not failed) until FROSTLOG_COOLER_ADDRESS is set.
-ExecCondition=/bin/sh -c 'test -n "$FROSTLOG_COOLER_ADDRESS"'
 StateDirectory=frostlog
 ExecStart=%h/frostlog/.venv/bin/frostlog read cooler --output %S/frostlog
 Restart=always

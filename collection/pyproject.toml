@@ -9,13 +9,10 @@ dependencies = [
   "pydantic-settings>=2.15",
   "typer>=0.27",
   "smbus2>=0.6",
-  "bleak>=3.0",
-  "cryptography>=50",
   "boto3>=1.43",
-  # Transitive dependencies of pydantic and cryptography, listed here only so that
-  # the piwheels source below applies to them (uv sources cover direct dependencies).
+  # A transitive dependency of pydantic, listed here only so that the piwheels source
+  # below applies to it (uv sources cover direct dependencies).
   "pydantic-core>=2.46",
-  "cffi>=2.0",
 ]
 
 [project.scripts]
@@ -26,6 +23,10 @@ dev = [
   "pytest>=9",
   "ruff>=0.16",
   "ty>=0.0.78",
+  # The sample builder turns messages the cooler really sent into records, and the
+  # EverFrost decoder that reads them lives in the gateway now. Nothing the collector
+  # ships needs it: the gateway decodes, and this product records what it is handed.
+  "frostlog-gateway",
 ]
 
 [build-system]
@@ -43,14 +44,8 @@ url = "https://www.piwheels.org/simple"
 explicit = true
 
 [tool.uv.sources]
-cryptography = [{ index = "piwheels", marker = "platform_machine == 'armv6l'" }]
-cffi = [{ index = "piwheels", marker = "platform_machine == 'armv6l'" }]
 pydantic-core = [{ index = "piwheels", marker = "platform_machine == 'armv6l'" }]
-
-# dbus-fast (used by bleak on Linux) has no armv6l wheel anywhere; build the
-# pure-Python variant from its sdist instead of compiling the Cython modules.
-[tool.uv.extra-build-variables]
-dbus-fast = { SKIP_CYTHON = "1" }
+frostlog-gateway = { path = "../gateway" }
 
 [tool.ruff]
 line-length = 100
@@ -64,16 +59,15 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ty.src]
 # Without this ty walks up the tree looking for configuration and would take
-# whatever is above this directory as the project to check. The Pi's package is
-# its own project, and its environment is the only one that has bleak. scripts/ is
-# listed because `include` replaces the default of "everything here", and the two
-# scripts were checked before the package moved into this directory.
+# whatever is above this directory as the project to check. scripts/ is listed
+# because `include` replaces the default of "everything here", and the sample
+# builder was checked before the package moved into this directory.
 include = ["src", "tests", "scripts"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-# `tests/captured.py` holds the messages the cooler really sent; the sample builder
-# reads them too, the way pytest does.
+# The messages the cooler really sent live with the code that speaks to it; the
+# sample builder reads them from there, the way the gateway's tests do.
 [tool.ty.environment]
-extra-paths = ["tests"]
+extra-paths = ["../gateway/tests"]

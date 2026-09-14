@@ -26,11 +26,11 @@ fi
 
 mkdir -p "$config_dir/systemd/user"
 install -m 644 scripts/systemd/* "$config_dir/systemd/user/"
-# The environment sensor is read with every cooler message now; its own service is gone.
+# The environment sensor is read with every recorded message now; its own service is gone.
 if [ -f "$config_dir/systemd/user/frostlog-ambient@.service" ]; then
   # systemctl expands no globs here, so the instances have to be named. Removing the
   # template would not stop one that is already running: it would go on reading the
-  # sensor beside the cooler service. Loaded units and enabled symlinks are both looked
+  # sensor beside the recording service. Loaded units and enabled symlinks are both looked
   # for, because an instance can be either without being the other.
   instances=$(
     {
@@ -48,6 +48,6 @@ fi
 systemctl --user daemon-reload
 loginctl enable-linger "$USER"
 systemctl --user enable --now frostlog-cooler.service frostlog-upload.timer
-# Pick up new code. frostlog-cooler stays skipped until FROSTLOG_COOLER_ADDRESS is set.
+# Pick up new code. A gateway that is not running yet is waited for, not failed on.
 systemctl --user restart frostlog-cooler.service
 systemctl --user --no-pager --no-legend list-units 'frostlog-*'

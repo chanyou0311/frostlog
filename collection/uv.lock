@@ -275,12 +275,7 @@ name = "frostlog"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "bleak" },
     { name = "boto3" },
-    { name = "cffi", version = "2.1.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'armv6l'" },
-    { name = "cffi", version = "2.1.1", source = { registry = "https://www.piwheels.org/simple" }, marker = "platform_machine == 'armv6l'" },
-    { name = "cryptography", version = "50.0.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'armv6l'" },
-    { name = "cryptography", version = "50.0.1", source = { registry = "https://www.piwheels.org/simple" }, marker = "platform_machine == 'armv6l'" },
     { name = "pydantic" },
     { name = "pydantic-core", version = "2.46.5", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'armv6l'" },
     { name = "pydantic-core", version = "2.46.5", source = { registry = "https://www.piwheels.org/simple" }, marker = "platform_machine == 'armv6l'" },
@@ -291,6 +286,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "frostlog-gateway" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "ty" },
@@ -298,17 +294,43 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bleak", specifier = ">=3.0" },
     { name = "boto3", specifier = ">=1.43" },
-    { name = "cffi", marker = "platform_machine != 'armv6l'", specifier = ">=2.0" },
-    { name = "cffi", marker = "platform_machine == 'armv6l'", specifier = ">=2.0", index = "https://www.piwheels.org/simple" },
-    { name = "cryptography", marker = "platform_machine != 'armv6l'", specifier = ">=50" },
-    { name = "cryptography", marker = "platform_machine == 'armv6l'", specifier = ">=50", index = "https://www.piwheels.org/simple" },
     { name = "pydantic", specifier = ">=2.13" },
     { name = "pydantic-core", marker = "platform_machine != 'armv6l'", specifier = ">=2.46" },
     { name = "pydantic-core", marker = "platform_machine == 'armv6l'", specifier = ">=2.46", index = "https://www.piwheels.org/simple" },
     { name = "pydantic-settings", specifier = ">=2.15" },
     { name = "smbus2", specifier = ">=0.6" },
+    { name = "typer", specifier = ">=0.27" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "frostlog-gateway", directory = "../gateway" },
+    { name = "pytest", specifier = ">=9" },
+    { name = "ruff", specifier = ">=0.16" },
+    { name = "ty", specifier = ">=0.0.78" },
+]
+
+[[package]]
+name = "frostlog-gateway"
+version = "0.1.0"
+source = { directory = "../gateway" }
+dependencies = [
+    { name = "bleak" },
+    { name = "cffi", version = "2.1.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'armv6l'" },
+    { name = "cffi", version = "2.1.1", source = { registry = "https://www.piwheels.org/simple" }, marker = "platform_machine == 'armv6l'" },
+    { name = "cryptography", version = "50.0.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'armv6l'" },
+    { name = "cryptography", version = "50.0.1", source = { registry = "https://www.piwheels.org/simple" }, marker = "platform_machine == 'armv6l'" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "bleak", specifier = ">=3.0" },
+    { name = "cffi", marker = "platform_machine != 'armv6l'", specifier = ">=2.0" },
+    { name = "cffi", marker = "platform_machine == 'armv6l'", specifier = ">=2.0", index = "https://www.piwheels.org/simple" },
+    { name = "cryptography", marker = "platform_machine != 'armv6l'", specifier = ">=50" },
+    { name = "cryptography", marker = "platform_machine == 'armv6l'", specifier = ">=50", index = "https://www.piwheels.org/simple" },
     { name = "typer", specifier = ">=0.27" },
 ]
 

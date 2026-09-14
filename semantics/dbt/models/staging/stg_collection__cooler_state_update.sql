@@ -1,5 +1,9 @@
--- The state reports (cmd 4402), one row each, with their timestamps repaired and
--- the seconds each state is taken to hold.
+-- The state reports, one row each, with their timestamps repaired and the seconds
+-- each state is taken to hold. A state report is any message the collector decoded
+-- a payload from: the collection contract promises a payload only for the message
+-- types that carry the state (what the cooler sends by itself, and what it answers
+-- the gateway's request with after connecting), so which header codes those are is
+-- the collector's knowledge, not repeated here.
 --
 -- A report whose body could not be decoded, or which is missing a value the
 -- dimensional model requires, is dropped here rather than carried as nulls: the
@@ -17,7 +21,7 @@ with decoded as (
         payload,
         environment
     from {{ source('raw', 'raw_cooler') }}
-    where cmd = '4402'
+    where payload is not null
       and boot_id is not null
       and uptime_seconds is not null
       and ts is not null

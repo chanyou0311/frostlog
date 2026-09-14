@@ -9,6 +9,8 @@ unit_tests:
     description: >
       A state holds until the next report, and at most the ten minutes after which
       the cooler repeats itself: a silence does not stretch the last state over it.
+      The first report is the answer to the gateway's request (cmd 4840), which is a
+      report like any other.
     given:
       - input: source('raw', 'raw_cooler')
         format: sql
@@ -16,7 +18,7 @@ unit_tests:
           select
             'boot-1' as boot_id, 100.0 as uptime_seconds,
             timestamp '2026-09-06 00:00:00+00' as ts, false as ts_synced,
-            '4402' as cmd, 'everfrost' as model, 'F4:9D:8A:C3:4F:84' as address,
+            '4840' as cmd, 'everfrost' as model, 'F4:9D:8A:C3:4F:84' as address,
             struct(
               -20 as setpoint_celsius, 25 as interior_temperature_celsius,
               'C' as display_unit, 0 as input_watts, 0 as usb_a_output_watts,

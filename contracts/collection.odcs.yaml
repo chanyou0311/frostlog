@@ -18,7 +18,9 @@ description:
     the temperature and humidity of the air around it at the same moment, and the
     operational events of the collector itself. The cooler is portable — a car, a tent,
     a room — so that air is whatever surrounds it, not a car's cabin. Nothing is
-    aggregated, filtered or corrected.
+    aggregated, filtered or corrected. Commands the Pi writes to the cooler are observed
+    the same way, as events: what was asked for and what the cooler did about it is part
+    of the record of how the cooler came to be in the state it is in.
   usage: >
     Read by the semantic data product (frostlog-semantics) to build the dimensional model.
     Delivery is at-least-once, as it is for telemetry generally: a chunk re-cut after a
@@ -26,6 +28,11 @@ description:
     so a reader may keep whichever copy it likes — frostlog-semantics keeps the one that
     arrived last, and its tables are one row per message. Deduplicating is the reader's
     job; this product only promises never to lose a message.
+    The Bluetooth link belongs to frostlog-gateway rather than to this product: the
+    cooler accepts one connection at a time, so one process holds it and this one
+    subscribes. That is why a row carries the moment the gateway received the message
+    and not the moment it was written down, and why a stream this product could not
+    keep up with leaves a row saying so instead of a silent hole.
     A row's original — `frames`, and `plain` where decryption verified — is never
     rewritten. What a row means may be revised: an interpretation error is fixed
     downstream by reading those bytes again, and a message type that becomes decodable
@@ -141,7 +148,7 @@ schema:
       - name: cmd
         logicalType: string
         required: false
-        description: Frame header command (2 bytes, hex). 4402 = state report (decoded into payload), 4489 = external input connected/disconnected, 4500 = 10-minute message of unknown meaning, 08xx/4822 = handshake replies.
+        description: Frame header command (2 bytes, hex). 4402 = state report and 4840 = the answer to a state request, both decoded into payload; 4489 = external input connected/disconnected, 4500 = 10-minute message of unknown meaning, 08xx/4822 = handshake replies, 48xx = the cooler acknowledging a command it was sent (4880 for a setpoint).
         examples: ["4402"]
       - name: frames
         logicalType: array
@@ -163,9 +170,10 @@ schema:
         logicalType: object
         required: false
         description: >
-          The decoded body for message types whose meaning is known (cmd 4402 only for now).
-          Values are in SI-style units regardless of the cooler's display unit. Absent for
-          other message types and whenever plain is absent.
+          The decoded body for message types whose meaning is known: cmd 4402 and 4840,
+          which carry the same body under different headers. Values are in SI-style units
+          regardless of the cooler's display unit. Absent for other message types and
+          whenever plain is absent.
         properties:
           - name: setpoint_celsius
             logicalType: integer
@@ -314,11 +322,17 @@ schema:
     physicalName: events
     logicalType: object
     description: >
-      One row per operational event of the collector: BLE connection milestones and
-      failures, environment sensor failures, and upload runs. This is the collection data
-      product's own observability data. Known kinds are listed; consumers must tolerate
-      new kinds.
-    dataGranularityDescription: One collector event.
+      One row per thing that happened on the cooler's link other than a message from the
+      cooler itself: BLE connection milestones and failures (observed by the gateway that
+      holds the link, recorded here), each step of a command written to the cooler, and
+      the collector's own events — environment sensor failures, upload runs, and what it
+      saw of the gateway's stream. This is the collection data product's own observability
+      data. Known kinds are listed; consumers must tolerate new kinds.
+      Commands live here rather than in a stream of their own because a stream is a
+      transfer and a table as well as a prefix, and a command is a handful of rows a day:
+      one row per step, identified like every other event by (boot_id, uptime_seconds,
+      kind), with the steps of one command tied together by command_id.
+    dataGranularityDescription: One event on the cooler's link, or one of the collector's own.
     properties:
       - name: ts
         logicalType: timestamp
@@ -349,12 +363,26 @@ schema:
         description: >
           What happened. Known values: ble_device_not_found, ble_error, ble_connected,
           ble_negotiated, ble_handshake_retry, ble_negotiation_timeout, ble_handshake_failed,
-          ble_disconnected, ble_silent (no message for 15 minutes, link dropped),
-          environment_read_failed, upload_started, upload_done. Other kinds may appear.
+          ble_disconnected, ble_silent (no message for a while, link dropped),
+          environment_read_failed, upload_started, upload_done;
+          command_requested (something asked for a setting to be changed),
+          command_rejected (it was never written; error says why),
+          command_sent (the frame went to the cooler),
+          command_accepted (the cooler acknowledged it),
+          command_applied (a later state report shows the value asked for),
+          command_unconfirmed (the gateway stopped waiting before a state report showed
+          the value; error says how far it got -- whether the acknowledgement had come,
+          or whether the write itself never completed);
+          gateway_connected and gateway_disconnected (the collector reached the gateway's
+          stream, or lost it — while it is lost nothing is being recorded),
+          gateway_dropped (the gateway dropped `count` events because this collector was
+          reading too slowly), gateway_gap (the numbering jumped from `expected` to
+          `received` for some other reason; the events between are gone).
+          Other kinds may appear.
       - name: address
         logicalType: string
         required: false
-        description: Bluetooth address involved (ble_* kinds).
+        description: Bluetooth address involved (ble_* kinds, and the command_* kinds that name the cooler written to).
       - name: name
         logicalType: string
         required: false
@@ -362,7 +390,11 @@ schema:
       - name: error
         logicalType: string
         required: false
-        description: Error text (ble_error, ble_handshake_failed, environment_read_failed).
+        description: >
+          Error text (ble_error, ble_handshake_failed, environment_read_failed,
+          gateway_disconnected). For command_rejected, why it was not written
+          (not_connected, negotiating, state_unknown, unknown_setting, value_out_of_range,
+          busy, invalid_request); for command_unconfirmed, what was still missing.
       - name: variant
         logicalType: string
         required: false
@@ -386,15 +418,67 @@ schema:
       - name: secret
         logicalType: string
         required: false
-        description: Session key (hex) derived during the handshake (ble_negotiated). Lets frames be decrypted again later.
+        description: >
+          Deprecated, and no longer written. The session key (hex) derived during the
+          handshake (ble_negotiated), which let frames be decrypted again later. It was
+          recorded while nothing could be written to the cooler; once commands became
+          possible, a key to the cooler sitting in a bucket bought a convenience that was
+          never worth it — and a key is only good within the connection it was made for
+          anyway. Rows recorded before that still carry it.
       - name: cmd
         logicalType: string
         required: false
-        description: Handshake command that failed (ble_handshake_failed).
+        description: >
+          Frame header command (2 bytes, hex): the handshake command that failed
+          (ble_handshake_failed), or the command written to the cooler (command_sent).
       - name: sensor
         logicalType: string
         required: false
         description: Sensor name (environment_read_failed).
+      - name: command_id
+        logicalType: string
+        required: false
+        description: What ties the steps of one command together (command_* kinds). A UUID, new for every request.
+      - name: source
+        logicalType: string
+        required: false
+        description: Who asked for the command (command_requested). Free short text, e.g. the name of the unit that sent it.
+      - name: reason
+        logicalType: string
+        required: false
+        description: Why it was asked for (command_requested). Free short text, e.g. the change of circumstance that triggered it.
+      - name: setting
+        logicalType: string
+        required: false
+        description: Which setting the command changes (command_requested), named as in cooler.payload.
+      - name: value
+        logicalType: string
+        required: false
+        description: >
+          The value asked for (command_requested), as text. Settings do not share a type —
+          a temperature, a level, a switch — and one column that holds them all keeps the
+          events stream one table; a consumer casts it per setting.
+      - name: frames
+        logicalType: array
+        required: false
+        description: >
+          The frame written to the cooler (command_sent), as the exact bytes sent (hex).
+          The same idea as cooler.frames: the original, from which everything else about
+          the command could be read again.
+        items:
+          logicalType: string
+      - name: count
+        logicalType: integer
+        required: false
+        description: How many events the gateway dropped because this collector was reading too slowly (gateway_dropped).
+      - name: expected
+        logicalType: integer
+        required: false
+        description: The stream number the next event should have had (gateway_gap).
+      - name: received
+        logicalType: integer
+        required: false
+        description: The stream number it actually had (gateway_gap); the events in between were lost.
       - name: uploaded_chunk_count
         logicalType: integer
         required: false

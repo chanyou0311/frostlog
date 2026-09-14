@@ -14,17 +14,29 @@ Raspberry Pi で記録し、バッテリー残量にまつわる問いに Slack 
 | `frostlog-notifier` | Slack の通知 (データアプリケーション) | `notifier/` → Cloud Run |
 | `frostlog-contracts` | 契約テストの結果 | `contracts/job/` → Cloud Run job |
 
+Pi にはデータを出さないユニットがもう 2 つある。冷蔵庫は同時に 1 つの central としか話せず、
+鍵も接続ごとに変わるので、**接続を持つプロセスを 1 つに切り出した**。
+
+| | 役割 | 実体 |
+|---|---|---|
+| `frostlog-gateway` | 冷蔵庫と話す唯一のプロセス。聞いたものを流し、許可した書き込みを受ける | Pi の常駐サービス (`gateway/`) |
+| `frostlog-controller` | 在宅が変わったときに設定温度のコマンドを出す | Pi の systemd timer ジョブ (`controller/`) |
+
 答えたい問いは 4 つ: A 残量が条件でどう変わるか / B 帰宅時の残量と翌朝の見通し /
 C 外出中あと何時間もつか / D 設定温度に到達するまでの時間。
 
 ## データの流れ
 
 何がいつ動くか (間隔、時刻、リソース名) はここに書かない。`fumo-terraform` の `.tf`、Pi の
-systemd unit (`collection/scripts/systemd/`)、各 `Makefile` がそのまま語る。ここにあるのは形だけ。
+systemd unit (各ユニットの `scripts/systemd/`)、各 `Makefile` がそのまま語る。ここにあるのは形だけ。
 
 ```
-Pi: frostlog-collection  (BLE を常時受信し、周辺温湿度も同時に記録。timer が前回の続きから
-  │                        バイト単位で差分を送出)
+Pi: frostlog-gateway   (BLE 接続を保持する唯一のプロセス。聞いた瞬間に時刻を刻んでイベントを
+  │  ▲                    流し、許可したコマンドだけを冷蔵庫に書く。ディスクには書かない)
+  │  └─ frostlog-controller  (在宅が変わったら設定温度のコマンドを 1 回だけ出す)
+  ▼
+frostlog-collection    (ストリームを購読して記録。周辺温湿度はこちらで測る。timer が前回の
+  │                      続きからバイト単位で差分を送出)
   ▼
 GCS  v1/{stream}/dt=YYYY-MM-DD/{offset:012d}.jsonl.gz   ← オブジェクト名は「ローカルファイルの何バイト目から」
   │ BigQuery Data Transfer Service (バケットを自前で読む。リポジトリにコードは無い)
@@ -43,6 +55,8 @@ Cloud Scheduler が定時に Cloud Run job frostlog-contracts を起こし、契
 
 ```bash
 make -C collection check                         # コレクター (Pi のパッケージ)。lint + test
+make -C gateway check                            # 冷蔵庫と話すサービス。lint + test
+make -C controller check                         # 在宅で設定温度を切り替えるジョブ。lint + test
 make -C semantics check                          # lint + test + dbt parse (ウェアハウス不要)
 make -C semantics ci-warehouse                   # 実 BigQuery で通し。ADC が要る
 make -C contracts check                          # 契約テストジョブ自身の lint + test
@@ -50,6 +64,8 @@ make -C contracts lint                           # 契約そのものが well-fo
 make -C contracts test CONTRACT=collection       # 本番のデータを契約に当てる。ADC が要る
 make -C notifier check                           # Slack アプリケーションの lint + test
 make -C collection deploy                        # Pi へ配布 (PI=user@host で宛先を変える)
+make -C gateway deploy                           # 同上。ユニットごとに別のディレクトリへ入る
+make -C controller deploy                        # 同上
 ```
 
 ## 踏みやすい罠 (MUST)
@@ -87,8 +103,14 @@ make -C collection deploy                        # Pi へ配布 (PI=user@host �
 - **Pi は冷蔵庫と一緒に車に載っている。** 外出中は自宅 Wi-Fi から離れるのでアップロードできない。
   下流をいくら速くしても、問 C の答えは**最後の観測からの外挿**にしかならない。観測の古さを
   見せること。
-- **冷蔵庫が止まると温湿度も記録されない。** DHT20 は BLE メッセージを受けた瞬間にだけ読む
-  (`EverfrostReceiver._message`)。周辺温度だけを独立に記録する経路は無い。
+- **冷蔵庫が止まると温湿度も記録されない。** DHT20 はメッセージが届いた瞬間にだけ読む。
+  周辺温度だけを独立に記録する経路は無い。
+- **接続直後の `4402` は来ないとみなす。** 2026-09-14 に 5 分間 1 通も来なかった。状態が無いと
+  設定温度も書けない (表示単位が分からない) ので、ゲートウェイはハンドシェイク後に `4040` を
+  送って `4840` で取りに行く。`4840` の本文は `4402` と同じ配置なので、デコーダは 1 つでよい。
+- **`4080` の設定温度は冷蔵庫の「表示中の単位」で解釈される。** °F 表示のときに a3=50 を書くと
+  10 °C になった。書く前に最新の状態報告の表示単位を見て変換する。ここでも、状態を知らないうちは
+  書かないという形になる。
 - **バッチは日付ではなく boot の集合。** NTP 同期前の記録は時刻が狂っており、同じ boot の同期済み
   レコードが届くと**過去のレコードが別の JST 日付へ移動する**。
 - **契約が「コピーは等価」を保証している。** 同じ (boot_id, uptime_seconds) が再送されても
@@ -115,6 +137,11 @@ make -C collection deploy                        # Pi へ配布 (PI=user@host �
 - **本番の dbt build は unit test を回さない** (`--exclude-resource-type unit_test`)。unit test は
   データではなく SQL の検査なので、SQL を変えた CI (`make -C semantics ci-warehouse`) が回す。
   定時に回しても守るものは無く、1 本 10 MiB の課金だけが増える。
+- **ゲートウェイはディスクに書かない。** 記録も状態ファイルも持たない。接続が切れれば忘れる
+  ものしか持たないので、再起動も落ちたことも「つながっていない」の一形態で済む。
+- **collection は冷蔵庫に書けない。** コマンドの口を持たない。収集の責務に write は含めない。
+- **コントローラーは在宅の変化 1 回につき 1 回だけ動く。** 次の変化まで、人がパネルで変えた
+  設定が勝つ。毎分あるべき値に合わせる形にすると、人の操作を上書きし続けることになる。
 - raw は届いたものをそのまま保つ。解釈できない行を落とすのは semantic モデルの側。
 - `contracts/` が真実。dbt モデルも service もそこから導く (生成はしない)。
 - ADR や設計ドキュメントはリポジトリに置かない。合意はセッションか GitHub の Issue/PR に残す。

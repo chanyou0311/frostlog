@@ -59,7 +59,7 @@ schema:
       measures are semi-additive: aggregate them with held_seconds as the weight.
       The collection product delivers at-least-once; this is where that becomes exactly
       once — a message that arrived twice is one row, the copy that arrived last.
-    dataGranularityDescription: One state update message (cmd 4402) from the cooler.
+    dataGranularityDescription: One state update message from the cooler (cmd 4402 sent by itself, or cmd 4840 answering the gateway's request after connecting).
     properties:
       - name: state_update_key
         logicalType: string
@@ -342,7 +342,7 @@ schema:
             SELECT DISTINCT r.boot_id, r.uptime_seconds
             FROM {project}.{dataset}.raw_cooler r
             WHERE r._PARTITIONTIME < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR)
-              AND r.cmd = '4402'
+              AND r.payload IS NOT NULL
               AND r.boot_id IS NOT NULL AND r.uptime_seconds IS NOT NULL AND r.ts IS NOT NULL
               AND r.payload.serial_number IS NOT NULL
               AND r.payload.setpoint_celsius IS NOT NULL

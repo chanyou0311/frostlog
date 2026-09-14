@@ -120,12 +120,28 @@ def ambient(sensor: str, temperature_celsius: float, humidity_percent: float) ->
     )
 
 
+def cooler_at(
+    at: dict[str, Any], model: str, address: str, frames: list[str], **fields: Any
+) -> Cooler:
+    """One message, stamped when it happened rather than when it was written down.
+
+    What the cooler said is heard by the gateway, and a record made from it keeps
+    the gateway's stamp: the two are the same moment only when nothing is queued.
+    """
+    return Cooler(model=model, address=address, frames=frames, **fields, **at)
+
+
+def event_at(at: dict[str, Any], kind: str, **fields: Any) -> Event:
+    """One event of someone else's, stamped where it happened (see :func:`cooler_at`)."""
+    return Event(kind=kind, **fields, **at)
+
+
 def cooler(model: str, address: str, frames: list[str], **fields: Any) -> Cooler:
-    return Cooler(model=model, address=address, frames=frames, **fields, **stamp())
+    return cooler_at(stamp(), model, address, frames, **fields)
 
 
 def event(kind: str, **fields: Any) -> Event:
-    return Event(kind=kind, **fields, **stamp())
+    return event_at(stamp(), kind, **fields)
 
 
 def to_json(record: Record) -> str:

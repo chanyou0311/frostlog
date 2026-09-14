@@ -1,12 +1,11 @@
 """Argument handling and the small wiring the commands do (no hardware is touched)."""
 
-import json
+from pathlib import Path
 
-import captured
 import pytest
 from typer.testing import CliRunner
 
-from frostlog import cli, records
+from frostlog import cli
 from frostlog.ambient import i2c
 from frostlog.settings import Settings
 
@@ -35,38 +34,18 @@ def test_the_cooler_is_still_recorded_when_the_sensor_cannot_be_opened(
 
 
 def test_an_unknown_sensor_for_the_cooler_is_a_usage_error(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(i2c, "SMBus2Bus", lambda number: object())
-    result = runner.invoke(
-        cli.app, ["read", "cooler", "--address", "AA:BB", "--sensor", "nope", "--duration", "0"]
-    )
+    monkeypatch.setenv("FROSTLOG_GATEWAY_SOCKET_DIR", str(tmp_path))
+    result = runner.invoke(cli.app, ["read", "cooler", "--sensor", "nope", "--duration", "0"])
     assert result.exit_code == 2, result.output
 
 
-def test_read_cooler_needs_an_address(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("FROSTLOG_COOLER_ADDRESS", raising=False)
+def test_read_cooler_needs_to_know_where_the_gateway_listens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("FROSTLOG_GATEWAY_SOCKET_DIR", raising=False)
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
     result = runner.invoke(cli.app, ["read", "cooler", "--no-environment"])
     assert result.exit_code == 1
-
-
-def test_decode_prints_the_parameters_of_a_recorded_message() -> None:
-    record = records.cooler(
-        "everfrost",
-        captured.ADDRESS,
-        captured.DISCHARGING.frames,
-        pattern="03010f",
-        cmd="4402",
-        plain=captured.DISCHARGING.plain,
-    )
-    result = runner.invoke(cli.app, ["decode"], input=records.line(record))
-    assert result.exit_code == 0, result.output
-    decoded = json.loads(result.stdout)["decoded"]
-    assert decoded["source"] == "plain"
-    assert decoded["params"]["a2"]["str"] == captured.SERIAL_NUMBER
-
-
-def test_decode_skips_lines_that_are_not_records() -> None:
-    result = runner.invoke(cli.app, ["decode"], input='{"not":"a record"}\n\n')
-    assert result.exit_code == 0, result.output
-    assert result.stdout.strip() == ""
