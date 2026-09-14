@@ -370,7 +370,9 @@ schema:
           command_sent (the frame went to the cooler),
           command_accepted (the cooler acknowledged it),
           command_applied (a later state report shows the value asked for),
-          command_unconfirmed (neither happened before the gateway gave up waiting);
+          command_unconfirmed (the gateway stopped waiting before a state report showed
+          the value; error says how far it got -- whether the acknowledgement had come,
+          or whether the write itself never completed);
           gateway_connected and gateway_disconnected (the collector reached the gateway's
           stream, or lost it — while it is lost nothing is being recorded),
           gateway_dropped (the gateway dropped `count` events because this collector was
